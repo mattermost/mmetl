@@ -1,0 +1,59 @@
+GO_PACKAGES=$(shell go list ./...)
+GO ?= $(shell command -v go 2> /dev/null)
+
+all: build
+
+build: vendor check
+	go build -mod=vendor
+
+install: vendor check
+	go install -mod=vendor
+
+package: vendor check
+	mkdir -p build
+
+	@echo Build Linux amd64
+	env GOOS=linux GOARCH=amd64 go build -mod=vendor
+	tar cf build/linux_amd64.tar mmetl
+
+	@echo Build OSX amd64
+	env GOOS=darwin GOARCH=amd64 go build -mod=vendor
+	tar cf build/darwin_amd64.tar mmetl
+
+	@echo Build Windows amd64
+	env GOOS=windows GOARCH=amd64 go build -mod=vendor
+	zip build/windows_amd64.zip mmetl.exe
+
+	rm mmetl mmetl.exe
+
+gofmt:
+	@echo Running gofmt
+	@for package in $(GO_PACKAGES); do \
+		echo "Checking "$$package; \
+		files=$$(go list -f '{{range .GoFiles}}{{$$.Dir}}/{{.}} {{end}}' $$package); \
+		if [ "$$files" ]; then \
+			gofmt_output=$$(gofmt -d -s $$files 2>&1); \
+			if [ "$$gofmt_output" ]; then \
+				echo "$$gofmt_output"; \
+				echo "Gofmt failure"; \
+				exit 1; \
+			fi; \
+		fi; \
+	done
+	@echo Gofmt success
+
+govet:
+	@echo Running govet
+	$(GO) get golang.org/x/tools/go/analysis/passes/shadow/cmd/shadow
+	$(GO) vet $(GO_PACKAGES)
+	$(GO) vet -vettool=$(GOPATH)/bin/shadow $(GO_PACKAGES)
+	@echo Govet success
+
+test:
+	@echo Running tests
+	$(GO) test -race -v $(GO_PACKAGES)
+
+check: gofmt govet
+
+vendor:
+	go mod vendor
