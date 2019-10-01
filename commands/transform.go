@@ -7,7 +7,7 @@ import (
 	"log"
 	"os"
 
-	"github.com/mattermost/mmetl/services"
+	"github.com/mattermost/mmetl/services/slack"
 	"github.com/spf13/cobra"
 )
 
@@ -89,17 +89,17 @@ func transformSlackCmdF(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	slackExport, err := services.ParseSlackExportFile(team, zipReader, skipConvertPosts)
+	slackExport, err := slack.ParseSlackExportFile(team, zipReader, skipConvertPosts)
 	if err != nil {
 		return err
 	}
 
-	intermediate, err := services.Transform(slackExport, attachmentsDir, skipAttachments)
+	intermediate, err := slack.Transform(slackExport, attachmentsDir, skipAttachments)
 	if err != nil {
 		return err
 	}
 
-	if err = services.Export(team, intermediate, outputFilePath); err != nil {
+	if err = slack.Export(team, intermediate, outputFilePath); err != nil {
 		return err
 	}
 

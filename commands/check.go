@@ -4,7 +4,7 @@ import (
 	"archive/zip"
 	"os"
 
-	"github.com/mattermost/mmetl/services"
+	"github.com/mattermost/mmetl/services/slack"
 	"github.com/spf13/cobra"
 )
 
@@ -54,17 +54,17 @@ func checkSlackCmdF(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	slackExport, err := services.ParseSlackExportFile("test", zipReader, true)
+	slackExport, err := slack.ParseSlackExportFile("test", zipReader, true)
 	if err != nil {
 		return err
 	}
 
-	intermediate, err := services.Transform(slackExport, "", true)
+	intermediate, err := slack.Transform(slackExport, "", true)
 	if err != nil {
 		return err
 	}
 
-	services.Check(intermediate)
+	slack.Check(intermediate)
 
 	return nil
 }
