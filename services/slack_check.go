@@ -62,12 +62,15 @@ func Check(intermediate *Intermediate) error {
 	visitedChannels := map[string]bool{}
 	for channelName, channel := range channelsByName {
 		visitedChannels[channelName] = true
-		log.Printf("> Channel: \"%s\" Type: \"%s\" Post count: %d Members: \"%s\"", channelName, channel.Type, len(postsByChannelName[channelName]), strings.Join(channel.Members, ", "))
+		usernames := []string{}
 		for _, member := range channel.Members {
-			if _, ok := intermediate.UsersById[member]; !ok {
+			if user, ok := intermediate.UsersById[member]; !ok {
 				log.Printf("-- Invalid member: %s\n", member)
+			} else {
+				usernames = append(usernames, user.Username)
 			}
 		}
+		log.Printf("> Channel: \"%s\" Type: \"%s\" Post count: %d Members: \"%s\"", channelName, channel.Type, len(postsByChannelName[channelName]), strings.Join(usernames, ", "))
 	}
 
 	for channelName, posts := range postsByChannelName {
