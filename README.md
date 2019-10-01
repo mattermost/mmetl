@@ -18,7 +18,7 @@ flag and it will print the available subcommands and the options for
 the current command:
 
 ```sh
-mmetl --help
+$ mmetl --help
 ETL tool to transform the export files from different providers to be compatible with Mattermost.
 
 Usage:
