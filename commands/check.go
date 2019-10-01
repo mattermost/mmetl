@@ -64,10 +64,7 @@ func checkSlackCmdF(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// ToDo: err needed??
-	if err := services.Check(intermediate); err != nil {
-		return err
-	}
+	services.Check(intermediate)
 
 	return nil
 }

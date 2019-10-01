@@ -11,7 +11,7 @@ func getDirectChannelNameFromMembers(members []string) string {
 	return strings.Join(members, "_")
 }
 
-func Check(intermediate *Intermediate) error {
+func Check(intermediate *Intermediate) {
 	// create channels index
 	channelsByName := map[string]*IntermediateChannel{}
 	for _, channel := range intermediate.PublicChannels {
@@ -78,6 +78,4 @@ func Check(intermediate *Intermediate) error {
 			log.Printf("-- Channel %s has %d posts but not a channel\n", channelName, len(posts))
 		}
 	}
-
-	return nil
 }

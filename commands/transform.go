@@ -55,7 +55,7 @@ func transformSlackCmdF(cmd *cobra.Command, args []string) error {
 	// output file
 	if fileInfo, err := os.Stat(outputFilePath); err != nil && !os.IsNotExist(err) {
 		return err
-	} else if fileInfo.IsDir() {
+	} else if err == nil && fileInfo.IsDir() {
 		return errors.New(fmt.Sprintf("Output file \"%s\" is a directory", outputFilePath))
 	}
 
