@@ -14,6 +14,10 @@ import (
 	"github.com/pkg/errors"
 )
 
+const (
+	POST_MAX_ATTACHMENTS = 5
+)
+
 var isValidChannelNameCharacters = regexp.MustCompile(`^[a-zA-Z0-9\-_]+$`).MatchString
 
 func truncateRunes(s string, i int) string {
@@ -120,28 +124,74 @@ func GetAttachmentImportDataFromPaths(paths []string) []app.AttachmentImportData
 	attachments := []app.AttachmentImportData{}
 	for _, path := range paths {
 		attachmentImportData := app.AttachmentImportData{
-			Path: &path,
+			Path: model.NewString(path),
 		}
 		attachments = append(attachments, attachmentImportData)
 	}
 	return attachments
 }
 
+// This function returns a slice of replies containing all the
+// attachments above the maximum number of attachments per post.
+// The attachments that would fit in a post need to be processed
+// outside this function
+func createRepliesForAttachments(attachments []app.AttachmentImportData, user string, createAt int64) []app.ReplyImportData {
+	replies := []app.ReplyImportData{}
+
+	if len(attachments) > POST_MAX_ATTACHMENTS {
+		numberSplitPosts := len(attachments) / POST_MAX_ATTACHMENTS
+
+		for i := 1; i <= numberSplitPosts; i++ {
+			replyAttachments := attachments[POST_MAX_ATTACHMENTS*i:]
+
+			if len(replyAttachments) > POST_MAX_ATTACHMENTS {
+				replyAttachments = replyAttachments[0:POST_MAX_ATTACHMENTS]
+			}
+
+			newReply := app.ReplyImportData{
+				User:        model.NewString(user),
+				Message:     model.NewString(""),
+				CreateAt:    model.NewInt64(createAt + int64(i)),
+				Attachments: &replyAttachments,
+			}
+			replies = append(replies, newReply)
+		}
+	}
+
+	return replies
+}
+
 func GetImportLineFromPost(post *IntermediatePost, team string) *app.LineImportData {
 	replies := []app.ReplyImportData{}
+	postAttachments := GetAttachmentImportDataFromPaths(post.Attachments)
+
+	// If the post has more attachments than the maximum, create the
+	// replies to contain the extra attachments
+	if len(postAttachments) > POST_MAX_ATTACHMENTS {
+		replies = append(replies, createRepliesForAttachments(postAttachments, post.User, post.CreateAt)...)
+		postAttachments = postAttachments[0:POST_MAX_ATTACHMENTS]
+	}
+
 	for _, reply := range post.Replies {
-		attachments := GetAttachmentImportDataFromPaths(reply.Attachments)
+		replyAttachments := GetAttachmentImportDataFromPaths(reply.Attachments)
+
+		// If a reply has more attachments than the maximum, create
+		// more replies to contain the extra attachments
+		if len(replyAttachments) > POST_MAX_ATTACHMENTS {
+			replies = append(replies, createRepliesForAttachments(replyAttachments, reply.User, reply.CreateAt)...)
+			replyAttachments = replyAttachments[0:POST_MAX_ATTACHMENTS]
+		}
+
 		newReply := app.ReplyImportData{
 			User:        &reply.User,
 			Message:     &reply.Message,
 			CreateAt:    &reply.CreateAt,
-			Attachments: &attachments,
+			Attachments: &replyAttachments,
 		}
 		replies = append(replies, newReply)
 	}
 
 	var newPost *app.LineImportData
-	attachments := GetAttachmentImportDataFromPaths(post.Attachments)
 	if post.IsDirect {
 		newPost = &app.LineImportData{
 			Type: "direct_post",
@@ -151,7 +201,7 @@ func GetImportLineFromPost(post *IntermediatePost, team string) *app.LineImportD
 				Message:        &post.Message,
 				CreateAt:       &post.CreateAt,
 				Replies:        &replies,
-				Attachments:    &attachments,
+				Attachments:    &postAttachments,
 			},
 		}
 	} else {
@@ -164,7 +214,7 @@ func GetImportLineFromPost(post *IntermediatePost, team string) *app.LineImportD
 				Message:     &post.Message,
 				CreateAt:    &post.CreateAt,
 				Replies:     &replies,
-				Attachments: &attachments,
+				Attachments: &postAttachments,
 			},
 		}
 	}
