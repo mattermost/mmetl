@@ -40,7 +40,7 @@ type SlackUser struct {
 
 type SlackFile struct {
 	Id    string `json:"id"`
-	Title string `json:"title"`
+	Name  string `json:"name"`
 }
 
 type SlackPost struct {

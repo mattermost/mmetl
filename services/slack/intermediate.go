@@ -309,7 +309,7 @@ func addFileToPost(file *SlackFile, uploads map[string]*zip.File, post *Intermed
 	}
 	defer zipFileReader.Close()
 
-	destFilePath := path.Join(attachmentsDir, fmt.Sprintf("%s_%s", file.Id, file.Title))
+	destFilePath := path.Join(attachmentsDir, fmt.Sprintf("%s_%s", file.Id, file.Name))
 	destFile, err := os.Create(destFilePath)
 	if err != nil {
 		log.Printf("Error creating file %s in the attachments directory. Err=%s", file.Id, err.Error())
