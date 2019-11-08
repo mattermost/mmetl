@@ -3,6 +3,7 @@ package slack
 import (
 	"archive/zip"
 	"fmt"
+	"golang.org/x/text/unicode/norm"
 	"io"
 	"log"
 	"os"
@@ -295,6 +296,11 @@ func buildChannelsByOriginalNameMap(intermediate *Intermediate) map[string]*Inte
 	return channelsByName
 }
 
+func getNormalisedFilePath(file *SlackFile, attachmentsDir string) string {
+	filePath := path.Join(attachmentsDir, fmt.Sprintf("%s_%s", file.Id, file.Name))
+	return string(norm.NFC.Bytes([]byte(filePath)))
+}
+
 func addFileToPost(file *SlackFile, uploads map[string]*zip.File, post *IntermediatePost, attachmentsDir string) {
 	zipFile, ok := uploads[file.Id]
 	if !ok {
@@ -309,7 +315,7 @@ func addFileToPost(file *SlackFile, uploads map[string]*zip.File, post *Intermed
 	}
 	defer zipFileReader.Close()
 
-	destFilePath := path.Join(attachmentsDir, fmt.Sprintf("%s_%s", file.Id, file.Name))
+	destFilePath := getNormalisedFilePath(file, attachmentsDir)
 	destFile, err := os.Create(destFilePath)
 	if err != nil {
 		log.Printf("Error creating file %s in the attachments directory. Err=%s", file.Id, err.Error())

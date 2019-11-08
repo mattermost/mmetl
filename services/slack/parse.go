@@ -39,8 +39,8 @@ type SlackUser struct {
 }
 
 type SlackFile struct {
-	Id    string `json:"id"`
-	Name  string `json:"name"`
+	Id   string `json:"id"`
+	Name string `json:"name"`
 }
 
 type SlackPost struct {
