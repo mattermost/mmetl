@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"io"
 	"log"
+	"math"
 	"os"
 	"regexp"
 	"strconv"
@@ -29,14 +30,21 @@ func truncateRunes(s string, i int) string {
 }
 
 func SlackConvertTimeStamp(ts string) int64 {
-	timeString := strings.SplitN(ts, ".", 2)[0]
+	timeStrings := strings.Split(ts, ".")
+
+	tail := "0000"
+	if len(timeStrings) > 1 {
+		tail = timeStrings[1][:4]
+	}
+	timeString := timeStrings[0] + tail
 
 	timeStamp, err := strconv.ParseInt(timeString, 10, 64)
 	if err != nil {
 		log.Println("Slack Import: Bad timestamp detected.")
 		return 1
 	}
-	return timeStamp * 1000 // Convert to milliseconds
+
+	return int64(math.Round(float64(timeStamp) / 10)) // round for precision
 }
 
 func SlackConvertChannelName(channelName string, channelId string) string {
