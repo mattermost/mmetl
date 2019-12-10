@@ -1,3 +1,5 @@
+.PHONY: vendor
+
 GO_PACKAGES=$(shell go list ./...)
 GO ?= $(shell command -v go 2> /dev/null)
 
