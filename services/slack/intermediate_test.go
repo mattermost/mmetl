@@ -538,7 +538,7 @@ func TestPopulateChannelMemberships(t *testing.T) {
 
 	PopulateChannelMemberships(intermediate)
 
-	assert.Equal(t, []string{"u1", "u3"}, c1.Members)
-	assert.Equal(t, []string{"u1", "u2"}, c2.Members)
-	assert.Equal(t, []string{"u3"}, c3.Members)
+	assert.Equal(t, []string{"u1", "u3"}, c1.MembersUsernames)
+	assert.Equal(t, []string{"u1", "u2"}, c2.MembersUsernames)
+	assert.Equal(t, []string{"u3"}, c3.MembersUsernames)
 }
