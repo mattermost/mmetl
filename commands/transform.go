@@ -2,7 +2,6 @@ package commands
 
 import (
 	"archive/zip"
-	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -27,9 +26,13 @@ var TransformSlackCmd = &cobra.Command{
 
 func init() {
 	TransformSlackCmd.Flags().StringP("team", "t", "", "an existing team in Mattermost to import the data into")
-	TransformSlackCmd.MarkFlagRequired("team")
+	if err := TransformSlackCmd.MarkFlagRequired("team"); err != nil {
+		panic(err)
+	}
 	TransformSlackCmd.Flags().StringP("file", "f", "", "the Slack export file to transform")
-	TransformSlackCmd.MarkFlagRequired("file")
+	if err := TransformSlackCmd.MarkFlagRequired("file"); err != nil {
+		panic(err)
+	}
 	TransformSlackCmd.Flags().StringP("output", "o", "bulk-export.jsonl", "the output path")
 	TransformSlackCmd.Flags().StringP("attachments-dir", "d", "bulk-export-attachments", "the path for the attachments directory")
 	TransformSlackCmd.Flags().BoolP("skip-convert-posts", "c", false, "Skips converting mentions and post markup. Only for testing purposes")
@@ -56,7 +59,7 @@ func transformSlackCmdF(cmd *cobra.Command, args []string) error {
 	if fileInfo, err := os.Stat(outputFilePath); err != nil && !os.IsNotExist(err) {
 		return err
 	} else if err == nil && fileInfo.IsDir() {
-		return errors.New(fmt.Sprintf("Output file \"%s\" is a directory", outputFilePath))
+		return fmt.Errorf("Output file \"%s\" is a directory", outputFilePath)
 	}
 
 	// attachments dir
@@ -68,7 +71,7 @@ func transformSlackCmdF(cmd *cobra.Command, args []string) error {
 		} else if err != nil {
 			return err
 		} else if !fileInfo.IsDir() {
-			return errors.New(fmt.Sprintf("File \"%s\" is not a directory", attachmentsDir))
+			return fmt.Errorf("File \"%s\" is not a directory", attachmentsDir)
 		}
 	}
 

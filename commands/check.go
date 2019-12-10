@@ -23,7 +23,9 @@ var CheckSlackCmd = &cobra.Command{
 
 func init() {
 	CheckSlackCmd.Flags().StringP("file", "f", "", "the Slack export file to transform")
-	CheckSlackCmd.MarkFlagRequired("file")
+	if err := CheckSlackCmd.MarkFlagRequired("file"); err != nil {
+		panic(err)
+	}
 
 	CheckCmd.AddCommand(
 		CheckSlackCmd,

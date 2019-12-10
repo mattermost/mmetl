@@ -28,34 +28,21 @@ package: vendor check
 
 	rm mmetl mmetl.exe
 
-gofmt:
-	@echo Running gofmt
-	@for package in $(GO_PACKAGES); do \
-		echo "Checking "$$package; \
-		files=$$(go list -f '{{range .GoFiles}}{{$$.Dir}}/{{.}} {{end}}' $$package); \
-		if [ "$$files" ]; then \
-			gofmt_output=$$(gofmt -d -s $$files 2>&1); \
-			if [ "$$gofmt_output" ]; then \
-				echo "$$gofmt_output"; \
-				echo "Gofmt failure"; \
-				exit 1; \
-			fi; \
-		fi; \
-	done
-	@echo Gofmt success
+golangci-lint:
+# https://stackoverflow.com/a/677212/1027058 (check if a command exists or not)
+	@if ! [ -x "$$(command -v golangci-lint)" ]; then \
+		echo "golangci-lint is not installed. Please see https://github.com/golangci/golangci-lint#install for installation instructions."; \
+		exit 1; \
+	fi; \
 
-govet:
-	@echo Running govet
-	$(GO) get golang.org/x/tools/go/analysis/passes/shadow/cmd/shadow
-	$(GO) vet $(GO_PACKAGES)
-	$(GO) vet -vettool=$(GOPATH)/bin/shadow $(GO_PACKAGES)
-	@echo Govet success
+	@echo Running golangci-lint
+	golangci-lint run -E gofmt ./...
 
 test:
 	@echo Running tests
 	$(GO) test -race -v $(GO_PACKAGES)
 
-check: gofmt govet
+check-style: golangci-lint
 
 vendor:
 	go mod vendor
