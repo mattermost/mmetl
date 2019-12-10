@@ -5,13 +5,13 @@ GO ?= $(shell command -v go 2> /dev/null)
 
 all: build
 
-build: vendor check
+build: vendor check-style
 	go build -mod=vendor
 
-install: vendor check
+install: vendor check-style
 	go install -mod=vendor
 
-package: vendor check
+package: vendor check-style
 	mkdir -p build
 
 	@echo Build Linux amd64
