@@ -542,3 +542,52 @@ func TestPopulateChannelMemberships(t *testing.T) {
 	assert.Equal(t, []string{"u1", "u2"}, c2.MembersUsernames)
 	assert.Equal(t, []string{"u3"}, c3.MembersUsernames)
 }
+
+func TestAddPostToThreads(t *testing.T) {
+	t.Run("Avoid duplicated timestamps", func(t *testing.T) {
+		testCases := []struct {
+			Name               string
+			Post               *IntermediatePost
+			Timestamps         map[int64]bool
+			ExpectedTimestamp  int64
+			ExpectedTimestamps map[int64]bool
+		}{
+			{
+				Name:               "Adding a post with no collisions",
+				Post:               &IntermediatePost{CreateAt: 1549307811071},
+				Timestamps:         map[int64]bool{},
+				ExpectedTimestamp:  1549307811071,
+				ExpectedTimestamps: map[int64]bool{1549307811071: true},
+			},
+			{
+				Name:               "Adding a post with an existing timestamp",
+				Post:               &IntermediatePost{CreateAt: 1549307811071},
+				Timestamps:         map[int64]bool{1549307811071: true},
+				ExpectedTimestamp:  1549307811072,
+				ExpectedTimestamps: map[int64]bool{1549307811071: true, 1549307811072: true},
+			},
+			{
+				Name:               "Adding a post with several sequential existing timestamps",
+				Post:               &IntermediatePost{CreateAt: 1549307811071},
+				Timestamps:         map[int64]bool{1549307811071: true, 1549307811072: true},
+				ExpectedTimestamp:  1549307811073,
+				ExpectedTimestamps: map[int64]bool{1549307811071: true, 1549307811072: true, 1549307811073: true},
+			},
+		}
+
+		for _, tc := range testCases {
+			t.Run(tc.Name, func(t *testing.T) {
+				original := SlackPost{TimeStamp: "thread-ts"}
+				channel := &IntermediateChannel{Type: model.CHANNEL_OPEN}
+				threads := map[string]*IntermediatePost{}
+
+				AddPostToThreads(original, tc.Post, threads, channel, tc.Timestamps)
+				newPost := threads["thread-ts"]
+				require.NotNil(t, newPost)
+				require.Equal(t, tc.Post, newPost)
+				require.Equal(t, tc.ExpectedTimestamp, newPost.CreateAt)
+				require.EqualValues(t, tc.ExpectedTimestamps, tc.Timestamps)
+			})
+		}
+	})
+}

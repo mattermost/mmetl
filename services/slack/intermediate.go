@@ -243,7 +243,7 @@ func TransformAllChannels(slackExport *SlackExport, intermediate *Intermediate) 
 	return nil
 }
 
-func AddPostToThreads(original SlackPost, post *IntermediatePost, threads map[string]*IntermediatePost, channel *IntermediateChannel) {
+func AddPostToThreads(original SlackPost, post *IntermediatePost, threads map[string]*IntermediatePost, channel *IntermediateChannel, timestamps map[int64]bool) {
 	// direct and group posts need the channel members in the import line
 	if channel.Type == model.CHANNEL_DIRECT || channel.Type == model.CHANNEL_GROUP {
 		post.IsDirect = true
@@ -251,6 +251,16 @@ func AddPostToThreads(original SlackPost, post *IntermediatePost, threads map[st
 	} else {
 		post.IsDirect = false
 	}
+
+	// avoid timestamp duplications
+	for {
+		// if the timestamp hasn't been used already, break and use
+		if _, ok := timestamps[post.CreateAt]; !ok {
+			break
+		}
+		post.CreateAt++
+	}
+	timestamps[post.CreateAt] = true
 
 	// if post is part of a thread
 	if original.ThreadTS != "" && original.ThreadTS != original.TimeStamp {
@@ -347,6 +357,7 @@ func TransformPosts(slackExport *SlackExport, intermediate *Intermediate, attach
 			continue
 		}
 
+		timestamps := make(map[int64]bool)
 		sort.Slice(channelPosts, func(i, j int) bool {
 			return SlackConvertTimeStamp(channelPosts[i].TimeStamp) < SlackConvertTimeStamp(channelPosts[j].TimeStamp)
 		})
@@ -381,7 +392,7 @@ func TransformPosts(slackExport *SlackExport, intermediate *Intermediate, attach
 					}
 				}
 
-				AddPostToThreads(post, newPost, threads, channel)
+				AddPostToThreads(post, newPost, threads, channel, timestamps)
 
 			// file comment
 			case post.IsFileComment():
@@ -405,7 +416,7 @@ func TransformPosts(slackExport *SlackExport, intermediate *Intermediate, attach
 					CreateAt: SlackConvertTimeStamp(post.TimeStamp),
 				}
 
-				AddPostToThreads(post, newPost, threads, channel)
+				AddPostToThreads(post, newPost, threads, channel, timestamps)
 
 			// bot message
 			case post.IsBotMessage():
@@ -442,7 +453,7 @@ func TransformPosts(slackExport *SlackExport, intermediate *Intermediate, attach
 					// Type:     model.POST_HEADER_CHANGE,
 				}
 
-				AddPostToThreads(post, newPost, threads, channel)
+				AddPostToThreads(post, newPost, threads, channel, timestamps)
 
 			// change channel purpose message
 			case post.IsChannelPurposeMessage():
@@ -464,7 +475,7 @@ func TransformPosts(slackExport *SlackExport, intermediate *Intermediate, attach
 					// Type:     model.POST_HEADER_CHANGE,
 				}
 
-				AddPostToThreads(post, newPost, threads, channel)
+				AddPostToThreads(post, newPost, threads, channel, timestamps)
 
 			// change channel name message
 			case post.IsChannelNameMessage():
@@ -486,7 +497,7 @@ func TransformPosts(slackExport *SlackExport, intermediate *Intermediate, attach
 					// Type:     model.POST_DISPLAYNAME_CHANGE,
 				}
 
-				AddPostToThreads(post, newPost, threads, channel)
+				AddPostToThreads(post, newPost, threads, channel, timestamps)
 
 			default:
 				log.Println("Slack Import: Unable to import the message as its type is not supported. post_type=" + post.Type + " post_subtype=" + post.SubType)
