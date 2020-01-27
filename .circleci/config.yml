@@ -44,7 +44,7 @@ commands:
 jobs:
   build:
     docker:
-      - image: cibuilds/github:0.12
+      - image: circleci/golang:1.13
     steps:
       - checkout
       - run: make package
