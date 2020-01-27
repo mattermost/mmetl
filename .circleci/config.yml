@@ -13,7 +13,7 @@ jobs:
       - checkout
       - run:
           command: |
-            echo "Installing mattermost-govet"
+            echo "Installing mattermost-govet."
             GO111MODULE=off go get -u github.com/mattermost/mattermost-govet
             echo "Installing shadow"
             GO111MODULE=off go get -u golang.org/x/tools/go/analysis/passes/shadow/cmd/shadow
