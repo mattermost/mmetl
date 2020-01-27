@@ -43,6 +43,8 @@ commands:
         
 jobs:
   build:
+    docker:
+      - image: cibuilds/github:0.12
     steps:
       - checkout
       - run: make package
