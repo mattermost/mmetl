@@ -47,7 +47,11 @@ jobs:
       - image: circleci/golang:1.13
     steps:
       - checkout
+      - install-golangci-lint
+      - *restore_cache
+      - run: make verify-gomod
       - run: make package
+      - *save_cache      
       - persist_to_workspace:
           root: .
           paths:
