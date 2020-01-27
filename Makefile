@@ -49,6 +49,5 @@ verify-gomod:
 	$(GO) mod download
 	$(GO) mod verify
 
-
 vendor:
 	go mod vendor
