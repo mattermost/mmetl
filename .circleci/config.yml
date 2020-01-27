@@ -43,8 +43,6 @@ commands:
         
 jobs:
   build:
-    executor:
-      name: default
     steps:
       - checkout
       - run: make package
