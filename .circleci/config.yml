@@ -1,25 +1,17 @@
 version: 2.1
-executors:
-  default:
-    working_directory: ~/go/src/github.com/mattermost/mmetl
-    docker:
-      - image: circleci/golang:1.13
 
-jobs:
-  lint:
-    executor:
-      name: default
-    steps:
-      - checkout
-      - install-golangci-lint
-      - run:
-          command: |
-            echo "Installing mattermost-govet."
-            GO111MODULE=off go get -u github.com/mattermost/mattermost-govet
-            echo "Installing shadow"
-            GO111MODULE=off go get -u golang.org/x/tools/go/analysis/passes/shadow/cmd/shadow
-            make check-style
+aliases:
+  - &restore_cache
+    restore_cache:
+      key: go-mod-v1-{{ checksum "go.sum" }}
+  - &save_cache
+    save_cache:
+      key: go-mod-v1-{{ checksum "go.sum" }}
+      paths:
+      - "/go/pkg/mod"
+        
 
+commands:
   install-golangci-lint:
     description: Install golangci-lint
     parameters:
@@ -48,22 +40,8 @@ jobs:
           name: Save golangci-lint cache
           key: '<< parameters.prefix >>-golangci-lint-{{ arch }}-<< parameters.version >>'
           paths: [<< parameters.gobin >>/golangci-lint]
-          
-  test:
-    machine:
-      image: ubuntu-1604:201903-01
-    working_directory: ~/go/src/github.com/mattermost/mmetl
-    environment:
-      COMPOSE_PROJECT_NAME: "circleci"
-    steps:
-      - checkout
-      - attach_workspace:
-          at: ~/go/src/github.com/mattermost/
-      - run:
-          name: Run Tests
-          command: |
-            make test
-
+        
+jobs:
   build:
     executor:
       name: default
@@ -88,20 +66,25 @@ jobs:
             ghr -t ${GITHUB_TOKEN} -u ${CIRCLE_PROJECT_USERNAME} -r ${CIRCLE_PROJECT_REPONAME} -c ${CIRCLE_SHA1} -delete ${CIRCLE_TAG} ./build/*.tar.gz
             ghr -t ${GITHUB_TOKEN} -u ${CIRCLE_PROJECT_USERNAME} -r ${CIRCLE_PROJECT_REPONAME} -c ${CIRCLE_SHA1} -delete ${CIRCLE_TAG} ./build/*.zip
 
+  test:
+    docker:
+      - image: circleci/golang:1.13
+    steps:
+      - checkout
+      - install-golangci-lint
+      - *restore_cache
+      - run: make verify-gomod
+      - run: make check-style
+      - run: make test
+      - *save_cache
+            
 workflows:
   version: 2
   untagged-build:
     jobs:
-      - lint
       - test
   tagged-build:
     jobs:
-      - lint:
-          filters:
-            tags:
-              only: /^v.*/
-            branches:
-              ignore: /.*/
       - test:
           filters:
             tags:
