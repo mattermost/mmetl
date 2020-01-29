@@ -2,29 +2,38 @@
 
 GO_PACKAGES=$(shell go list ./...)
 GO ?= $(shell command -v go 2> /dev/null)
+BUILD_HASH ?= $(shell git rev-parse HEAD)
+BUILD_VERSION ?= $(shell git ls-remote --tags --refs git://github.com/mattermost/mmetl | tail -n1 | sed 's/.*\///')
 
+LDFLAGS += -X "github.com/mattermost/mmetl/commands.BuildHash=$(BUILD_HASH)"
+LDFLAGS += -X "github.com/mattermost/mmetl/commands.Version=$(BUILD_VERSION)"
+BUILD_COMMAND ?= go build -ldflags '$(LDFLAGS)' -mod=vendor
 all: build
 
 build: vendor check-style
-	go build -mod=vendor
+	$(BUILD_COMMAND)
+	md5sum < mmetl | cut -d ' ' -f 1 > mmetl.md5.txt
 
 install: vendor check-style
-	go install -mod=vendor
+	go install -ldflags '$(LDFLAGS)' -mod=vendor
 
 package: vendor check-style
 	mkdir -p build
 
 	@echo Build Linux amd64
-	env GOOS=linux GOARCH=amd64 go build -mod=vendor
+	env GOOS=linux GOARCH=amd64 $(BUILD_COMMAND)
 	tar cf build/linux_amd64.tar mmetl
+	md5sum < build/linux_amd64.tar | cut -d ' ' -f 1 > build/linux_amd64.tar.md5.txt
 
 	@echo Build OSX amd64
-	env GOOS=darwin GOARCH=amd64 go build -mod=vendor
+	env GOOS=darwin GOARCH=amd64 $(BUILD_COMMAND)
 	tar cf build/darwin_amd64.tar mmetl
+	md5sum < build/darwin_amd64.tar | cut -d ' ' -f 1 > build/darwin_amd64.tar.md5.txt
 
 	@echo Build Windows amd64
-	env GOOS=windows GOARCH=amd64 go build -mod=vendor
+	env GOOS=windows GOARCH=amd64 $(BUILD_COMMAND)
 	zip build/windows_amd64.zip mmetl.exe
+	md5sum < build/windows_amd64.zip | cut -d ' ' -f 1 > build/windows_amd64.zip.md5.txt
 
 	rm mmetl mmetl.exe
 
@@ -37,6 +46,24 @@ golangci-lint:
 
 	@echo Running golangci-lint
 	golangci-lint run -E gofmt ./...
+
+
+gofmt:
+	@echo Running gofmt
+	@for package in $(GO_PACKAGES); do \
+		echo "Checking "$$package; \
+		files=$$(go list -f '{{range .GoFiles}}{{$$.Dir}}/{{.}} {{end}}' $$package); \
+		if [ "$$files" ]; then \
+			gofmt_output=$$(gofmt -d -s $$files 2>&1); \
+			if [ "$$gofmt_output" ]; then \
+				echo "$$gofmt_output"; \
+				echo "Gofmt failure"; \
+				exit 1; \
+			fi; \
+		fi; \
+	done
+	@echo Gofmt success
+
 
 test:
 	@echo Running tests

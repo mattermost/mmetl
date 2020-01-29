@@ -44,15 +44,18 @@ commands:
 jobs:
   build:
     docker:
-      - image: cibuilds/github:0.12
+      - image: circleci/golang:1.13
     steps:
       - checkout
+      - install-golangci-lint
+      - *restore_cache
+      - run: make verify-gomod
       - run: make package
+      - *save_cache      
       - persist_to_workspace:
           root: .
           paths:
-            - ./build/*.tar.gz
-            - ./build/*.zip
+            - build
 
   publish-github-release:
     docker:
@@ -63,8 +66,7 @@ jobs:
       - run:
           name: "Publish Release on GitHub"
           command: |
-            ghr -t ${GITHUB_TOKEN} -u ${CIRCLE_PROJECT_USERNAME} -r ${CIRCLE_PROJECT_REPONAME} -c ${CIRCLE_SHA1} -delete ${CIRCLE_TAG} ./build/*.tar.gz
-            ghr -t ${GITHUB_TOKEN} -u ${CIRCLE_PROJECT_USERNAME} -r ${CIRCLE_PROJECT_REPONAME} -c ${CIRCLE_SHA1} -delete ${CIRCLE_TAG} ./build/*.zip
+            ghr -t ${GITHUB_TOKEN} -u ${CIRCLE_PROJECT_USERNAME} -r ${CIRCLE_PROJECT_REPONAME} -c ${CIRCLE_SHA1} -delete ${CIRCLE_TAG} ./build
 
   test:
     docker:
