@@ -55,8 +55,7 @@ jobs:
       - persist_to_workspace:
           root: .
           paths:
-            - ./build/*.tar
-            - ./build/*.zip
+            - build
 
   publish-github-release:
     docker:
