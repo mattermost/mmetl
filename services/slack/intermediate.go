@@ -25,6 +25,7 @@ type IntermediateChannel struct {
 	Header           string   `json:"header"`
 	Topic            string   `json:"topic"`
 	Type             string   `json:"type"`
+	IsArchived       bool     `json:"is_archived"`
 }
 
 func (c *IntermediateChannel) Sanitise() {
@@ -167,6 +168,7 @@ func TransformChannels(channels []SlackChannel, users map[string]*IntermediateUs
 			Purpose:      channel.Purpose.Value,
 			Header:       channel.Topic.Value,
 			Type:         channel.Type,
+			IsArchived:	channel.IsArchived,
 		}
 
 		newChannel.Sanitise()
@@ -373,6 +375,10 @@ func TransformPosts(slackExport *SlackExport, intermediate *Intermediate, attach
 							addFileToPost(file, slackExport.Uploads, newPost, attachmentsDir)
 						}
 					}
+				}
+
+				if len(post.Attachments) > 0 {
+					newPost.Message = newPost.Message + " \n >" + post.Attachments[0].Fallback
 				}
 
 				AddPostToThreads(post, newPost, threads, channel)
