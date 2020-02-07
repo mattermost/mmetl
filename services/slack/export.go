@@ -80,8 +80,6 @@ func GetImportLineFromChannel(team string, channel *IntermediateChannel) *app.Li
 		Type:        &channel.Type,
 		Header:      &channel.Header,
 		Purpose:     &channel.Purpose,
-		//TODO: needs support in mattermost channel model before this can be uncommented
-		//IsArchived: &channel.IsArchived,
 	}
 
 	return &app.LineImportData{

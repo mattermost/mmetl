@@ -27,7 +27,6 @@ type IntermediateChannel struct {
 	Header           string   `json:"header"`
 	Topic            string   `json:"topic"`
 	Type             string   `json:"type"`
-	IsArchived       bool     `json:"is_archived"`
 }
 
 func (c *IntermediateChannel) Sanitise() {
