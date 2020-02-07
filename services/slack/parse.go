@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mattermost/mattermost-server/model"
+	"github.com/mattermost/mattermost-server/v5/model"
 )
 
 type SlackChannel struct {
@@ -41,8 +41,8 @@ type SlackUser struct {
 }
 
 type SlackFile struct {
-	Id    string `json:"id"`
-	Title string `json:"title"`
+	Id   string `json:"id"`
+	Name string `json:"name"`
 }
 
 type SlackPost struct {

@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mattermost/mattermost-server/model"
+	"github.com/mattermost/mattermost-server/v5/model"
 )
 
 func TestIntermediateChannelSanitise(t *testing.T) {
@@ -72,11 +72,7 @@ func TestIntermediateChannelSanitise(t *testing.T) {
 }
 
 func TestTransformPublicChannels(t *testing.T) {
-	users := map[string]*IntermediateUser{
-		"m1": &IntermediateUser{},
-		"m2": &IntermediateUser{},
-		"m3": &IntermediateUser{},
-	}
+	users := map[string]*IntermediateUser{"m1": {}, "m2": {}, "m3": {}}
 	publicChannels := []SlackChannel{
 		{
 			Id:      "id1",
@@ -122,7 +118,7 @@ func TestTransformPublicChannels(t *testing.T) {
 	result := TransformChannels(publicChannels, users)
 	require.Len(t, result, len(publicChannels))
 
-	for i, _ := range result {
+	for i := range result {
 		assert.Equal(t, fmt.Sprintf("channel-name-%d", i+1), result[i].Name)
 		assert.Equal(t, fmt.Sprintf("channel-name-%d", i+1), result[i].DisplayName)
 		assert.Equal(t, []string{"m1", "m2", "m3"}, result[i].Members)
@@ -133,10 +129,7 @@ func TestTransformPublicChannels(t *testing.T) {
 }
 
 func TestTransformPublicChannelsWithAnInvalidMember(t *testing.T) {
-	users := map[string]*IntermediateUser{
-		"m1": &IntermediateUser{},
-		"m2": &IntermediateUser{},
-	}
+	users := map[string]*IntermediateUser{"m1": {}, "m2": {}}
 	publicChannels := []SlackChannel{
 		{
 			Id:      "id1",
@@ -182,7 +175,7 @@ func TestTransformPublicChannelsWithAnInvalidMember(t *testing.T) {
 	result := TransformChannels(publicChannels, users)
 	require.Len(t, result, len(publicChannels))
 
-	for i, _ := range result {
+	for i := range result {
 		assert.Equal(t, fmt.Sprintf("channel-name-%d", i+1), result[i].Name)
 		assert.Equal(t, fmt.Sprintf("channel-name-%d", i+1), result[i].DisplayName)
 		assert.Equal(t, []string{"m1", "m2"}, result[i].Members)
@@ -193,11 +186,7 @@ func TestTransformPublicChannelsWithAnInvalidMember(t *testing.T) {
 }
 
 func TestTransformPrivateChannels(t *testing.T) {
-	users := map[string]*IntermediateUser{
-		"m1": &IntermediateUser{},
-		"m2": &IntermediateUser{},
-		"m3": &IntermediateUser{},
-	}
+	users := map[string]*IntermediateUser{"m1": {}, "m2": {}, "m3": {}}
 	privateChannels := []SlackChannel{
 		{
 			Id:      "id1",
@@ -243,7 +232,7 @@ func TestTransformPrivateChannels(t *testing.T) {
 	result := TransformChannels(privateChannels, users)
 	require.Len(t, result, len(privateChannels))
 
-	for i, _ := range result {
+	for i := range result {
 		assert.Equal(t, fmt.Sprintf("channel-name-%d", i+1), result[i].Name)
 		assert.Equal(t, fmt.Sprintf("channel-name-%d", i+1), result[i].DisplayName)
 		assert.Equal(t, []string{"m1", "m2", "m3"}, result[i].Members)
@@ -255,17 +244,7 @@ func TestTransformPrivateChannels(t *testing.T) {
 
 func TestTransformBigGroupChannels(t *testing.T) {
 	channelMembers := []string{"m1", "m2", "m3", "m4", "m5", "m6", "m7", "m8", "m9"}
-	users := map[string]*IntermediateUser{
-		"m1": &IntermediateUser{},
-		"m2": &IntermediateUser{},
-		"m3": &IntermediateUser{},
-		"m4": &IntermediateUser{},
-		"m5": &IntermediateUser{},
-		"m6": &IntermediateUser{},
-		"m7": &IntermediateUser{},
-		"m8": &IntermediateUser{},
-		"m9": &IntermediateUser{},
-	}
+	users := map[string]*IntermediateUser{"m1": {}, "m2": {}, "m3": {}, "m4": {}, "m5": {}, "m6": {}, "m7": {}, "m8": {}, "m9": {}}
 	bigGroupChannels := []SlackChannel{
 		{
 			Id:      "id1",
@@ -309,7 +288,7 @@ func TestTransformBigGroupChannels(t *testing.T) {
 	result := TransformChannels(bigGroupChannels, users)
 	require.Len(t, result, len(bigGroupChannels))
 
-	for i, _ := range result {
+	for i := range result {
 		assert.Equal(t, fmt.Sprintf("purpose%d", i+1), result[i].Name)
 		assert.Equal(t, fmt.Sprintf("purpose%d", i+1), result[i].DisplayName)
 		assert.Equal(t, channelMembers, result[i].Members)
@@ -320,11 +299,7 @@ func TestTransformBigGroupChannels(t *testing.T) {
 }
 
 func TestTransformRegularGroupChannels(t *testing.T) {
-	users := map[string]*IntermediateUser{
-		"m1": &IntermediateUser{},
-		"m2": &IntermediateUser{},
-		"m3": &IntermediateUser{},
-	}
+	users := map[string]*IntermediateUser{"m1": {}, "m2": {}, "m3": {}}
 	regularGroupChannels := []SlackChannel{
 		{
 			Id:      "id1",
@@ -369,7 +344,7 @@ func TestTransformRegularGroupChannels(t *testing.T) {
 	result := TransformChannels(regularGroupChannels, users)
 	require.Len(t, result, len(regularGroupChannels))
 
-	for i, _ := range result {
+	for i := range result {
 		assert.Equal(t, fmt.Sprintf("channel-name-%d", i+1), result[i].Name)
 		assert.Equal(t, fmt.Sprintf("channel-name-%d", i+1), result[i].DisplayName)
 		assert.Equal(t, []string{"m1", "m2", "m3"}, result[i].Members)
@@ -380,11 +355,7 @@ func TestTransformRegularGroupChannels(t *testing.T) {
 }
 
 func TestTransformDirectChannels(t *testing.T) {
-	users := map[string]*IntermediateUser{
-		"m1": &IntermediateUser{},
-		"m2": &IntermediateUser{},
-		"m3": &IntermediateUser{},
-	}
+	users := map[string]*IntermediateUser{"m1": {}, "m2": {}, "m3": {}}
 	directChannels := []SlackChannel{
 		{
 			Id:      "id1",
@@ -409,16 +380,14 @@ func TestTransformDirectChannels(t *testing.T) {
 	result := TransformChannels(directChannels, users)
 	require.Len(t, result, len(directChannels))
 
-	for i, _ := range result {
+	for i := range result {
 		assert.Equal(t, []string{"m1", "m2", "m3"}, result[i].Members)
 		assert.Equal(t, model.CHANNEL_DIRECT, result[i].Type)
 	}
 }
 
 func TestTransformChannelWithOneValidMember(t *testing.T) {
-	users := map[string]*IntermediateUser{
-		"m1": &IntermediateUser{},
-	}
+	users := map[string]*IntermediateUser{"m1": {}}
 	t.Run("A direct channel with only one valid member should not be transformed", func(t *testing.T) {
 		directChannels := []SlackChannel{
 			{
@@ -517,11 +486,7 @@ func TestTransformUsers(t *testing.T) {
 
 func TestPopulateUserMemberships(t *testing.T) {
 	intermediate := &Intermediate{
-		UsersById: map[string]*IntermediateUser{
-			"id1": &IntermediateUser{},
-			"id2": &IntermediateUser{},
-			"id3": &IntermediateUser{},
-		},
+		UsersById: map[string]*IntermediateUser{"id1": {}, "id2": {}, "id3": {}},
 		PublicChannels: []*IntermediateChannel{
 			{
 				Name:    "c1",
@@ -563,9 +528,9 @@ func TestPopulateChannelMemberships(t *testing.T) {
 
 	intermediate := &Intermediate{
 		UsersById: map[string]*IntermediateUser{
-			"id1": &IntermediateUser{Username: "u1"},
-			"id2": &IntermediateUser{Username: "u2"},
-			"id3": &IntermediateUser{Username: "u3"},
+			"id1": {Username: "u1"},
+			"id2": {Username: "u2"},
+			"id3": {Username: "u3"},
 		},
 		GroupChannels:  []*IntermediateChannel{&c1, &c2},
 		DirectChannels: []*IntermediateChannel{&c3},
@@ -573,7 +538,56 @@ func TestPopulateChannelMemberships(t *testing.T) {
 
 	PopulateChannelMemberships(intermediate)
 
-	assert.Equal(t, []string{"u1", "u3"}, c1.Members)
-	assert.Equal(t, []string{"u1", "u2"}, c2.Members)
-	assert.Equal(t, []string{"u3"}, c3.Members)
+	assert.Equal(t, []string{"u1", "u3"}, c1.MembersUsernames)
+	assert.Equal(t, []string{"u1", "u2"}, c2.MembersUsernames)
+	assert.Equal(t, []string{"u3"}, c3.MembersUsernames)
+}
+
+func TestAddPostToThreads(t *testing.T) {
+	t.Run("Avoid duplicated timestamps", func(t *testing.T) {
+		testCases := []struct {
+			Name               string
+			Post               *IntermediatePost
+			Timestamps         map[int64]bool
+			ExpectedTimestamp  int64
+			ExpectedTimestamps map[int64]bool
+		}{
+			{
+				Name:               "Adding a post with no collisions",
+				Post:               &IntermediatePost{CreateAt: 1549307811071},
+				Timestamps:         map[int64]bool{},
+				ExpectedTimestamp:  1549307811071,
+				ExpectedTimestamps: map[int64]bool{1549307811071: true},
+			},
+			{
+				Name:               "Adding a post with an existing timestamp",
+				Post:               &IntermediatePost{CreateAt: 1549307811071},
+				Timestamps:         map[int64]bool{1549307811071: true},
+				ExpectedTimestamp:  1549307811072,
+				ExpectedTimestamps: map[int64]bool{1549307811071: true, 1549307811072: true},
+			},
+			{
+				Name:               "Adding a post with several sequential existing timestamps",
+				Post:               &IntermediatePost{CreateAt: 1549307811071},
+				Timestamps:         map[int64]bool{1549307811071: true, 1549307811072: true},
+				ExpectedTimestamp:  1549307811073,
+				ExpectedTimestamps: map[int64]bool{1549307811071: true, 1549307811072: true, 1549307811073: true},
+			},
+		}
+
+		for _, tc := range testCases {
+			t.Run(tc.Name, func(t *testing.T) {
+				original := SlackPost{TimeStamp: "thread-ts"}
+				channel := &IntermediateChannel{Type: model.CHANNEL_OPEN}
+				threads := map[string]*IntermediatePost{}
+
+				AddPostToThreads(original, tc.Post, threads, channel, tc.Timestamps)
+				newPost := threads["thread-ts"]
+				require.NotNil(t, newPost)
+				require.Equal(t, tc.Post, newPost)
+				require.Equal(t, tc.ExpectedTimestamp, newPost.CreateAt)
+				require.EqualValues(t, tc.ExpectedTimestamps, tc.Timestamps)
+			})
+		}
+	})
 }
