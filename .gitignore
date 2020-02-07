@@ -2,3 +2,4 @@ mmetl
 *.tar
 *.zip
 *.md5*
+.idea
