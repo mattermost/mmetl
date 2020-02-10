@@ -19,7 +19,6 @@ type SlackChannel struct {
 	Members []string        `json:"members"`
 	Purpose SlackChannelSub `json:"purpose"`
 	Topic   SlackChannelSub `json:"topic"`
-	Pins    []SlackPost     `json:"pins"`
 	Type    string
 }
 

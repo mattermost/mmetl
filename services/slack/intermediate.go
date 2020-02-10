@@ -169,7 +169,6 @@ func TransformChannels(channels []SlackChannel, users map[string]*IntermediateUs
 			Purpose:      channel.Purpose.Value,
 			Header:       channel.Topic.Value,
 			Type:         channel.Type,
-			IsArchived:   channel.IsArchived,
 		}
 
 		newChannel.Sanitise()
