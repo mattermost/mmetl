@@ -30,12 +30,14 @@ type SlackProfile struct {
 	FirstName string `json:"first_name"`
 	LastName  string `json:"last_name"`
 	Email     string `json:"email"`
+	BotId     string `json:"bot_id"`
 }
 
 type SlackUser struct {
 	Id       string       `json:"id"`
 	Username string       `json:"name"`
 	Profile  SlackProfile `json:"profile"`
+	IsBot    bool         `json:"is_bot"`
 }
 
 type SlackFile struct {

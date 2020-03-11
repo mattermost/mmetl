@@ -90,6 +90,7 @@ type IntermediatePost struct {
 	User     string `json:"user"`
 	Channel  string `json:"channel"`
 	Message  string `json:"message"`
+	Props string `json:"props"`
 	CreateAt int64  `json:"create_at"`
 	// Type           string              `json:"type"`
 	Attachments    []string            `json:"attachments"`
@@ -110,6 +111,9 @@ type Intermediate struct {
 func TransformUsers(users []SlackUser, intermediate *Intermediate) {
 	resultUsers := map[string]*IntermediateUser{}
 	for _, user := range users {
+		if user.IsBot {
+			user.Id = user.Profile.BotId
+		}
 		newUser := &IntermediateUser{
 			Id:        user.Id,
 			Username:  user.Username,
@@ -425,8 +429,36 @@ func TransformPosts(slackExport *SlackExport, intermediate *Intermediate, attach
 
 			// bot message
 			case post.IsBotMessage():
-				// log.Println("Slack Import: bot messages are not yet supported")
-				break
+				if post.BotId == "" {
+					log.Println("Slack Import: Unable to import the message as the user field is missing.")
+					continue
+				}
+				author := intermediate.UsersById[post.BotId]
+				if author == nil {
+					log.Println("Slack Import: Unable to add the message as the Slack user does not exist in Mattermost. user=" + post.User)
+					continue
+				}
+				newPost := &IntermediatePost{
+					User:     author.Username,
+					Channel:  channel.Name,
+					Message:  post.Text,
+					CreateAt: SlackConvertTimeStamp(post.TimeStamp),
+				}
+				if post.Upload && !skipAttachments {
+					if post.File != nil {
+						addFileToPost(post.File, slackExport.Uploads, newPost, attachmentsDir)
+					} else if post.Files != nil {
+						for _, file := range post.Files {
+							addFileToPost(file, slackExport.Uploads, newPost, attachmentsDir)
+						}
+					}
+				}
+
+				if len(post.Attachments) > 0 {
+					newPost.Message = newPost.Message + " \n >" + post.Attachments[0].Fallback
+				}
+
+				AddPostToThreads(post, newPost, threads, channel, timestamps)
 
 			// channel join/leave messages
 			case post.IsJoinLeaveMessage():
