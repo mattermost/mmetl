@@ -87,11 +87,11 @@ func (u *IntermediateUser) Sanitise() {
 }
 
 type IntermediatePost struct {
-	User     string `json:"user"`
-	Channel  string `json:"channel"`
-	Message  string `json:"message"`
-	Props string `json:"props"`
-	CreateAt int64  `json:"create_at"`
+	User     string                `json:"user"`
+	Channel  string                `json:"channel"`
+	Message  string                `json:"message"`
+	Props    model.StringInterface `json:"props"`
+	CreateAt int64                 `json:"create_at"`
 	// Type           string              `json:"type"`
 	Attachments    []string            `json:"attachments"`
 	Replies        []*IntermediatePost `json:"replies"`
@@ -398,7 +398,7 @@ func TransformPosts(slackExport *SlackExport, intermediate *Intermediate, attach
 				}
 
 				if len(post.Attachments) > 0 {
-					newPost.Message = newPost.Message + " \n >" + post.Attachments[0].Fallback
+					newPost.Props = model.StringInterface{"attachments": post.Attachments}
 				}
 
 				AddPostToThreads(post, newPost, threads, channel, timestamps)
@@ -455,7 +455,7 @@ func TransformPosts(slackExport *SlackExport, intermediate *Intermediate, attach
 				}
 
 				if len(post.Attachments) > 0 {
-					newPost.Message = newPost.Message + " \n >" + post.Attachments[0].Fallback
+					newPost.Props = model.StringInterface{"attachments": post.Attachments}
 				}
 
 				AddPostToThreads(post, newPost, threads, channel, timestamps)
