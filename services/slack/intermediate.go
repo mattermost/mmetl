@@ -87,11 +87,11 @@ func (u *IntermediateUser) Sanitise() {
 }
 
 type IntermediatePost struct {
-	User     string `json:"user"`
-	Channel  string `json:"channel"`
-	Message  string `json:"message"`
-	Props string `json:"props"`
-	CreateAt int64  `json:"create_at"`
+	User     string                `json:"user"`
+	Channel  string                `json:"channel"`
+	Message  string                `json:"message"`
+	Props    model.StringInterface `json:"props"`
+	CreateAt int64                 `json:"create_at"`
 	// Type           string              `json:"type"`
 	Attachments    []string            `json:"attachments"`
 	Replies        []*IntermediatePost `json:"replies"`
@@ -378,8 +378,18 @@ func TransformPosts(slackExport *SlackExport, intermediate *Intermediate, attach
 				}
 				author := intermediate.UsersById[post.User]
 				if author == nil {
-					log.Println("Slack Import: Unable to add the message as the Slack user does not exist in Mattermost. user=" + post.User)
-					continue
+					newUser := &IntermediateUser{
+						Id:        post.User,
+						Username:  post.User,
+						FirstName: "Deleted",
+						LastName:  "User",
+						Email:     fmt.Sprintf("%s@local", post.User),
+						Password:  model.NewId(),
+					}
+
+					intermediate.UsersById[post.User] = newUser
+					log.Println("Slack Import: Created new user because original user missing form the import files. user=" + post.User)
+					author = intermediate.UsersById[post.User]
 				}
 				newPost := &IntermediatePost{
 					User:     author.Username,
@@ -398,7 +408,7 @@ func TransformPosts(slackExport *SlackExport, intermediate *Intermediate, attach
 				}
 
 				if len(post.Attachments) > 0 {
-					newPost.Message = newPost.Message + " \n >" + post.Attachments[0].Fallback
+					newPost.Props = model.StringInterface{"attachments": post.Attachments}
 				}
 
 				AddPostToThreads(post, newPost, threads, channel, timestamps)
@@ -435,8 +445,18 @@ func TransformPosts(slackExport *SlackExport, intermediate *Intermediate, attach
 				}
 				author := intermediate.UsersById[post.BotId]
 				if author == nil {
-					log.Println("Slack Import: Unable to add the message as the Slack user does not exist in Mattermost. user=" + post.User)
-					continue
+					newUser := &IntermediateUser{
+						Id:        post.BotId,
+						Username:  post.BotId,
+						FirstName: "Deleted",
+						LastName:  "Bot User",
+						Email:     fmt.Sprintf("%s@local", post.BotId),
+						Password:  model.NewId(),
+					}
+
+					intermediate.UsersById[post.BotId] = newUser
+					log.Println("Slack Import: Created new user because original user missing form the import files. user=" + post.BotId)
+					author = intermediate.UsersById[post.BotId]
 				}
 				newPost := &IntermediatePost{
 					User:     author.Username,
@@ -455,7 +475,7 @@ func TransformPosts(slackExport *SlackExport, intermediate *Intermediate, attach
 				}
 
 				if len(post.Attachments) > 0 {
-					newPost.Message = newPost.Message + " \n >" + post.Attachments[0].Fallback
+					newPost.Props = model.StringInterface{"attachments": post.Attachments}
 				}
 
 				AddPostToThreads(post, newPost, threads, channel, timestamps)
