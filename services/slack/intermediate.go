@@ -3,7 +3,6 @@ package slack
 import (
 	"archive/zip"
 	"fmt"
-	"golang.org/x/text/unicode/norm"
 	"io"
 	"log"
 	"os"
@@ -11,6 +10,8 @@ import (
 	"sort"
 	"strings"
 	"unicode/utf8"
+
+	"golang.org/x/text/unicode/norm"
 
 	"github.com/mattermost/mattermost-server/v5/model"
 )
@@ -86,10 +87,11 @@ func (u *IntermediateUser) Sanitise() {
 }
 
 type IntermediatePost struct {
-	User     string `json:"user"`
-	Channel  string `json:"channel"`
-	Message  string `json:"message"`
-	CreateAt int64  `json:"create_at"`
+	User     string                `json:"user"`
+	Channel  string                `json:"channel"`
+	Message  string                `json:"message"`
+	Props    model.StringInterface `json:"props"`
+	CreateAt int64                 `json:"create_at"`
 	// Type           string              `json:"type"`
 	Attachments    []string            `json:"attachments"`
 	Replies        []*IntermediatePost `json:"replies"`
@@ -109,6 +111,9 @@ type Intermediate struct {
 func TransformUsers(users []SlackUser, intermediate *Intermediate) {
 	resultUsers := map[string]*IntermediateUser{}
 	for _, user := range users {
+		if user.IsBot {
+			user.Id = user.Profile.BotId
+		}
 		newUser := &IntermediateUser{
 			Id:        user.Id,
 			Username:  user.Username,
@@ -373,8 +378,18 @@ func TransformPosts(slackExport *SlackExport, intermediate *Intermediate, attach
 				}
 				author := intermediate.UsersById[post.User]
 				if author == nil {
-					log.Println("Slack Import: Unable to add the message as the Slack user does not exist in Mattermost. user=" + post.User)
-					continue
+					newUser := &IntermediateUser{
+						Id:        post.User,
+						Username:  post.User,
+						FirstName: "Deleted",
+						LastName:  "User",
+						Email:     fmt.Sprintf("%s@local", post.User),
+						Password:  model.NewId(),
+					}
+
+					intermediate.UsersById[post.User] = newUser
+					log.Println("Slack Import: Created new user because original user missing form the import files. user=" + post.User)
+					author = intermediate.UsersById[post.User]
 				}
 				newPost := &IntermediatePost{
 					User:     author.Username,
@@ -390,6 +405,10 @@ func TransformPosts(slackExport *SlackExport, intermediate *Intermediate, attach
 							addFileToPost(file, slackExport.Uploads, newPost, attachmentsDir)
 						}
 					}
+				}
+
+				if len(post.Attachments) > 0 {
+					newPost.Props = model.StringInterface{"attachments": post.Attachments}
 				}
 
 				AddPostToThreads(post, newPost, threads, channel, timestamps)
@@ -420,8 +439,46 @@ func TransformPosts(slackExport *SlackExport, intermediate *Intermediate, attach
 
 			// bot message
 			case post.IsBotMessage():
-				// log.Println("Slack Import: bot messages are not yet supported")
-				break
+				if post.BotId == "" {
+					log.Println("Slack Import: Unable to import the message as the user field is missing.")
+					continue
+				}
+				author := intermediate.UsersById[post.BotId]
+				if author == nil {
+					newUser := &IntermediateUser{
+						Id:        post.BotId,
+						Username:  post.BotId,
+						FirstName: "Deleted",
+						LastName:  "Bot User",
+						Email:     fmt.Sprintf("%s@local", post.BotId),
+						Password:  model.NewId(),
+					}
+
+					intermediate.UsersById[post.BotId] = newUser
+					log.Println("Slack Import: Created new user because original user missing form the import files. user=" + post.BotId)
+					author = intermediate.UsersById[post.BotId]
+				}
+				newPost := &IntermediatePost{
+					User:     author.Username,
+					Channel:  channel.Name,
+					Message:  post.Text,
+					CreateAt: SlackConvertTimeStamp(post.TimeStamp),
+				}
+				if post.Upload && !skipAttachments {
+					if post.File != nil {
+						addFileToPost(post.File, slackExport.Uploads, newPost, attachmentsDir)
+					} else if post.Files != nil {
+						for _, file := range post.Files {
+							addFileToPost(file, slackExport.Uploads, newPost, attachmentsDir)
+						}
+					}
+				}
+
+				if len(post.Attachments) > 0 {
+					newPost.Props = model.StringInterface{"attachments": post.Attachments}
+				}
+
+				AddPostToThreads(post, newPost, threads, channel, timestamps)
 
 			// channel join/leave messages
 			case post.IsJoinLeaveMessage():
