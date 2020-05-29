@@ -78,3 +78,4 @@ verify-gomod:
 
 vendor:
 	go mod vendor
+	go mod tidy

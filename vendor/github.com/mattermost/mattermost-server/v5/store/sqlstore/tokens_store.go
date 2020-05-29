@@ -1,5 +1,5 @@
-// Copyright (c) 2017 Mattermost, Inc. All Rights Reserved.
-// See License.txt for license information.
+// Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
+// See LICENSE.txt for license information.
 
 package sqlstore
 
@@ -16,7 +16,7 @@ type SqlTokenStore struct {
 	SqlStore
 }
 
-func NewSqlTokenStore(sqlStore SqlStore) store.TokenStore {
+func newSqlTokenStore(sqlStore SqlStore) store.TokenStore {
 	s := &SqlTokenStore{sqlStore}
 
 	for _, db := range sqlStore.GetAllConns() {
@@ -29,7 +29,7 @@ func NewSqlTokenStore(sqlStore SqlStore) store.TokenStore {
 	return s
 }
 
-func (s SqlTokenStore) CreateIndexesIfNotExists() {
+func (s SqlTokenStore) createIndexesIfNotExists() {
 }
 
 func (s SqlTokenStore) Save(token *model.Token) *model.AppError {

@@ -1,5 +1,5 @@
-// Copyright (c) 2016-present Mattermost, Inc. All Rights Reserved.
-// See License.txt for license information.
+// Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
+// See LICENSE.txt for license information.
 
 package app
 
@@ -10,7 +10,7 @@ import (
 )
 
 func (a *App) GetPreferencesForUser(userId string) (model.Preferences, *model.AppError) {
-	preferences, err := a.Srv.Store.Preference().GetAll(userId)
+	preferences, err := a.Srv().Store.Preference().GetAll(userId)
 	if err != nil {
 		err.StatusCode = http.StatusBadRequest
 		return nil, err
@@ -19,7 +19,7 @@ func (a *App) GetPreferencesForUser(userId string) (model.Preferences, *model.Ap
 }
 
 func (a *App) GetPreferenceByCategoryForUser(userId string, category string) (model.Preferences, *model.AppError) {
-	preferences, err := a.Srv.Store.Preference().GetCategory(userId, category)
+	preferences, err := a.Srv().Store.Preference().GetCategory(userId, category)
 	if err != nil {
 		err.StatusCode = http.StatusBadRequest
 		return nil, err
@@ -32,7 +32,7 @@ func (a *App) GetPreferenceByCategoryForUser(userId string, category string) (mo
 }
 
 func (a *App) GetPreferenceByCategoryAndNameForUser(userId string, category string, preferenceName string) (*model.Preference, *model.AppError) {
-	res, err := a.Srv.Store.Preference().Get(userId, category, preferenceName)
+	res, err := a.Srv().Store.Preference().Get(userId, category, preferenceName)
 	if err != nil {
 		err.StatusCode = http.StatusBadRequest
 		return nil, err
@@ -48,7 +48,7 @@ func (a *App) UpdatePreferences(userId string, preferences model.Preferences) *m
 		}
 	}
 
-	if err := a.Srv.Store.Preference().Save(&preferences); err != nil {
+	if err := a.Srv().Store.Preference().Save(&preferences); err != nil {
 		err.StatusCode = http.StatusBadRequest
 		return err
 	}
@@ -70,7 +70,7 @@ func (a *App) DeletePreferences(userId string, preferences model.Preferences) *m
 	}
 
 	for _, preference := range preferences {
-		if err := a.Srv.Store.Preference().Delete(userId, preference.Category, preference.Name); err != nil {
+		if err := a.Srv().Store.Preference().Delete(userId, preference.Category, preference.Name); err != nil {
 			err.StatusCode = http.StatusBadRequest
 			return err
 		}

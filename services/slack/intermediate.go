@@ -2,6 +2,7 @@ package slack
 
 import (
 	"archive/zip"
+	"encoding/json"
 	"fmt"
 	"golang.org/x/text/unicode/norm"
 	"io"
@@ -86,10 +87,11 @@ func (u *IntermediateUser) Sanitise() {
 }
 
 type IntermediatePost struct {
-	User     string `json:"user"`
-	Channel  string `json:"channel"`
-	Message  string `json:"message"`
-	CreateAt int64  `json:"create_at"`
+	User     string                `json:"user"`
+	Channel  string                `json:"channel"`
+	Message  string                `json:"message"`
+	Props    model.StringInterface `json:"props"`
+	CreateAt int64                 `json:"create_at"`
 	// Type           string              `json:"type"`
 	Attachments    []string            `json:"attachments"`
 	Replies        []*IntermediatePost `json:"replies"`
@@ -389,6 +391,17 @@ func TransformPosts(slackExport *SlackExport, intermediate *Intermediate, attach
 						for _, file := range post.Files {
 							addFileToPost(file, slackExport.Uploads, newPost, attachmentsDir)
 						}
+					}
+				}
+
+				if len(post.Attachments) > 0 {
+					props := model.StringInterface{"attachments": post.Attachments}
+					propsB, _ := json.Marshal(props)
+
+					if utf8.RuneCountInString(string(propsB)) <= model.POST_PROPS_MAX_RUNES {
+						newPost.Props = props
+					} else {
+						log.Println("Slack Import: Unable to add props to post as they exceed the maximum character count.")
 					}
 				}
 

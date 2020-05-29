@@ -1,5 +1,5 @@
-// Copyright (c) 2016-present Mattermost, Inc. All Rights Reserved.
-// See License.txt for license information.
+// Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
+// See LICENSE.txt for license information.
 
 // Integration Action Flow
 //
@@ -21,12 +21,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"github.com/gorilla/mux"
 	"io/ioutil"
 	"net/http"
 	"net/url"
 	"path"
 	"strings"
+
+	"github.com/gorilla/mux"
 
 	"github.com/mattermost/mattermost-server/v5/model"
 	"github.com/mattermost/mattermost-server/v5/store"
@@ -66,21 +67,21 @@ func (a *App) DoPostActionWithCookie(postId, actionId, userId, selectedOption st
 	// Start all queries here for parallel execution
 	pchan := make(chan store.StoreResult, 1)
 	go func() {
-		post, err := a.Srv.Store.Post().GetSingle(postId)
+		post, err := a.Srv().Store.Post().GetSingle(postId)
 		pchan <- store.StoreResult{Data: post, Err: err}
 		close(pchan)
 	}()
 
 	cchan := make(chan store.StoreResult, 1)
 	go func() {
-		channel, err := a.Srv.Store.Channel().GetForPost(postId)
+		channel, err := a.Srv().Store.Channel().GetForPost(postId)
 		cchan <- store.StoreResult{Data: channel, Err: err}
 		close(cchan)
 	}()
 
 	userChan := make(chan store.StoreResult, 1)
 	go func() {
-		user, err := a.Srv.Store.User().Get(upstreamRequest.UserId)
+		user, err := a.Srv().Store.User().Get(upstreamRequest.UserId)
 		userChan <- store.StoreResult{Data: user, Err: err}
 		close(userChan)
 	}()
@@ -98,7 +99,7 @@ func (a *App) DoPostActionWithCookie(postId, actionId, userId, selectedOption st
 			return "", model.NewAppError("DoPostAction", "api.post.do_action.action_integration.app_error", nil, "postId doesn't match", http.StatusBadRequest)
 		}
 
-		channel, err := a.Srv.Store.Channel().Get(cookie.ChannelId, true)
+		channel, err := a.Srv().Store.Channel().Get(cookie.ChannelId, true)
 		if err != nil {
 			return "", err
 		}
@@ -137,14 +138,14 @@ func (a *App) DoPostActionWithCookie(postId, actionId, userId, selectedOption st
 		// Save the original values that may need to be preserved (including selected
 		// Props, i.e. override_username, override_icon_url)
 		for _, key := range model.PostActionRetainPropKeys {
-			value, ok := post.Props[key]
+			value, ok := post.GetProps()[key]
 			if ok {
 				retain[key] = value
 			} else {
 				remove = append(remove, key)
 			}
 		}
-		originalProps = post.Props
+		originalProps = post.GetProps()
 		originalIsPinned = post.IsPinned
 		originalHasReactions = post.HasReactions
 
@@ -158,10 +159,17 @@ func (a *App) DoPostActionWithCookie(postId, actionId, userId, selectedOption st
 	}
 
 	teamChan := make(chan store.StoreResult, 1)
+
 	go func() {
-		team, err := a.Srv.Store.Team().Get(upstreamRequest.TeamId)
+		defer close(teamChan)
+
+		// Direct and group channels won't have teams.
+		if upstreamRequest.TeamId == "" {
+			return
+		}
+
+		team, err := a.Srv().Store.Team().Get(upstreamRequest.TeamId)
 		teamChan <- store.StoreResult{Data: team, Err: err}
-		close(teamChan)
 	}()
 
 	ur := <-userChan
@@ -171,12 +179,15 @@ func (a *App) DoPostActionWithCookie(postId, actionId, userId, selectedOption st
 	user := ur.Data.(*model.User)
 	upstreamRequest.UserName = user.Username
 
-	tr := <-teamChan
-	if tr.Err != nil {
-		return "", tr.Err
+	tr, ok := <-teamChan
+	if ok {
+		if tr.Err != nil {
+			return "", tr.Err
+		}
+
+		team := tr.Data.(*model.Team)
+		upstreamRequest.TeamName = team.Name
 	}
-	team := tr.Data.(*model.Team)
-	upstreamRequest.TeamName = team.Name
 
 	if upstreamRequest.Type == model.POST_ACTION_TYPE_SELECT {
 		if selectedOption != "" {
@@ -208,14 +219,14 @@ func (a *App) DoPostActionWithCookie(postId, actionId, userId, selectedOption st
 		response.Update.Id = postId
 
 		// Restore the post attributes and Props that need to be preserved
-		if response.Update.Props == nil {
-			response.Update.Props = originalProps
+		if response.Update.GetProps() == nil {
+			response.Update.SetProps(originalProps)
 		} else {
 			for key, value := range retain {
 				response.Update.AddProp(key, value)
 			}
 			for _, key := range remove {
-				delete(response.Update.Props, key)
+				response.Update.DelProp(key)
 			}
 		}
 		response.Update.IsPinned = originalIsPinned
@@ -228,11 +239,16 @@ func (a *App) DoPostActionWithCookie(postId, actionId, userId, selectedOption st
 
 	if response.EphemeralText != "" {
 		ephemeralPost := &model.Post{
-			Message:   model.ParseSlackLinksToMarkdown(response.EphemeralText),
+			Message:   response.EphemeralText,
 			ChannelId: upstreamRequest.ChannelId,
 			RootId:    rootPostId,
 			UserId:    userId,
 		}
+
+		if !response.SkipSlackParsing {
+			ephemeralPost.Message = model.ParseSlackLinksToMarkdown(response.EphemeralText)
+		}
+
 		for key, value := range retain {
 			ephemeralPost.AddProp(key, value)
 		}
@@ -268,10 +284,10 @@ func (a *App) DoActionRequest(rawURL string, body []byte) (*http.Response, *mode
 	subpath, _ := utils.GetSubpathFromConfig(a.Config())
 	siteURL, _ := url.Parse(*a.Config().ServiceSettings.SiteURL)
 	if (inURL.Hostname() == "localhost" || inURL.Hostname() == "127.0.0.1" || inURL.Hostname() == siteURL.Hostname()) && strings.HasPrefix(inURL.Path, path.Join(subpath, "plugins")) {
-		req.Header.Set(model.HEADER_AUTH, "Bearer "+a.Session.Token)
-		httpClient = a.HTTPService.MakeClient(true)
+		req.Header.Set(model.HEADER_AUTH, "Bearer "+a.Session().Token)
+		httpClient = a.HTTPService().MakeClient(true)
 	} else {
-		httpClient = a.HTTPService.MakeClient(false)
+		httpClient = a.HTTPService().MakeClient(false)
 	}
 
 	resp, httpErr := httpClient.Do(req)
@@ -331,8 +347,8 @@ func (a *App) DoLocalRequest(rawURL string, body []byte) (*http.Response, *model
 	if err != nil {
 		return nil, model.NewAppError("DoActionRequest", "api.post.do_action.action_integration.app_error", nil, "err="+err.Error(), http.StatusBadRequest)
 	}
-	r.Header.Set("Mattermost-User-Id", a.Session.UserId)
-	r.Header.Set(model.HEADER_AUTH, "Bearer "+a.Session.Token)
+	r.Header.Set("Mattermost-User-Id", a.Session().UserId)
+	r.Header.Set(model.HEADER_AUTH, "Bearer "+a.Session().Token)
 	params := make(map[string]string)
 	params["plugin_id"] = pluginId
 	r = mux.SetURLVars(r, params)

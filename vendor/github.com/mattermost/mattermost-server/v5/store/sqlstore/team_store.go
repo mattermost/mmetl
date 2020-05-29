@@ -1,5 +1,5 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
-// See License.txt for license information.
+// See LICENSE.txt for license information.
 
 package sqlstore
 
@@ -11,21 +11,17 @@ import (
 
 	sq "github.com/Masterminds/squirrel"
 	"github.com/mattermost/gorp"
-	"github.com/mattermost/mattermost-server/v5/einterfaces"
 	"github.com/mattermost/mattermost-server/v5/model"
 	"github.com/mattermost/mattermost-server/v5/store"
 	"github.com/mattermost/mattermost-server/v5/utils"
 )
 
 const (
-	TEAM_MEMBER_EXISTS_ERROR         = "store.sql_team.save_member.exists.app_error"
-	ALL_TEAM_IDS_FOR_USER_CACHE_SIZE = model.SESSION_CACHE_SIZE
-	ALL_TEAM_IDS_FOR_USER_CACHE_SEC  = 1800 // 30 mins
+	TEAM_MEMBER_EXISTS_ERROR = "store.sql_team.save_member.exists.app_error"
 )
 
 type SqlTeamStore struct {
 	SqlStore
-	metrics einterfaces.MetricsInterface
 }
 
 type teamMember struct {
@@ -155,10 +151,9 @@ func (db teamMemberWithSchemeRolesList) ToModel() []*model.TeamMember {
 	return tms
 }
 
-func NewSqlTeamStore(sqlStore SqlStore, metrics einterfaces.MetricsInterface) store.TeamStore {
+func newSqlTeamStore(sqlStore SqlStore) store.TeamStore {
 	s := &SqlTeamStore{
 		sqlStore,
-		metrics,
 	}
 
 	for _, db := range sqlStore.GetAllConns() {
@@ -181,19 +176,22 @@ func NewSqlTeamStore(sqlStore SqlStore, metrics einterfaces.MetricsInterface) st
 	return s
 }
 
-func (s SqlTeamStore) CreateIndexesIfNotExists() {
+func (s SqlTeamStore) createIndexesIfNotExists() {
 	s.CreateIndexIfNotExists("idx_teams_name", "Teams", "Name")
 	s.RemoveIndexIfExists("idx_teams_description", "Teams")
 	s.CreateIndexIfNotExists("idx_teams_invite_id", "Teams", "InviteId")
 	s.CreateIndexIfNotExists("idx_teams_update_at", "Teams", "UpdateAt")
 	s.CreateIndexIfNotExists("idx_teams_create_at", "Teams", "CreateAt")
 	s.CreateIndexIfNotExists("idx_teams_delete_at", "Teams", "DeleteAt")
+	s.CreateIndexIfNotExists("idx_teams_scheme_id", "Teams", "SchemeId")
 
 	s.CreateIndexIfNotExists("idx_teammembers_team_id", "TeamMembers", "TeamId")
 	s.CreateIndexIfNotExists("idx_teammembers_user_id", "TeamMembers", "UserId")
 	s.CreateIndexIfNotExists("idx_teammembers_delete_at", "TeamMembers", "DeleteAt")
 }
 
+// Save adds the team to the database if a team with the same name does not already
+// exist in the database. It returns the team added if the operation is successful.
 func (s SqlTeamStore) Save(team *model.Team) (*model.Team, *model.AppError) {
 	if len(team.Id) > 0 {
 		return nil, model.NewAppError("SqlTeamStore.Save",
@@ -215,6 +213,9 @@ func (s SqlTeamStore) Save(team *model.Team) (*model.Team, *model.AppError) {
 	return team, nil
 }
 
+// Update updates the details of the team passed as the parameter using the team Id
+// if the team exists in the database.
+// It returns the updated team if the operation is successful.
 func (s SqlTeamStore) Update(team *model.Team) (*model.Team, *model.AppError) {
 
 	team.PreUpdate()
@@ -243,11 +244,6 @@ func (s SqlTeamStore) Update(team *model.Team) (*model.Team, *model.AppError) {
 	}
 	if count != 1 {
 		return nil, model.NewAppError("SqlTeamStore.Update", "store.sql_team.update.app_error", nil, "id="+team.Id, http.StatusInternalServerError)
-	}
-
-	if oldTeam.DeleteAt == 0 && team.DeleteAt != 0 {
-		// Invalidate this cache after any team deletion
-		allTeamIdsForUserCache.Purge()
 	}
 
 	return team, nil
@@ -291,6 +287,33 @@ func (s SqlTeamStore) GetByName(name string) (*model.Team, *model.AppError) {
 		return nil, model.NewAppError("SqlTeamStore.GetByName", "store.sql_team.get_by_name.app_error", nil, "name="+name+", "+err.Error(), http.StatusInternalServerError)
 	}
 	return &team, nil
+}
+
+func (s SqlTeamStore) GetByNames(names []string) ([]*model.Team, *model.AppError) {
+	uniqueNames := utils.RemoveDuplicatesFromStringArray(names)
+
+	query := s.getQueryBuilder().
+		Select("*").
+		From("Teams").
+		Where(sq.Eq{"Name": uniqueNames})
+
+	queryString, args, err := query.ToSql()
+	if err != nil {
+		return nil, model.NewAppError("SqlTeamStore.GetByNames", "store.sql_team.get_by_names.app_error", nil, err.Error(), http.StatusInternalServerError)
+	}
+
+	teams := []*model.Team{}
+	_, err = s.GetReplica().Select(&teams, queryString, args...)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, model.NewAppError("SqlTeamStore.GetByNames", "store.sql_team.get_by_names.missing.app_error", nil, err.Error(), http.StatusNotFound)
+		}
+		return nil, model.NewAppError("SqlTeamStore.GetByNames", "store.sql_team.get_by_names.app_error", nil, err.Error(), http.StatusInternalServerError)
+	}
+	if len(teams) != len(uniqueNames) {
+		return nil, model.NewAppError("SqlTeamStore.GetByNames", "store.sql_team.get_by_names.missing.app_error", nil, "", http.StatusNotFound)
+	}
+	return teams, nil
 }
 
 func (s SqlTeamStore) SearchAll(term string) ([]*model.Team, *model.AppError) {
@@ -539,6 +562,10 @@ func (s SqlTeamStore) getTeamMembersWithSchemeSelectQuery() sq.SelectBuilder {
 		LeftJoin("Schemes TeamScheme ON Teams.SchemeId = TeamScheme.Id")
 }
 
+// SaveMember adds a team member using the team Id of the member
+// if the member does not already exist in the database and if the number
+// of existing team members are less than the maximum allowed users per team.
+// It returns the team member added if the operation is successful.
 func (s SqlTeamStore) SaveMember(member *model.TeamMember, maxUsersPerTeam int) (*model.TeamMember, *model.AppError) {
 	defer s.InvalidateAllTeamIdsForUser(member.UserId)
 	if err := member.IsValid(); err != nil {
@@ -597,6 +624,8 @@ func (s SqlTeamStore) SaveMember(member *model.TeamMember, maxUsersPerTeam int) 
 	return retrievedMember.ToModel(), nil
 }
 
+// UpdateMember updates the team member if the team member exists in the database.
+// It returns the updated team member if the operation is successful.
 func (s SqlTeamStore) UpdateMember(member *model.TeamMember) (*model.TeamMember, *model.AppError) {
 	member.PreUpdate()
 
@@ -654,6 +683,7 @@ func (s SqlTeamStore) GetMembers(teamId string, offset int, limit int, restricti
 	query := s.getTeamMembersWithSchemeSelectQuery().
 		Where(sq.Eq{"TeamMembers.TeamId": teamId}).
 		Where(sq.Eq{"TeamMembers.DeleteAt": 0}).
+		OrderBy("UserId").
 		Limit(uint64(limit)).
 		Offset(uint64(offset))
 
@@ -845,8 +875,8 @@ func (s SqlTeamStore) RemoveAllMembersByUser(userId string) *model.AppError {
 	return nil
 }
 
-func (us SqlTeamStore) UpdateLastTeamIconUpdate(teamId string, curTime int64) *model.AppError {
-	if _, err := us.GetMaster().Exec("UPDATE Teams SET LastTeamIconUpdate = :Time, UpdateAt = :Time WHERE Id = :teamId", map[string]interface{}{"Time": curTime, "teamId": teamId}); err != nil {
+func (s SqlTeamStore) UpdateLastTeamIconUpdate(teamId string, curTime int64) *model.AppError {
+	if _, err := s.GetMaster().Exec("UPDATE Teams SET LastTeamIconUpdate = :Time, UpdateAt = :Time WHERE Id = :teamId", map[string]interface{}{"Time": curTime, "teamId": teamId}); err != nil {
 		return model.NewAppError("SqlTeamStore.UpdateLastTeamIconUpdate", "store.sql_team.update_last_team_icon_update.app_error", nil, "team_id="+teamId, http.StatusInternalServerError)
 	}
 	return nil
@@ -884,7 +914,8 @@ func (s SqlTeamStore) MigrateTeamMembers(fromTeamId string, fromUserId string) (
 		return nil, nil
 	}
 
-	for _, member := range teamMembers {
+	for i := range teamMembers {
+		member := teamMembers[i]
 		roles := strings.Fields(member.Roles)
 		var newRoles []string
 		if !member.SchemeAdmin.Valid {
@@ -933,21 +964,9 @@ func (s SqlTeamStore) ResetAllTeamSchemes() *model.AppError {
 	return nil
 }
 
-var allTeamIdsForUserCache = utils.NewLru(ALL_TEAM_IDS_FOR_USER_CACHE_SIZE)
+func (s SqlTeamStore) ClearCaches() {}
 
-func (s SqlTeamStore) ClearCaches() {
-	allTeamIdsForUserCache.Purge()
-	if s.metrics != nil {
-		s.metrics.IncrementMemCacheInvalidationCounter("All Team Ids for User - Purge")
-	}
-}
-
-func (s SqlTeamStore) InvalidateAllTeamIdsForUser(userId string) {
-	allTeamIdsForUserCache.Remove(userId)
-	if s.metrics != nil {
-		s.metrics.IncrementMemCacheInvalidationCounter("All Team Ids for User - Remove by UserId")
-	}
-}
+func (s SqlTeamStore) InvalidateAllTeamIdsForUser(userId string) {}
 
 func (s SqlTeamStore) ClearAllCustomRoleAssignments() *model.AppError {
 
@@ -1035,21 +1054,8 @@ func (s SqlTeamStore) GetAllForExportAfter(limit int, afterId string) ([]*model.
 	return data, nil
 }
 
-// GetUserTeamIds get the team ids to which the user belongs to
+// GetUserTeamIds get the team ids to which the user belongs to. allowFromCache parameter does not have any effect in this Store
 func (s SqlTeamStore) GetUserTeamIds(userID string, allowFromCache bool) ([]string, *model.AppError) {
-	if allowFromCache {
-		if cacheItem, ok := allTeamIdsForUserCache.Get(userID); ok {
-			if s.metrics != nil {
-				s.metrics.IncrementMemCacheHitCounter("All Team Ids for User")
-			}
-			return cacheItem.([]string), nil
-		}
-	}
-
-	if s.metrics != nil {
-		s.metrics.IncrementMemCacheMissCounter("All Team Ids for User")
-	}
-
 	var teamIds []string
 	_, err := s.GetReplica().Select(&teamIds,
 		`SELECT
@@ -1067,9 +1073,6 @@ func (s SqlTeamStore) GetUserTeamIds(userID string, allowFromCache bool) ([]stri
 		return []string{}, model.NewAppError("SqlTeamStore.GetUserTeamIds", "store.sql_team.get_user_team_ids.app_error", nil, "userID="+userID+" "+err.Error(), http.StatusInternalServerError)
 	}
 
-	if allowFromCache {
-		allTeamIdsForUserCache.AddWithExpiresInSecs(userID, teamIds, ALL_TEAM_IDS_FOR_USER_CACHE_SEC)
-	}
 	return teamIds, nil
 }
 
@@ -1117,6 +1120,28 @@ func (s SqlTeamStore) UserBelongsToTeams(userId string, teamIds []string) (bool,
 	}
 
 	return c > 0, nil
+}
+
+func (s SqlTeamStore) UpdateMembersRole(teamID string, userIDs []string) *model.AppError {
+	sql := fmt.Sprintf(`
+		UPDATE
+			TeamMembers
+		SET
+			SchemeAdmin = CASE WHEN UserId IN ('%s') THEN
+				TRUE
+			ELSE
+				FALSE
+			END
+		WHERE
+			TeamId = :TeamId
+			AND (SchemeGuest = false OR SchemeGuest IS NULL)
+			AND DeleteAt = 0`, strings.Join(userIDs, "', '"))
+
+	if _, err := s.GetMaster().Exec(sql, map[string]interface{}{"TeamId": teamID}); err != nil {
+		return model.NewAppError("SqlTeamStore.UpdateMembersRole", "store.update_error", nil, err.Error(), http.StatusInternalServerError)
+	}
+
+	return nil
 }
 
 func applyTeamMemberViewRestrictionsFilter(query sq.SelectBuilder, teamId string, restrictions *model.ViewUsersRestrictions) sq.SelectBuilder {
@@ -1177,4 +1202,20 @@ func applyTeamMemberViewRestrictionsFilterForStats(query sq.SelectBuilder, teamI
 	}
 
 	return resultQuery
+}
+
+func (s SqlTeamStore) GroupSyncedTeamCount() (int64, *model.AppError) {
+	query := s.getQueryBuilder().Select("COUNT(*)").From("Teams").Where(sq.Eq{"GroupConstrained": true, "DeleteAt": 0})
+
+	sql, args, err := query.ToSql()
+	if err != nil {
+		return 0, model.NewAppError("SqlTeamStore.GroupSyncedTeamCount", "store.sql_group.app_error", nil, err.Error(), http.StatusInternalServerError)
+	}
+
+	count, err := s.GetReplica().SelectInt(sql, args...)
+	if err != nil {
+		return 0, model.NewAppError("SqlTeamStore.GroupSyncedTeamCount", "store.select_error", nil, err.Error(), http.StatusInternalServerError)
+	}
+
+	return count, nil
 }

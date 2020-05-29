@@ -1,5 +1,5 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
-// See License.txt for license information.
+// See LICENSE.txt for license information.
 
 package model
 
@@ -84,6 +84,31 @@ type DirectChannelForExport struct {
 	Members *[]string
 }
 
+type ChannelModeration struct {
+	Name  string                 `json:"name"`
+	Roles *ChannelModeratedRoles `json:"roles"`
+}
+
+type ChannelModeratedRoles struct {
+	Guests  *ChannelModeratedRole `json:"guests"`
+	Members *ChannelModeratedRole `json:"members"`
+}
+
+type ChannelModeratedRole struct {
+	Value   bool `json:"value"`
+	Enabled bool `json:"enabled"`
+}
+
+type ChannelModerationPatch struct {
+	Name  *string                     `json:"name"`
+	Roles *ChannelModeratedRolesPatch `json:"roles"`
+}
+
+type ChannelModeratedRolesPatch struct {
+	Guests  *bool `json:"guests"`
+	Members *bool `json:"members"`
+}
+
 // ChannelSearchOpts contains options for searching channels.
 //
 // NotAssociatedToGroup will exclude channels that have associated, active GroupChannels records.
@@ -144,6 +169,18 @@ func ChannelPatchFromJson(data io.Reader) *ChannelPatch {
 	return o
 }
 
+func ChannelModerationsFromJson(data io.Reader) []*ChannelModeration {
+	var o []*ChannelModeration
+	json.NewDecoder(data).Decode(&o)
+	return o
+}
+
+func ChannelModerationsPatchFromJson(data io.Reader) []*ChannelModerationPatch {
+	var o []*ChannelModerationPatch
+	json.NewDecoder(data).Decode(&o)
+	return o
+}
+
 func (o *Channel) Etag() string {
 	return Etag(o.Id, o.UpdateAt)
 }
@@ -185,6 +222,11 @@ func (o *Channel) IsValid() *AppError {
 		return NewAppError("Channel.IsValid", "model.channel.is_valid.creator_id.app_error", nil, "", http.StatusBadRequest)
 	}
 
+	userIds := strings.Split(o.Name, "__")
+	if o.Type != CHANNEL_DIRECT && len(userIds) == 2 && IsValidId(userIds[0]) && IsValidId(userIds[1]) {
+		return NewAppError("Channel.IsValid", "model.channel.is_valid.name.app_error", nil, "", http.StatusBadRequest)
+	}
+
 	return nil
 }
 
@@ -204,6 +246,10 @@ func (o *Channel) PreUpdate() {
 
 func (o *Channel) IsGroupOrDirect() bool {
 	return o.Type == CHANNEL_DIRECT || o.Type == CHANNEL_GROUP
+}
+
+func (o *Channel) IsOpen() bool {
+	return o.Type == CHANNEL_OPEN
 }
 
 func (o *Channel) Patch(patch *ChannelPatch) {
