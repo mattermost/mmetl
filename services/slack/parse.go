@@ -56,7 +56,7 @@ type SlackPost struct {
 	Upload      bool                     `json:"upload"`
 	File        *SlackFile               `json:"file"`
 	Files       []*SlackFile             `json:"files"`
-	Attachments []*model.SlackAttachment `json:"attachments"` // ToDo: modify model to add omitempty to all props
+	Attachments []*model.SlackAttachment `json:"attachments"`
 }
 
 func (p *SlackPost) IsPlainMessage() bool {
