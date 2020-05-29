@@ -346,7 +346,7 @@ func addFileToPost(file *SlackFile, uploads map[string]*zip.File, post *Intermed
 	post.Attachments = append(post.Attachments, destFilePath)
 }
 
-func TransformPosts(slackExport *SlackExport, intermediate *Intermediate, attachmentsDir string, skipAttachments bool) error {
+func TransformPosts(slackExport *SlackExport, intermediate *Intermediate, attachmentsDir string, skipAttachments bool, discardInvalidProps bool) error {
 	newGroupChannels := []*IntermediateChannel{}
 	newDirectChannels := []*IntermediateChannel{}
 	channelsByOriginalName := buildChannelsByOriginalNameMap(intermediate)
@@ -401,7 +401,12 @@ func TransformPosts(slackExport *SlackExport, intermediate *Intermediate, attach
 					if utf8.RuneCountInString(string(propsB)) <= model.POST_PROPS_MAX_RUNES {
 						newPost.Props = props
 					} else {
-						log.Println("Slack Import: Unable to add props to post as they exceed the maximum character count.")
+						if discardInvalidProps {
+							log.Println("Slack Import: Unable import post as props exceed the maximum character count. Skipping as --discard-invalid-props is enabled.")
+							continue
+						} else {
+							log.Println("Slack Import: Unable to add props to post as they exceed the maximum character count.")
+						}
 					}
 				}
 
@@ -531,7 +536,7 @@ func TransformPosts(slackExport *SlackExport, intermediate *Intermediate, attach
 	return nil
 }
 
-func Transform(slackExport *SlackExport, attachmentsDir string, skipAttachments bool) (*Intermediate, error) {
+func Transform(slackExport *SlackExport, attachmentsDir string, skipAttachments bool, discardInvalidProps bool) (*Intermediate, error) {
 	intermediate := &Intermediate{}
 
 	// ToDo: change log lines to something more meaningful
@@ -550,7 +555,7 @@ func Transform(slackExport *SlackExport, attachmentsDir string, skipAttachments 
 	PopulateChannelMemberships(intermediate)
 
 	log.Println("Transforming posts")
-	if err := TransformPosts(slackExport, intermediate, attachmentsDir, skipAttachments); err != nil {
+	if err := TransformPosts(slackExport, intermediate, attachmentsDir, skipAttachments, discardInvalidProps); err != nil {
 		return nil, err
 	}
 
