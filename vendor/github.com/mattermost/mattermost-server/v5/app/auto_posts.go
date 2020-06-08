@@ -1,5 +1,5 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
-// See License.txt for license information.
+// See LICENSE.txt for license information.
 
 package app
 
@@ -66,6 +66,10 @@ func (cfg *AutoPostCreator) UploadTestFile() ([]string, bool) {
 }
 
 func (cfg *AutoPostCreator) CreateRandomPost() (*model.Post, bool) {
+	return cfg.CreateRandomPostNested("", "")
+}
+
+func (cfg *AutoPostCreator) CreateRandomPostNested(parentId, rootId string) (*model.Post, bool) {
 	var fileIds []string
 	if cfg.HasImage {
 		var err1 bool
@@ -84,10 +88,12 @@ func (cfg *AutoPostCreator) CreateRandomPost() (*model.Post, bool) {
 
 	post := &model.Post{
 		ChannelId: cfg.channelid,
+		ParentId:  parentId,
+		RootId:    rootId,
 		Message:   postText,
 		FileIds:   fileIds}
-	rpost, err2 := cfg.client.CreatePost(post)
-	if err2 != nil {
+	rpost, resp := cfg.client.CreatePost(post)
+	if resp != nil && resp.Error != nil {
 		return nil, false
 	}
 	return rpost, true

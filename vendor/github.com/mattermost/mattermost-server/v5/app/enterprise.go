@@ -1,5 +1,5 @@
-// Copyright (c) 2017-present Mattermost, Inc. All Rights Reserved.
-// See License.txt for license information.
+// Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
+// See LICENSE.txt for license information.
 
 package app
 
@@ -9,6 +9,7 @@ import (
 	tjobs "github.com/mattermost/mattermost-server/v5/jobs/interfaces"
 	"github.com/mattermost/mattermost-server/v5/mlog"
 	"github.com/mattermost/mattermost-server/v5/model"
+	"github.com/mattermost/mattermost-server/v5/services/searchengine"
 )
 
 var accountMigrationInterface func(*Server) einterfaces.AccountMigrationInterface
@@ -35,9 +36,9 @@ func RegisterDataRetentionInterface(f func(*App) einterfaces.DataRetentionInterf
 	dataRetentionInterface = f
 }
 
-var elasticsearchInterface func(*App) einterfaces.ElasticsearchInterface
+var elasticsearchInterface func(*App) searchengine.SearchEngineInterface
 
-func RegisterElasticsearchInterface(f func(*App) einterfaces.ElasticsearchInterface) {
+func RegisterElasticsearchInterface(f func(*App) searchengine.SearchEngineInterface) {
 	elasticsearchInterface = f
 }
 
@@ -107,6 +108,12 @@ func RegisterSamlInterface(f func(*App) einterfaces.SamlInterface) {
 	samlInterface = f
 }
 
+var samlInterfaceNew func(*App) einterfaces.SamlInterface
+
+func RegisterNewSamlInterface(f func(*App) einterfaces.SamlInterface) {
+	samlInterfaceNew = f
+}
+
 var notificationInterface func(*App) einterfaces.NotificationInterface
 
 func RegisterNotificationInterface(f func(*App) einterfaces.NotificationInterface) {
@@ -114,14 +121,14 @@ func RegisterNotificationInterface(f func(*App) einterfaces.NotificationInterfac
 }
 
 func (s *Server) initEnterprise() {
+	if metricsInterface != nil {
+		s.Metrics = metricsInterface(s.FakeApp())
+	}
 	if accountMigrationInterface != nil {
 		s.AccountMigration = accountMigrationInterface(s)
 	}
 	if complianceInterface != nil {
 		s.Compliance = complianceInterface(s.FakeApp())
-	}
-	if elasticsearchInterface != nil {
-		s.Elasticsearch = elasticsearchInterface(s.FakeApp())
 	}
 	if ldapInterface != nil {
 		s.Ldap = ldapInterface(s.FakeApp())
@@ -129,14 +136,17 @@ func (s *Server) initEnterprise() {
 	if messageExportInterface != nil {
 		s.MessageExport = messageExportInterface(s.FakeApp())
 	}
-	if metricsInterface != nil {
-		s.Metrics = metricsInterface(s.FakeApp())
-	}
 	if notificationInterface != nil {
 		s.Notification = notificationInterface(s.FakeApp())
 	}
 	if samlInterface != nil {
-		s.Saml = samlInterface(s.FakeApp())
+		if *s.FakeApp().Config().ExperimentalSettings.UseNewSAMLLibrary && samlInterfaceNew != nil {
+			mlog.Debug("Loading new SAML2 library")
+			s.Saml = samlInterfaceNew(s.FakeApp())
+		} else {
+			mlog.Debug("Loading original SAML library")
+			s.Saml = samlInterface(s.FakeApp())
+		}
 		s.AddConfigListener(func(_, cfg *model.Config) {
 			if err := s.Saml.ConfigureSP(); err != nil {
 				mlog.Error("An error occurred while configuring SAML Service Provider", mlog.Err(err))
@@ -148,5 +158,9 @@ func (s *Server) initEnterprise() {
 	}
 	if clusterInterface != nil {
 		s.Cluster = clusterInterface(s)
+	}
+
+	if elasticsearchInterface != nil {
+		s.SearchEngine.RegisterElasticsearchEngine(elasticsearchInterface(s.FakeApp()))
 	}
 }

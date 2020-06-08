@@ -2,6 +2,7 @@ package slack
 
 import (
 	"archive/zip"
+	"encoding/json"
 	"fmt"
 	"golang.org/x/text/unicode/norm"
 	"io"
@@ -86,10 +87,11 @@ func (u *IntermediateUser) Sanitise() {
 }
 
 type IntermediatePost struct {
-	User     string `json:"user"`
-	Channel  string `json:"channel"`
-	Message  string `json:"message"`
-	CreateAt int64  `json:"create_at"`
+	User     string                `json:"user"`
+	Channel  string                `json:"channel"`
+	Message  string                `json:"message"`
+	Props    model.StringInterface `json:"props"`
+	CreateAt int64                 `json:"create_at"`
 	// Type           string              `json:"type"`
 	Attachments    []string            `json:"attachments"`
 	Replies        []*IntermediatePost `json:"replies"`
@@ -344,7 +346,7 @@ func addFileToPost(file *SlackFile, uploads map[string]*zip.File, post *Intermed
 	post.Attachments = append(post.Attachments, destFilePath)
 }
 
-func TransformPosts(slackExport *SlackExport, intermediate *Intermediate, attachmentsDir string, skipAttachments bool) error {
+func TransformPosts(slackExport *SlackExport, intermediate *Intermediate, attachmentsDir string, skipAttachments bool, discardInvalidProps bool) error {
 	newGroupChannels := []*IntermediateChannel{}
 	newDirectChannels := []*IntermediateChannel{}
 	channelsByOriginalName := buildChannelsByOriginalNameMap(intermediate)
@@ -388,6 +390,22 @@ func TransformPosts(slackExport *SlackExport, intermediate *Intermediate, attach
 					} else if post.Files != nil {
 						for _, file := range post.Files {
 							addFileToPost(file, slackExport.Uploads, newPost, attachmentsDir)
+						}
+					}
+				}
+
+				if len(post.Attachments) > 0 {
+					props := model.StringInterface{"attachments": post.Attachments}
+					propsB, _ := json.Marshal(props)
+
+					if utf8.RuneCountInString(string(propsB)) <= model.POST_PROPS_MAX_RUNES {
+						newPost.Props = props
+					} else {
+						if discardInvalidProps {
+							log.Println("Slack Import: Unable import post as props exceed the maximum character count. Skipping as --discard-invalid-props is enabled.")
+							continue
+						} else {
+							log.Println("Slack Import: Unable to add props to post as they exceed the maximum character count.")
 						}
 					}
 				}
@@ -518,7 +536,7 @@ func TransformPosts(slackExport *SlackExport, intermediate *Intermediate, attach
 	return nil
 }
 
-func Transform(slackExport *SlackExport, attachmentsDir string, skipAttachments bool) (*Intermediate, error) {
+func Transform(slackExport *SlackExport, attachmentsDir string, skipAttachments bool, discardInvalidProps bool) (*Intermediate, error) {
 	intermediate := &Intermediate{}
 
 	// ToDo: change log lines to something more meaningful
@@ -537,7 +555,7 @@ func Transform(slackExport *SlackExport, attachmentsDir string, skipAttachments 
 	PopulateChannelMemberships(intermediate)
 
 	log.Println("Transforming posts")
-	if err := TransformPosts(slackExport, intermediate, attachmentsDir, skipAttachments); err != nil {
+	if err := TransformPosts(slackExport, intermediate, attachmentsDir, skipAttachments, discardInvalidProps); err != nil {
 		return nil, err
 	}
 

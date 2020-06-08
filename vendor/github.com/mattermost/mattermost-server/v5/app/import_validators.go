@@ -1,5 +1,5 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
-// See License.txt for license information.
+// See LICENSE.txt for license information.
 
 package app
 
@@ -434,12 +434,14 @@ func validatePostImportData(data *PostImportData, maxPostSize int) *model.AppErr
 
 	if data.Reactions != nil {
 		for _, reaction := range *data.Reactions {
+			reaction := reaction
 			validateReactionImportData(&reaction, *data.CreateAt)
 		}
 	}
 
 	if data.Replies != nil {
 		for _, reply := range *data.Replies {
+			reply := reply
 			validateReplyImportData(&reply, *data.CreateAt, maxPostSize)
 		}
 	}
@@ -528,12 +530,14 @@ func validateDirectPostImportData(data *DirectPostImportData, maxPostSize int) *
 
 	if data.Reactions != nil {
 		for _, reaction := range *data.Reactions {
+			reaction := reaction
 			validateReactionImportData(&reaction, *data.CreateAt)
 		}
 	}
 
 	if data.Replies != nil {
 		for _, reply := range *data.Replies {
+			reply := reply
 			validateReplyImportData(&reply, *data.CreateAt, maxPostSize)
 		}
 	}

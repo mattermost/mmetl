@@ -1,5 +1,5 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
-// See License.txt for license information.
+// See LICENSE.txt for license information.
 
 package plugin
 
@@ -287,6 +287,13 @@ type API interface {
 	// @tag User
 	// Minimum server version: 5.2
 	CreateTeamMembers(teamId string, userIds []string, requestorId string) ([]*model.TeamMember, *model.AppError)
+
+	// CreateTeamMembersGracefully creates a team membership for all provided user ids and reports the users that were not added.
+	//
+	// @tag Team
+	// @tag User
+	// Minimum server version: 5.20
+	CreateTeamMembersGracefully(teamId string, userIds []string, requestorId string) ([]*model.TeamMemberWithError, *model.AppError)
 
 	// DeleteTeamMember deletes a team membership.
 	//
@@ -651,6 +658,12 @@ type API interface {
 	// @tag File
 	// Minimum server version: 5.3
 	GetFileInfo(fileId string) (*model.FileInfo, *model.AppError)
+
+	// GetFileInfos gets File Infos with options
+	//
+	// @tag File
+	// Minimum server version: 5.22
+	GetFileInfos(page, perPage int, opt *model.GetFileInfosOptions) ([]*model.FileInfo, *model.AppError)
 
 	// GetFile gets content of a file by it's ID
 	//

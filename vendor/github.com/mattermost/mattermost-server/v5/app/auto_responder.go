@@ -1,5 +1,5 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
-// See License.txt for license information.
+// See LICENSE.txt for license information.
 
 package app
 
@@ -13,7 +13,15 @@ func (a *App) SendAutoResponseIfNecessary(channel *model.Channel, sender *model.
 		return false, nil
 	}
 
+	if sender.IsBot {
+		return false, nil
+	}
+
 	receiverId := channel.GetOtherUserIdForDM(sender.Id)
+	if receiverId == "" {
+		// User direct messaged themself, let them test their auto-responder.
+		receiverId = sender.Id
+	}
 
 	receiver, err := a.GetUser(receiverId)
 	if err != nil {

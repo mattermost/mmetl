@@ -1,5 +1,5 @@
-// Copyright (c) 2017-present Mattermost, Inc. All Rights Reserved.
-// See License.txt for license information.
+// Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
+// See LICENSE.txt for license information.
 
 package model
 
@@ -32,7 +32,7 @@ func (opt *PluginKVSetOptions) IsValid() *AppError {
 // NewPluginKeyValueFromOptions return a PluginKeyValue given a pluginID, a KV pair and options.
 func NewPluginKeyValueFromOptions(pluginId, key string, value []byte, opt PluginKVSetOptions) (*PluginKeyValue, *AppError) {
 	expireAt := int64(0)
-	if opt.ExpireInSeconds > 0 {
+	if opt.ExpireInSeconds != 0 {
 		expireAt = GetMillis() + (opt.ExpireInSeconds * 1000)
 	}
 

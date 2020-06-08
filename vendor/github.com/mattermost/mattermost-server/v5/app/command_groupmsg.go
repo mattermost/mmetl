@@ -1,5 +1,5 @@
-// Copyright (c) 2016-present Mattermost, Inc. All Rights Reserved.
-// See License.txt for license information.
+// Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
+// See LICENSE.txt for license information.
 
 package app
 
@@ -47,7 +47,7 @@ func (me *groupmsgProvider) DoCommand(a *App, args *model.CommandArgs, message s
 	for _, username := range users {
 		username = strings.TrimSpace(username)
 		username = strings.TrimPrefix(username, "@")
-		targetUser, err := a.Srv.Store.User().GetByUsername(username)
+		targetUser, err := a.Srv().Store.User().GetByUsername(username)
 		if err != nil {
 			invalidUsernames = append(invalidUsernames, username)
 			continue

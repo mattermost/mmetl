@@ -1,5 +1,5 @@
-// Copyright (c) 2016-present Mattermost, Inc. All Rights Reserved.
-// See License.txt for license information.
+// Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
+// See LICENSE.txt for license information.
 
 package sqlstore
 
@@ -15,7 +15,7 @@ type SqlUserTermsOfServiceStore struct {
 	SqlStore
 }
 
-func NewSqlUserTermsOfServiceStore(sqlStore SqlStore) store.UserTermsOfServiceStore {
+func newSqlUserTermsOfServiceStore(sqlStore SqlStore) store.UserTermsOfServiceStore {
 	s := SqlUserTermsOfServiceStore{sqlStore}
 
 	for _, db := range sqlStore.GetAllConns() {
@@ -27,7 +27,7 @@ func NewSqlUserTermsOfServiceStore(sqlStore SqlStore) store.UserTermsOfServiceSt
 	return s
 }
 
-func (s SqlUserTermsOfServiceStore) CreateIndexesIfNotExists() {
+func (s SqlUserTermsOfServiceStore) createIndexesIfNotExists() {
 	s.CreateIndexIfNotExists("idx_user_terms_of_service_user_id", "UserTermsOfService", "UserId")
 }
 

@@ -1,5 +1,5 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
-// See License.txt for license information.
+// See LICENSE.txt for license information.
 
 package config
 
@@ -12,8 +12,8 @@ import (
 )
 
 // GenerateClientConfig renders the given configuration for a client.
-func GenerateClientConfig(c *model.Config, diagnosticId string, license *model.License) map[string]string {
-	props := GenerateLimitedClientConfig(c, diagnosticId, license)
+func GenerateClientConfig(c *model.Config, diagnosticID string, license *model.License) map[string]string {
+	props := GenerateLimitedClientConfig(c, diagnosticID, license)
 
 	props["SiteURL"] = strings.TrimRight(*c.ServiceSettings.SiteURL, "/")
 	props["EnableUserDeactivation"] = strconv.FormatBool(*c.TeamSettings.EnableUserDeactivation)
@@ -57,6 +57,7 @@ func GenerateClientConfig(c *model.Config, diagnosticId string, license *model.L
 		props["ExperimentalChannelOrganization"] = strconv.FormatBool(false)
 	}
 
+	props["ExperimentalChannelSidebarOrganization"] = *c.ServiceSettings.ExperimentalChannelSidebarOrganization
 	props["ExperimentalEnableAutomaticReplies"] = strconv.FormatBool(*c.TeamSettings.ExperimentalEnableAutomaticReplies)
 	props["ExperimentalTimezone"] = strconv.FormatBool(*c.DisplaySettings.ExperimentalTimezone)
 
@@ -198,7 +199,7 @@ func GenerateClientConfig(c *model.Config, diagnosticId string, license *model.L
 }
 
 // GenerateLimitedClientConfig renders the given configuration for an untrusted client.
-func GenerateLimitedClientConfig(c *model.Config, diagnosticId string, license *model.License) map[string]string {
+func GenerateLimitedClientConfig(c *model.Config, diagnosticID string, license *model.License) map[string]string {
 	props := make(map[string]string)
 
 	props["Version"] = model.CurrentVersion
@@ -250,7 +251,7 @@ func GenerateLimitedClientConfig(c *model.Config, diagnosticId string, license *
 	props["AndroidAppDownloadLink"] = *c.NativeAppSettings.AndroidAppDownloadLink
 	props["IosAppDownloadLink"] = *c.NativeAppSettings.IosAppDownloadLink
 
-	props["DiagnosticId"] = diagnosticId
+	props["DiagnosticId"] = diagnosticID
 	props["DiagnosticsEnabled"] = strconv.FormatBool(*c.LogSettings.EnableDiagnostics)
 
 	props["HasImageProxy"] = strconv.FormatBool(*c.ImageProxySettings.Enable)

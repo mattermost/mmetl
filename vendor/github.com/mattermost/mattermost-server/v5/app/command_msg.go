@@ -1,5 +1,5 @@
-// Copyright (c) 2016-present Mattermost, Inc. All Rights Reserved.
-// See License.txt for license information.
+// Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
+// See LICENSE.txt for license information.
 
 package app
 
@@ -48,7 +48,7 @@ func (me *msgProvider) DoCommand(a *App, args *model.CommandArgs, message string
 	targetUsername = strings.SplitN(message, " ", 2)[0]
 	targetUsername = strings.TrimPrefix(targetUsername, "@")
 
-	userProfile, err := a.Srv.Store.User().GetByUsername(targetUsername)
+	userProfile, err := a.Srv().Store.User().GetByUsername(targetUsername)
 	if err != nil {
 		mlog.Error(err.Error())
 		return &model.CommandResponse{Text: args.T("api.command_msg.missing.app_error"), ResponseType: model.COMMAND_RESPONSE_TYPE_EPHEMERAL}
@@ -71,7 +71,7 @@ func (me *msgProvider) DoCommand(a *App, args *model.CommandArgs, message string
 	channelName := model.GetDMNameFromIds(args.UserId, userProfile.Id)
 
 	targetChannelId := ""
-	if channel, channelErr := a.Srv.Store.Channel().GetByName(args.TeamId, channelName, true); channelErr != nil {
+	if channel, channelErr := a.Srv().Store.Channel().GetByName(args.TeamId, channelName, true); channelErr != nil {
 		if channelErr.Id == "store.sql_channel.get_by_name.missing.app_error" {
 			if !a.SessionHasPermissionTo(args.Session, model.PERMISSION_CREATE_DIRECT_CHANNEL) {
 				return &model.CommandResponse{Text: args.T("api.command_msg.permission.app_error"), ResponseType: model.COMMAND_RESPONSE_TYPE_EPHEMERAL}

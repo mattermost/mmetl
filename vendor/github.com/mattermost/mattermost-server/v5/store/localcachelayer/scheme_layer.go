@@ -1,5 +1,5 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
-// See License.txt for license information.
+// See LICENSE.txt for license information.
 
 package localcachelayer
 
@@ -46,13 +46,13 @@ func (s LocalCacheSchemeStore) Get(schemeId string) (*model.Scheme, *model.AppEr
 func (s LocalCacheSchemeStore) Delete(schemeId string) (*model.Scheme, *model.AppError) {
 	defer s.rootStore.doInvalidateCacheCluster(s.rootStore.schemeCache, schemeId)
 	defer s.rootStore.doClearCacheCluster(s.rootStore.roleCache)
-
+	defer s.rootStore.doClearCacheCluster(s.rootStore.rolePermissionsCache)
 	return s.SchemeStore.Delete(schemeId)
 }
 
 func (s LocalCacheSchemeStore) PermanentDeleteAll() *model.AppError {
 	defer s.rootStore.doClearCacheCluster(s.rootStore.schemeCache)
 	defer s.rootStore.doClearCacheCluster(s.rootStore.roleCache)
-
+	defer s.rootStore.doClearCacheCluster(s.rootStore.rolePermissionsCache)
 	return s.SchemeStore.PermanentDeleteAll()
 }

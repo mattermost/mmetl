@@ -1,5 +1,5 @@
-// Copyright (c) 2016-present Mattermost, Inc. All Rights Reserved.
-// See License.txt for license information.
+// Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
+// See LICENSE.txt for license information.
 
 package utils
 
@@ -155,8 +155,10 @@ func GetClientLicense(l *model.License) map[string]string {
 		props["EmailNotificationContents"] = strconv.FormatBool(*l.Features.EmailNotificationContents)
 		props["MessageExport"] = strconv.FormatBool(*l.Features.MessageExport)
 		props["CustomPermissionsSchemes"] = strconv.FormatBool(*l.Features.CustomPermissionsSchemes)
+		props["GuestAccounts"] = strconv.FormatBool(*l.Features.GuestAccounts)
 		props["GuestAccountsPermissions"] = strconv.FormatBool(*l.Features.GuestAccountsPermissions)
 		props["CustomTermsOfService"] = strconv.FormatBool(*l.Features.CustomTermsOfService)
+		props["LockTeammateNameDisplay"] = strconv.FormatBool(*l.Features.LockTeammateNameDisplay)
 	}
 
 	return props

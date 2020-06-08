@@ -1,5 +1,5 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
-// See License.txt for license information.
+// See LICENSE.txt for license information.
 
 package app
 
@@ -20,19 +20,25 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/pkg/errors"
 	"github.com/rs/cors"
+	rudder "github.com/rudderlabs/analytics-go"
 	analytics "github.com/segmentio/analytics-go"
 	"github.com/throttled/throttled"
 	"golang.org/x/crypto/acme/autocert"
 
+	"github.com/mattermost/mattermost-server/v5/audit"
 	"github.com/mattermost/mattermost-server/v5/config"
 	"github.com/mattermost/mattermost-server/v5/einterfaces"
 	"github.com/mattermost/mattermost-server/v5/jobs"
 	"github.com/mattermost/mattermost-server/v5/mlog"
 	"github.com/mattermost/mattermost-server/v5/model"
 	"github.com/mattermost/mattermost-server/v5/plugin"
+	"github.com/mattermost/mattermost-server/v5/services/cache"
+	"github.com/mattermost/mattermost-server/v5/services/cache/lru"
 	"github.com/mattermost/mattermost-server/v5/services/httpservice"
 	"github.com/mattermost/mattermost-server/v5/services/imageproxy"
+	"github.com/mattermost/mattermost-server/v5/services/searchengine"
 	"github.com/mattermost/mattermost-server/v5/services/timezones"
+	"github.com/mattermost/mattermost-server/v5/services/tracing"
 	"github.com/mattermost/mattermost-server/v5/store"
 	"github.com/mattermost/mattermost-server/v5/utils"
 )
@@ -53,6 +59,7 @@ type Server struct {
 	Server      *http.Server
 	ListenAddr  *net.TCPAddr
 	RateLimiter *RateLimiter
+	Busy        *Busy
 
 	didFinishListen chan struct{}
 
@@ -66,7 +73,8 @@ type Server struct {
 	EmailBatching    *EmailBatchingJob
 	EmailRateLimiter *throttled.GCRARateLimiter
 
-	Hubs                        []*Hub
+	hubsLock                    sync.RWMutex
+	hubs                        []*Hub
 	HubsStopCheckingForDeadlock chan bool
 
 	PushNotificationsHub PushNotificationsHub
@@ -78,19 +86,22 @@ type Server struct {
 
 	licenseValue       atomic.Value
 	clientLicenseValue atomic.Value
-	licenseListeners   map[string]func()
+	licenseListeners   map[string]func(*model.License, *model.License)
 
 	timezones *timezones.Timezones
 
 	newStore func() store.Store
 
 	htmlTemplateWatcher     *utils.HTMLTemplateWatcher
-	sessionCache            *utils.Cache
-	seenPendingPostIdsCache *utils.Cache
+	sessionCache            cache.Cache
+	seenPendingPostIdsCache cache.Cache
+	statusCache             cache.Cache
 	configListenerId        string
 	licenseListenerId       string
 	logListenerId           string
 	clusterLeaderListenerId string
+	searchConfigListenerId  string
+	searchLicenseListenerId string
 	configStore             config.Store
 	asymmetricSigningKey    *ecdsa.PrivateKey
 	postActionCookieSecret  []byte
@@ -104,6 +115,7 @@ type Server struct {
 
 	diagnosticId     string
 	diagnosticClient analytics.Client
+	rudderClient     rudder.Client
 
 	phase2PermissionsMigrationComplete bool
 
@@ -111,36 +123,42 @@ type Server struct {
 
 	ImageProxy *imageproxy.ImageProxy
 
+	Audit            *audit.Audit
 	Log              *mlog.Logger
 	NotificationsLog *mlog.Logger
 
-	joinCluster        bool
-	startMetrics       bool
-	startElasticsearch bool
+	joinCluster       bool
+	startMetrics      bool
+	startSearchEngine bool
+
+	SearchEngine *searchengine.Broker
 
 	AccountMigration einterfaces.AccountMigrationInterface
 	Cluster          einterfaces.ClusterInterface
 	Compliance       einterfaces.ComplianceInterface
 	DataRetention    einterfaces.DataRetentionInterface
-	Elasticsearch    einterfaces.ElasticsearchInterface
 	Ldap             einterfaces.LdapInterface
 	MessageExport    einterfaces.MessageExportInterface
 	Metrics          einterfaces.MetricsInterface
 	Notification     einterfaces.NotificationInterface
 	Saml             einterfaces.SamlInterface
+
+	CacheProvider cache.Provider
+
+	tracer                      *tracing.Tracer
+	timestampLastDiagnosticSent time.Time
 }
 
 func NewServer(options ...Option) (*Server, error) {
 	rootRouter := mux.NewRouter()
 
 	s := &Server{
-		goroutineExitSignal:     make(chan struct{}, 1),
-		RootRouter:              rootRouter,
-		licenseListeners:        map[string]func(){},
-		sessionCache:            utils.NewLru(model.SESSION_CACHE_SIZE),
-		seenPendingPostIdsCache: utils.NewLru(PENDING_POST_IDS_CACHE_SIZE),
-		clientConfig:            make(map[string]string),
+		goroutineExitSignal: make(chan struct{}, 1),
+		RootRouter:          rootRouter,
+		licenseListeners:    map[string]func(*model.License, *model.License){},
+		clientConfig:        make(map[string]string),
 	}
+
 	for _, option := range options {
 		if err := option(s); err != nil {
 			return nil, errors.Wrap(err, "failed to apply option")
@@ -172,6 +190,14 @@ func NewServer(options ...Option) (*Server, error) {
 	// Use this app logger as the global logger (eventually remove all instances of global logging)
 	mlog.InitGlobalLogger(s.Log)
 
+	if *s.Config().ServiceSettings.EnableOpenTracing {
+		tracer, err := tracing.New()
+		if err != nil {
+			return nil, err
+		}
+		s.tracer = tracer
+	}
+
 	s.logListenerId = s.AddConfigListener(func(_, after *model.Config) {
 		s.Log.ChangeLevels(utils.MloggerConfigFromLoggerConfig(&after.LogSettings, utils.GetLogFileLocation))
 
@@ -187,6 +213,18 @@ func NewServer(options ...Option) (*Server, error) {
 		return nil, errors.Wrapf(err, "unable to load Mattermost translation files")
 	}
 
+	s.SearchEngine = searchengine.NewBroker(s.Config(), s.Jobs)
+
+	// at the moment we only have this implementation
+	// in the future the cache provider will be built based on the loaded config
+	s.CacheProvider = new(lru.CacheProvider)
+
+	s.CacheProvider.Connect()
+
+	s.sessionCache = s.CacheProvider.NewCache(model.SESSION_CACHE_SIZE)
+	s.seenPendingPostIdsCache = s.CacheProvider.NewCache(PENDING_POST_IDS_CACHE_SIZE)
+	s.statusCache = s.CacheProvider.NewCache(model.STATUS_CACHE_SIZE)
+
 	err := s.RunOldAppInitialization()
 	if err != nil {
 		return nil, err
@@ -195,7 +233,6 @@ func NewServer(options ...Option) (*Server, error) {
 	model.AppErrorInit(utils.T)
 
 	s.timezones = timezones.New()
-
 	// Start email batching because it's not like the other jobs
 	s.InitEmailBatching()
 	s.AddConfigListener(func(_, _ *model.Config) {
@@ -214,8 +251,20 @@ func NewServer(options ...Option) (*Server, error) {
 		}
 	})
 
-	mlog.Info(fmt.Sprintf("Current version is %v (%v/%v/%v/%v)", model.CurrentVersion, model.BuildNumber, model.BuildDate, model.BuildHash, model.BuildHashEnterprise))
-	mlog.Info(fmt.Sprintf("Enterprise Enabled: %v", model.BuildEnterpriseReady))
+	logCurrentVersion := fmt.Sprintf("Current version is %v (%v/%v/%v/%v)", model.CurrentVersion, model.BuildNumber, model.BuildDate, model.BuildHash, model.BuildHashEnterprise)
+	mlog.Info(
+		logCurrentVersion,
+		mlog.String("current_version", model.CurrentVersion),
+		mlog.String("build_number", model.BuildNumber),
+		mlog.String("build_date", model.BuildDate),
+		mlog.String("build_hash", model.BuildHash),
+		mlog.String("build_hash_enterprise", model.BuildHashEnterprise),
+	)
+	if model.BuildEnterpriseReady == "true" {
+		mlog.Info("Enterprise Build", mlog.Bool("enterprise_build", true))
+	} else {
+		mlog.Info("Team Edition Build", mlog.Bool("enterprise_build", false))
+	}
 
 	pwd, _ := os.Getwd()
 	mlog.Info("Printing current working", mlog.String("directory", pwd))
@@ -240,6 +289,12 @@ func NewServer(options ...Option) (*Server, error) {
 
 	s.ReloadConfig()
 
+	if s.Audit == nil {
+		s.Audit = &audit.Audit{}
+		s.Audit.Init(audit.DefMaxQueueSize)
+		s.configureAudit(s.Audit)
+	}
+
 	// Enable developer settings if this is a "dev" build
 	if model.BuildNumber == "dev" {
 		s.UpdateConfig(func(cfg *model.Config) { *cfg.ServiceSettings.EnableDeveloper = true })
@@ -250,16 +305,12 @@ func NewServer(options ...Option) (*Server, error) {
 	}
 
 	if s.joinCluster && s.Cluster != nil {
-		s.FakeApp().RegisterAllClusterMessageHandlers()
+		s.FakeApp().registerAllClusterMessageHandlers()
 		s.Cluster.StartInterNodeCommunication()
 	}
 
 	if s.startMetrics && s.Metrics != nil {
 		s.Metrics.StartServer()
-	}
-
-	if s.startElasticsearch && s.Elasticsearch != nil {
-		s.StartElasticsearch()
 	}
 
 	s.AddConfigListener(func(oldConfig *model.Config, newConfig *model.Config) {
@@ -308,10 +359,15 @@ func NewServer(options ...Option) (*Server, error) {
 		}
 	}
 
+	s.SearchEngine.UpdateConfig(s.Config())
+	searchConfigListenerId, searchLicenseListenerId := s.StartSearchEngine()
+	s.searchConfigListenerId = searchConfigListenerId
+	s.searchLicenseListenerId = searchLicenseListenerId
+
 	return s, nil
 }
 
-// Global app opptions that should be applied to apps created by this server
+// Global app options that should be applied to apps created by this server
 func (s *Server) AppOptions() []AppOption {
 	return []AppOption{
 		ServerConnector(s),
@@ -347,6 +403,12 @@ func (s *Server) Shutdown() error {
 
 	s.RunOldAppShutdown()
 
+	if s.tracer != nil {
+		if err := s.tracer.Close(); err != nil {
+			mlog.Error("Unable to cleanly shutdown opentracing client", mlog.Err(err))
+		}
+	}
+
 	err := s.shutdownDiagnostics()
 	if err != nil {
 		mlog.Error("Unable to cleanly shutdown diagnostic client", mlog.Err(err))
@@ -361,6 +423,9 @@ func (s *Server) Shutdown() error {
 
 	s.RemoveConfigListener(s.configListenerId)
 	s.RemoveConfigListener(s.logListenerId)
+	s.stopSearchEngine()
+
+	s.Audit.Shutdown()
 
 	s.configStore.Close()
 
@@ -379,6 +444,10 @@ func (s *Server) Shutdown() error {
 
 	if s.Store != nil {
 		s.Store.Close()
+	}
+
+	if s.CacheProvider != nil {
+		s.CacheProvider.Close()
 	}
 
 	mlog.Info("Server stopped")
@@ -473,6 +542,7 @@ func (s *Server) Start() error {
 		s.RateLimiter = rateLimiter
 		handler = rateLimiter.RateLimitHandler(handler)
 	}
+	s.Busy = NewBusy(s.Cluster)
 
 	// Creating a logger for logging errors from http.Server at error level
 	errStdLog, err := s.Log.StdLogAt(mlog.LevelError, mlog.String("source", "httpserver"))
@@ -484,6 +554,7 @@ func (s *Server) Start() error {
 		Handler:      handler,
 		ReadTimeout:  time.Duration(*s.Config().ServiceSettings.ReadTimeout) * time.Second,
 		WriteTimeout: time.Duration(*s.Config().ServiceSettings.WriteTimeout) * time.Second,
+		IdleTimeout:  time.Duration(*s.Config().ServiceSettings.IdleTimeout) * time.Second,
 		ErrorLog:     errStdLog,
 	}
 
@@ -503,14 +574,8 @@ func (s *Server) Start() error {
 	}
 	s.ListenAddr = listener.Addr().(*net.TCPAddr)
 
-	mlog.Info(fmt.Sprintf("Server is listening on %v", listener.Addr().String()))
-
-	// Migration from old let's encrypt library
-	if *s.Config().ServiceSettings.UseLetsEncrypt {
-		if stat, err := os.Stat(*s.Config().ServiceSettings.LetsEncryptCertificateCacheFile); err == nil && !stat.IsDir() {
-			os.Remove(*s.Config().ServiceSettings.LetsEncryptCertificateCacheFile)
-		}
-	}
+	logListeningPort := fmt.Sprintf("Server is listening on %v", listener.Addr().String())
+	mlog.Info(logListeningPort, mlog.String("address", listener.Addr().String()))
 
 	m := &autocert.Manager{
 		Cache:  autocert.DirCache(*s.Config().ServiceSettings.LetsEncryptCertificateCacheFile),
@@ -661,11 +726,32 @@ func runSecurityJob(s *Server) {
 	}, time.Hour*4)
 }
 
-func runDiagnosticsJob(s *Server) {
-	doDiagnostics(s)
-	model.CreateRecurringTask("Diagnostics", func() {
+func doDiagnosticsIfNeeded(s *Server, firstRun time.Time) {
+	hoursSinceFirstServerRun := time.Since(firstRun).Hours()
+	// Send once every 10 minutes for the first hour
+	// Send once every hour thereafter for the first 12 hours
+	// Send at the 24 hour mark and every 24 hours after
+	if hoursSinceFirstServerRun < 1 {
 		doDiagnostics(s)
-	}, time.Hour*24)
+	} else if hoursSinceFirstServerRun <= 12 && time.Since(s.timestampLastDiagnosticSent) >= time.Hour {
+		doDiagnostics(s)
+	} else if hoursSinceFirstServerRun > 12 && time.Since(s.timestampLastDiagnosticSent) >= 24*time.Hour {
+		doDiagnostics(s)
+	}
+}
+
+func runDiagnosticsJob(s *Server) {
+	// Send on boot
+	doDiagnostics(s)
+	firstRun, err := s.FakeApp().getFirstServerRunTimestamp()
+	if err != nil {
+		mlog.Warn("Fetching time of first server run failed. Setting to 'now'.")
+		s.FakeApp().ensureFirstServerRunTimestamp()
+		firstRun = utils.MillisFromTime(time.Now())
+	}
+	model.CreateRecurringTask("Diagnostics", func() {
+		doDiagnosticsIfNeeded(s, utils.TimeFromMillis(firstRun))
+	}, time.Minute*10)
 }
 
 func runTokenCleanupJob(s *Server) {
@@ -695,6 +781,7 @@ func doSecurity(s *Server) {
 
 func doDiagnostics(s *Server) {
 	if *s.Config().LogSettings.EnableDiagnostics {
+		s.timestampLastDiagnosticSent = time.Now()
 		s.FakeApp().SendDailyDiagnostics()
 	}
 }
@@ -715,33 +802,40 @@ func doSessionCleanup(s *Server) {
 	s.Store.Session().Cleanup(model.GetMillis(), SESSIONS_CLEANUP_BATCH_SIZE)
 }
 
-func (s *Server) StartElasticsearch() {
-	s.Go(func() {
-		if err := s.Elasticsearch.Start(); err != nil {
-			s.Log.Error(err.Error())
-		}
-	})
+func (s *Server) StartSearchEngine() (string, string) {
+	if s.SearchEngine.ElasticsearchEngine != nil && s.SearchEngine.ElasticsearchEngine.IsActive() {
+		s.Go(func() {
+			if err := s.SearchEngine.ElasticsearchEngine.Start(); err != nil {
+				s.Log.Error(err.Error())
+			}
+		})
+	}
 
-	s.AddConfigListener(func(oldConfig *model.Config, newConfig *model.Config) {
-		if !*oldConfig.ElasticsearchSettings.EnableIndexing && *newConfig.ElasticsearchSettings.EnableIndexing {
+	configListenerId := s.AddConfigListener(func(oldConfig *model.Config, newConfig *model.Config) {
+		if s.SearchEngine == nil {
+			return
+		}
+		s.SearchEngine.UpdateConfig(newConfig)
+
+		if s.SearchEngine.ElasticsearchEngine != nil && !*oldConfig.ElasticsearchSettings.EnableIndexing && *newConfig.ElasticsearchSettings.EnableIndexing {
 			s.Go(func() {
-				if err := s.Elasticsearch.Start(); err != nil {
+				if err := s.SearchEngine.ElasticsearchEngine.Start(); err != nil {
 					mlog.Error(err.Error())
 				}
 			})
-		} else if *oldConfig.ElasticsearchSettings.EnableIndexing && !*newConfig.ElasticsearchSettings.EnableIndexing {
+		} else if s.SearchEngine.ElasticsearchEngine != nil && *oldConfig.ElasticsearchSettings.EnableIndexing && !*newConfig.ElasticsearchSettings.EnableIndexing {
 			s.Go(func() {
-				if err := s.Elasticsearch.Stop(); err != nil {
+				if err := s.SearchEngine.ElasticsearchEngine.Stop(); err != nil {
 					mlog.Error(err.Error())
 				}
 			})
-		} else if *oldConfig.ElasticsearchSettings.Password != *newConfig.ElasticsearchSettings.Password || *oldConfig.ElasticsearchSettings.Username != *newConfig.ElasticsearchSettings.Username || *oldConfig.ElasticsearchSettings.ConnectionUrl != *newConfig.ElasticsearchSettings.ConnectionUrl || *oldConfig.ElasticsearchSettings.Sniff != *newConfig.ElasticsearchSettings.Sniff {
+		} else if s.SearchEngine.ElasticsearchEngine != nil && *oldConfig.ElasticsearchSettings.Password != *newConfig.ElasticsearchSettings.Password || *oldConfig.ElasticsearchSettings.Username != *newConfig.ElasticsearchSettings.Username || *oldConfig.ElasticsearchSettings.ConnectionUrl != *newConfig.ElasticsearchSettings.ConnectionUrl || *oldConfig.ElasticsearchSettings.Sniff != *newConfig.ElasticsearchSettings.Sniff {
 			s.Go(func() {
 				if *oldConfig.ElasticsearchSettings.EnableIndexing {
-					if err := s.Elasticsearch.Stop(); err != nil {
+					if err := s.SearchEngine.ElasticsearchEngine.Stop(); err != nil {
 						mlog.Error(err.Error())
 					}
-					if err := s.Elasticsearch.Start(); err != nil {
+					if err := s.SearchEngine.ElasticsearchEngine.Start(); err != nil {
 						mlog.Error(err.Error())
 					}
 				}
@@ -749,21 +843,38 @@ func (s *Server) StartElasticsearch() {
 		}
 	})
 
-	s.AddLicenseListener(func() {
-		if s.License() != nil {
-			s.Go(func() {
-				if err := s.Elasticsearch.Start(); err != nil {
-					mlog.Error(err.Error())
-				}
-			})
-		} else {
-			s.Go(func() {
-				if err := s.Elasticsearch.Stop(); err != nil {
-					mlog.Error(err.Error())
-				}
-			})
+	licenseListenerId := s.AddLicenseListener(func(oldLicense, newLicense *model.License) {
+		if s.SearchEngine == nil {
+			return
+		}
+		if oldLicense == nil && newLicense != nil {
+			if s.SearchEngine.ElasticsearchEngine != nil && s.SearchEngine.ElasticsearchEngine.IsActive() {
+				s.Go(func() {
+					if err := s.SearchEngine.ElasticsearchEngine.Start(); err != nil {
+						mlog.Error(err.Error())
+					}
+				})
+			}
+		} else if oldLicense != nil && newLicense == nil {
+			if s.SearchEngine.ElasticsearchEngine != nil {
+				s.Go(func() {
+					if err := s.SearchEngine.ElasticsearchEngine.Stop(); err != nil {
+						mlog.Error(err.Error())
+					}
+				})
+			}
 		}
 	})
+
+	return configListenerId, licenseListenerId
+}
+
+func (s *Server) stopSearchEngine() {
+	s.RemoveConfigListener(s.searchConfigListenerId)
+	s.RemoveLicenseListener(s.searchLicenseListenerId)
+	if s.SearchEngine != nil && s.SearchEngine.ElasticsearchEngine != nil && s.SearchEngine.ElasticsearchEngine.IsActive() {
+		s.SearchEngine.ElasticsearchEngine.Stop()
+	}
 }
 
 func (s *Server) initDiagnostics(endpoint string) {
@@ -785,11 +896,84 @@ func (s *Server) initDiagnostics(endpoint string) {
 	}
 }
 
+func (s *Server) initRudder(endpoint string) {
+	if s.rudderClient == nil {
+		config := rudder.Config{}
+		config.Logger = rudder.StdLogger(s.Log.StdLog(mlog.String("source", "rudder")))
+		config.Endpoint = endpoint
+		// For testing
+		if endpoint != RUDDER_DATAPLANE_URL {
+			config.Verbose = true
+			config.BatchSize = 1
+		}
+		client, err := rudder.NewWithConfig(RUDDER_KEY, config)
+		if err != nil {
+			mlog.Error("Failed to create Rudder instance", mlog.Err(err))
+			return
+		}
+		client.Enqueue(rudder.Identify{
+			UserId: s.diagnosticId,
+		})
+
+		s.rudderClient = client
+	}
+}
+
 // shutdownDiagnostics closes the diagnostic client.
 func (s *Server) shutdownDiagnostics() error {
+	var segmentErr, rudderErr error
 	if s.diagnosticClient != nil {
-		return s.diagnosticClient.Close()
+		segmentErr = s.diagnosticClient.Close()
 	}
 
+	if s.rudderClient != nil {
+		rudderErr = s.rudderClient.Close()
+	}
+
+	if segmentErr != nil && rudderErr != nil {
+		return errors.New(fmt.Sprintf("%s, %s", segmentErr.Error(), rudderErr.Error()))
+	} else if segmentErr != nil {
+		return segmentErr
+	}
+
+	return rudderErr
+}
+
+// GetHubs returns the list of hubs. This method is safe
+// for concurrent use by multiple goroutines.
+func (s *Server) GetHubs() []*Hub {
+	s.hubsLock.RLock()
+	defer s.hubsLock.RUnlock()
+	return s.hubs
+}
+
+// getHub gets the element at the given index in the hubs list. This method is safe
+// for concurrent use by multiple goroutines.
+func (s *Server) GetHub(index int) (*Hub, error) {
+	s.hubsLock.RLock()
+	defer s.hubsLock.RUnlock()
+	if index >= len(s.hubs) {
+		return nil, errors.New("Hub element doesn't exist")
+	}
+	return s.hubs[index], nil
+}
+
+// SetHubs sets a new list of hubs. This method is safe
+// for concurrent use by multiple goroutines.
+func (s *Server) SetHubs(hubs []*Hub) {
+	s.hubsLock.Lock()
+	defer s.hubsLock.Unlock()
+	s.hubs = hubs
+}
+
+// SetHub sets the element at the given index in the hubs list. This method is safe
+// for concurrent use by multiple goroutines.
+func (s *Server) SetHub(index int, hub *Hub) error {
+	s.hubsLock.Lock()
+	defer s.hubsLock.Unlock()
+	if index >= len(s.hubs) {
+		return errors.New("Index is greater than the size of the hubs list")
+	}
+	s.hubs[index] = hub
 	return nil
 }

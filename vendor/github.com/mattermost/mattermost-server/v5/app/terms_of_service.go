@@ -1,5 +1,5 @@
-// Copyright (c) 2016-present Mattermost, Inc. All Rights Reserved.
-// See License.txt for license information.
+// Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
+// See LICENSE.txt for license information.
 
 package app
 
@@ -17,13 +17,13 @@ func (a *App) CreateTermsOfService(text, userId string) (*model.TermsOfService, 
 		return nil, err
 	}
 
-	return a.Srv.Store.TermsOfService().Save(termsOfService)
+	return a.Srv().Store.TermsOfService().Save(termsOfService)
 }
 
 func (a *App) GetLatestTermsOfService() (*model.TermsOfService, *model.AppError) {
-	return a.Srv.Store.TermsOfService().GetLatest(true)
+	return a.Srv().Store.TermsOfService().GetLatest(true)
 }
 
 func (a *App) GetTermsOfService(id string) (*model.TermsOfService, *model.AppError) {
-	return a.Srv.Store.TermsOfService().Get(id, true)
+	return a.Srv().Store.TermsOfService().Get(id, true)
 }
