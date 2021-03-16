@@ -4,7 +4,6 @@ import (
 	"archive/zip"
 	"encoding/json"
 	"fmt"
-	"golang.org/x/text/unicode/norm"
 	"io"
 	"log"
 	"os"
@@ -12,6 +11,8 @@ import (
 	"sort"
 	"strings"
 	"unicode/utf8"
+
+	"golang.org/x/text/unicode/norm"
 
 	"github.com/mattermost/mattermost-server/v5/model"
 )
@@ -384,7 +385,7 @@ func TransformPosts(slackExport *SlackExport, intermediate *Intermediate, attach
 					Message:  post.Text,
 					CreateAt: SlackConvertTimeStamp(post.TimeStamp),
 				}
-				if post.Upload && !skipAttachments {
+				if (post.File != nil || post.Files != nil) && !skipAttachments {
 					if post.File != nil {
 						addFileToPost(post.File, slackExport.Uploads, newPost, attachmentsDir)
 					} else if post.Files != nil {
