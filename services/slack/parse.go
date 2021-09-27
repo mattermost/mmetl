@@ -60,7 +60,7 @@ type SlackPost struct {
 }
 
 func (p *SlackPost) IsPlainMessage() bool {
-	return p.Type == "message" && (p.SubType == "" || p.SubType == "file_share")
+	return p.Type == "message" && (p.SubType == "" || p.SubType == "file_share" || p.SubType == "thread_broadcast")
 }
 
 func (p *SlackPost) IsFileComment() bool {
