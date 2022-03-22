@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mattermost/mattermost-server/v5/model"
+	"github.com/mattermost/mattermost-server/v6/model"
 )
 
 type SlackChannel struct {
@@ -19,7 +19,7 @@ type SlackChannel struct {
 	Members []string        `json:"members"`
 	Purpose SlackChannelSub `json:"purpose"`
 	Topic   SlackChannelSub `json:"topic"`
-	Type    string
+	Type    model.ChannelType
 }
 
 type SlackChannelSub struct {
@@ -119,7 +119,7 @@ func SlackParseUsers(data io.Reader) ([]SlackUser, error) {
 	return users, err
 }
 
-func SlackParseChannels(data io.Reader, channelType string) ([]SlackChannel, error) {
+func SlackParseChannels(data io.Reader, channelType model.ChannelType) ([]SlackChannel, error) {
 	decoder := json.NewDecoder(data)
 
 	var channels []SlackChannel
@@ -273,16 +273,16 @@ func ParseSlackExportFile(team string, zipReader *zip.Reader, skipConvertPosts b
 		}
 
 		if file.Name == "channels.json" {
-			slackExport.PublicChannels, _ = SlackParseChannels(reader, model.CHANNEL_OPEN)
+			slackExport.PublicChannels, _ = SlackParseChannels(reader, model.ChannelTypeOpen)
 			slackExport.Channels = append(slackExport.Channels, slackExport.PublicChannels...)
 		} else if file.Name == "dms.json" {
-			slackExport.DirectChannels, _ = SlackParseChannels(reader, model.CHANNEL_DIRECT)
+			slackExport.DirectChannels, _ = SlackParseChannels(reader, model.ChannelTypeDirect)
 			slackExport.Channels = append(slackExport.Channels, slackExport.DirectChannels...)
 		} else if file.Name == "groups.json" {
-			slackExport.PrivateChannels, _ = SlackParseChannels(reader, model.CHANNEL_PRIVATE)
+			slackExport.PrivateChannels, _ = SlackParseChannels(reader, model.ChannelTypePrivate)
 			slackExport.Channels = append(slackExport.Channels, slackExport.PrivateChannels...)
 		} else if file.Name == "mpims.json" {
-			slackExport.GroupChannels, _ = SlackParseChannels(reader, model.CHANNEL_GROUP)
+			slackExport.GroupChannels, _ = SlackParseChannels(reader, model.ChannelTypeGroup)
 			slackExport.Channels = append(slackExport.Channels, slackExport.GroupChannels...)
 		} else if file.Name == "users.json" {
 			slackExport.Users, _ = SlackParseUsers(reader)

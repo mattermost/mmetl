@@ -45,7 +45,7 @@ golangci-lint:
 	fi; \
 
 	@echo Running golangci-lint
-	golangci-lint run -E gofmt ./...
+	golangci-lint run --skip-dirs-use-default --timeout 5m -E gofmt ./...
 
 
 gofmt:
