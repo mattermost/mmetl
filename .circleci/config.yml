@@ -17,7 +17,7 @@ commands:
     parameters:
       version:
         type: string
-        default: 1.23.0
+        default: 1.45.0
       gobin:
         type: string
         default: /go/bin
@@ -44,7 +44,7 @@ commands:
 jobs:
   build:
     docker:
-      - image: circleci/golang:1.13
+      - image: circleci/golang:1.16
     steps:
       - checkout
       - install-golangci-lint
@@ -70,7 +70,7 @@ jobs:
 
   test:
     docker:
-      - image: circleci/golang:1.13
+      - image: circleci/golang:1.16
     steps:
       - checkout
       - install-golangci-lint

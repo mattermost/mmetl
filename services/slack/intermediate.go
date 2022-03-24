@@ -14,31 +14,31 @@ import (
 
 	"golang.org/x/text/unicode/norm"
 
-	"github.com/mattermost/mattermost-server/v5/model"
+	"github.com/mattermost/mattermost-server/v6/model"
 )
 
 type IntermediateChannel struct {
-	Id               string   `json:"id"`
-	OriginalName     string   `json:"original_name"`
-	Name             string   `json:"name"`
-	DisplayName      string   `json:"display_name"`
-	Members          []string `json:"members"`
-	MembersUsernames []string `json:"members_usernames"`
-	Purpose          string   `json:"purpose"`
-	Header           string   `json:"header"`
-	Topic            string   `json:"topic"`
-	Type             string   `json:"type"`
+	Id               string            `json:"id"`
+	OriginalName     string            `json:"original_name"`
+	Name             string            `json:"name"`
+	DisplayName      string            `json:"display_name"`
+	Members          []string          `json:"members"`
+	MembersUsernames []string          `json:"members_usernames"`
+	Purpose          string            `json:"purpose"`
+	Header           string            `json:"header"`
+	Topic            string            `json:"topic"`
+	Type             model.ChannelType `json:"type"`
 }
 
 func (c *IntermediateChannel) Sanitise() {
-	if c.Type == model.CHANNEL_DIRECT {
+	if c.Type == model.ChannelTypeDirect {
 		return
 	}
 
 	c.Name = strings.Trim(c.Name, "_-")
-	if len(c.Name) > model.CHANNEL_NAME_MAX_LENGTH {
+	if len(c.Name) > model.ChannelNameMaxLength {
 		log.Println(fmt.Sprintf("Slack Import: Channel %v handle exceeds the maximum length. It will be truncated when imported.", c.DisplayName))
-		c.Name = c.Name[0:model.CHANNEL_NAME_MAX_LENGTH]
+		c.Name = c.Name[0:model.ChannelNameMaxLength]
 	}
 	if len(c.Name) == 1 {
 		c.Name = "slack-channel-" + c.Name
@@ -48,9 +48,9 @@ func (c *IntermediateChannel) Sanitise() {
 	}
 
 	c.DisplayName = strings.Trim(c.DisplayName, "_-")
-	if utf8.RuneCountInString(c.DisplayName) > model.CHANNEL_DISPLAY_NAME_MAX_RUNES {
+	if utf8.RuneCountInString(c.DisplayName) > model.ChannelDisplayNameMaxRunes {
 		log.Println(fmt.Sprintf("Slack Import: Channel %v display name exceeds the maximum length. It will be truncated when imported.", c.DisplayName))
-		c.DisplayName = truncateRunes(c.DisplayName, model.CHANNEL_DISPLAY_NAME_MAX_RUNES)
+		c.DisplayName = truncateRunes(c.DisplayName, model.ChannelDisplayNameMaxRunes)
 	}
 	if len(c.DisplayName) == 1 {
 		c.DisplayName = "slack-channel-" + c.DisplayName
@@ -59,14 +59,14 @@ func (c *IntermediateChannel) Sanitise() {
 		c.DisplayName = strings.ToLower(c.Id)
 	}
 
-	if utf8.RuneCountInString(c.Purpose) > model.CHANNEL_PURPOSE_MAX_RUNES {
+	if utf8.RuneCountInString(c.Purpose) > model.ChannelPurposeMaxRunes {
 		log.Println(fmt.Sprintf("Slack Import: Channel %v purpose exceeds the maximum length. It will be truncated when imported.", c.DisplayName))
-		c.Purpose = truncateRunes(c.Purpose, model.CHANNEL_PURPOSE_MAX_RUNES)
+		c.Purpose = truncateRunes(c.Purpose, model.ChannelPurposeMaxRunes)
 	}
 
-	if utf8.RuneCountInString(c.Header) > model.CHANNEL_HEADER_MAX_RUNES {
+	if utf8.RuneCountInString(c.Header) > model.ChannelHeaderMaxRunes {
 		log.Println(fmt.Sprintf("Slack Import: Channel %v header exceeds the maximum length. It will be truncated when imported.", c.DisplayName))
-		c.Header = truncateRunes(c.Header, model.CHANNEL_HEADER_MAX_RUNES)
+		c.Header = truncateRunes(c.Header, model.ChannelHeaderMaxRunes)
 	}
 }
 
@@ -152,14 +152,14 @@ func TransformChannels(channels []SlackChannel, users map[string]*IntermediateUs
 	resultChannels := []*IntermediateChannel{}
 	for _, channel := range channels {
 		validMembers := filterValidMembers(channel.Members, users)
-		if (channel.Type == model.CHANNEL_DIRECT || channel.Type == model.CHANNEL_GROUP) && len(validMembers) <= 1 {
+		if (channel.Type == model.ChannelTypeDirect || channel.Type == model.ChannelTypeGroup) && len(validMembers) <= 1 {
 			log.Println("Bulk export for direct channels containing a single member is not supported. Not importing channel " + channel.Name)
 			continue
 		}
 
-		if channel.Type == model.CHANNEL_GROUP && len(validMembers) > model.CHANNEL_GROUP_MAX_USERS {
+		if channel.Type == model.ChannelTypeGroup && len(validMembers) > model.ChannelGroupMaxUsers {
 			channel.Name = channel.Purpose.Value
-			channel.Type = model.CHANNEL_PRIVATE
+			channel.Type = model.ChannelTypePrivate
 		}
 
 		name := SlackConvertChannelName(channel.Name, channel.Id)
@@ -234,7 +234,7 @@ func TransformAllChannels(slackExport *SlackExport, intermediate *Intermediate) 
 	intermediate.PrivateChannels = TransformChannels(slackExport.PrivateChannels, intermediate.UsersById)
 
 	// transform group
-	regularGroupChannels, bigGroupChannels := SplitChannelsByMemberSize(slackExport.GroupChannels, model.CHANNEL_GROUP_MAX_USERS)
+	regularGroupChannels, bigGroupChannels := SplitChannelsByMemberSize(slackExport.GroupChannels, model.ChannelGroupMaxUsers)
 
 	intermediate.PrivateChannels = append(intermediate.PrivateChannels, TransformChannels(bigGroupChannels, intermediate.UsersById)...)
 
@@ -248,7 +248,7 @@ func TransformAllChannels(slackExport *SlackExport, intermediate *Intermediate) 
 
 func AddPostToThreads(original SlackPost, post *IntermediatePost, threads map[string]*IntermediatePost, channel *IntermediateChannel, timestamps map[int64]bool) {
 	// direct and group posts need the channel members in the import line
-	if channel.Type == model.CHANNEL_DIRECT || channel.Type == model.CHANNEL_GROUP {
+	if channel.Type == model.ChannelTypeDirect || channel.Type == model.ChannelTypeGroup {
 		post.IsDirect = true
 		post.ChannelMembers = channel.MembersUsernames
 	} else {
@@ -399,7 +399,7 @@ func TransformPosts(slackExport *SlackExport, intermediate *Intermediate, attach
 					props := model.StringInterface{"attachments": post.Attachments}
 					propsB, _ := json.Marshal(props)
 
-					if utf8.RuneCountInString(string(propsB)) <= model.POST_PROPS_MAX_RUNES {
+					if utf8.RuneCountInString(string(propsB)) <= model.PostPropsMaxRunes {
 						newPost.Props = props
 					} else {
 						if discardInvalidProps {

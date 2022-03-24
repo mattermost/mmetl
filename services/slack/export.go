@@ -10,8 +10,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mattermost/mattermost-server/v5/app"
-	"github.com/mattermost/mattermost-server/v5/model"
+	"github.com/mattermost/mattermost-server/v6/app"
+	"github.com/mattermost/mattermost-server/v6/model"
 	"github.com/pkg/errors"
 )
 
@@ -103,7 +103,7 @@ func GetImportLineFromUser(user *IntermediateUser, team string) *app.LineImportD
 	for _, channelName := range user.Memberships {
 		channelMemberships = append(channelMemberships, app.UserChannelImportData{
 			Name:  model.NewString(channelName),
-			Roles: model.NewString(model.CHANNEL_USER_ROLE_ID),
+			Roles: model.NewString(model.ChannelUserRoleId),
 		})
 	}
 
@@ -116,12 +116,12 @@ func GetImportLineFromUser(user *IntermediateUser, team string) *app.LineImportD
 			FirstName: model.NewString(user.FirstName),
 			LastName:  model.NewString(user.LastName),
 			Position:  model.NewString(""),
-			Roles:     model.NewString(model.SYSTEM_USER_ROLE_ID),
+			Roles:     model.NewString(model.SystemUserRoleId),
 			Teams: &[]app.UserTeamImportData{
 				{
 					Name:     model.NewString(team),
 					Channels: &channelMemberships,
-					Roles:    model.NewString(model.TEAM_USER_ROLE_ID),
+					Roles:    model.NewString(model.TeamUserRoleId),
 				},
 			},
 		},

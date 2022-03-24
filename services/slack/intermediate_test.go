@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mattermost/mattermost-server/v5/model"
+	"github.com/mattermost/mattermost-server/v6/model"
 )
 
 func TestIntermediateChannelSanitise(t *testing.T) {
@@ -85,7 +85,7 @@ func TestTransformPublicChannels(t *testing.T) {
 			Topic: SlackChannelSub{
 				Value: "topic1",
 			},
-			Type: model.CHANNEL_OPEN,
+			Type: model.ChannelTypeOpen,
 		},
 		{
 			Id:      "id2",
@@ -98,7 +98,7 @@ func TestTransformPublicChannels(t *testing.T) {
 			Topic: SlackChannelSub{
 				Value: "topic2",
 			},
-			Type: model.CHANNEL_OPEN,
+			Type: model.ChannelTypeOpen,
 		},
 		{
 			Id:      "id3",
@@ -111,7 +111,7 @@ func TestTransformPublicChannels(t *testing.T) {
 			Topic: SlackChannelSub{
 				Value: "topic3",
 			},
-			Type: model.CHANNEL_OPEN,
+			Type: model.ChannelTypeOpen,
 		},
 	}
 
@@ -124,7 +124,7 @@ func TestTransformPublicChannels(t *testing.T) {
 		assert.Equal(t, []string{"m1", "m2", "m3"}, result[i].Members)
 		assert.Equal(t, fmt.Sprintf("purpose%d", i+1), result[i].Purpose)
 		assert.Equal(t, fmt.Sprintf("topic%d", i+1), result[i].Header)
-		assert.Equal(t, model.CHANNEL_OPEN, result[i].Type)
+		assert.Equal(t, model.ChannelTypeOpen, result[i].Type)
 	}
 }
 
@@ -142,7 +142,7 @@ func TestTransformPublicChannelsWithAnInvalidMember(t *testing.T) {
 			Topic: SlackChannelSub{
 				Value: "topic1",
 			},
-			Type: model.CHANNEL_OPEN,
+			Type: model.ChannelTypeOpen,
 		},
 		{
 			Id:      "id2",
@@ -155,7 +155,7 @@ func TestTransformPublicChannelsWithAnInvalidMember(t *testing.T) {
 			Topic: SlackChannelSub{
 				Value: "topic2",
 			},
-			Type: model.CHANNEL_OPEN,
+			Type: model.ChannelTypeOpen,
 		},
 		{
 			Id:      "id3",
@@ -168,7 +168,7 @@ func TestTransformPublicChannelsWithAnInvalidMember(t *testing.T) {
 			Topic: SlackChannelSub{
 				Value: "topic3",
 			},
-			Type: model.CHANNEL_OPEN,
+			Type: model.ChannelTypeOpen,
 		},
 	}
 
@@ -181,7 +181,7 @@ func TestTransformPublicChannelsWithAnInvalidMember(t *testing.T) {
 		assert.Equal(t, []string{"m1", "m2"}, result[i].Members)
 		assert.Equal(t, fmt.Sprintf("purpose%d", i+1), result[i].Purpose)
 		assert.Equal(t, fmt.Sprintf("topic%d", i+1), result[i].Header)
-		assert.Equal(t, model.CHANNEL_OPEN, result[i].Type)
+		assert.Equal(t, model.ChannelTypeOpen, result[i].Type)
 	}
 }
 
@@ -199,7 +199,7 @@ func TestTransformPrivateChannels(t *testing.T) {
 			Topic: SlackChannelSub{
 				Value: "topic1",
 			},
-			Type: model.CHANNEL_PRIVATE,
+			Type: model.ChannelTypePrivate,
 		},
 		{
 			Id:      "id2",
@@ -212,7 +212,7 @@ func TestTransformPrivateChannels(t *testing.T) {
 			Topic: SlackChannelSub{
 				Value: "topic2",
 			},
-			Type: model.CHANNEL_PRIVATE,
+			Type: model.ChannelTypePrivate,
 		},
 		{
 			Id:      "id3",
@@ -225,7 +225,7 @@ func TestTransformPrivateChannels(t *testing.T) {
 			Topic: SlackChannelSub{
 				Value: "topic3",
 			},
-			Type: model.CHANNEL_PRIVATE,
+			Type: model.ChannelTypePrivate,
 		},
 	}
 
@@ -238,7 +238,7 @@ func TestTransformPrivateChannels(t *testing.T) {
 		assert.Equal(t, []string{"m1", "m2", "m3"}, result[i].Members)
 		assert.Equal(t, fmt.Sprintf("purpose%d", i+1), result[i].Purpose)
 		assert.Equal(t, fmt.Sprintf("topic%d", i+1), result[i].Header)
-		assert.Equal(t, model.CHANNEL_PRIVATE, result[i].Type)
+		assert.Equal(t, model.ChannelTypePrivate, result[i].Type)
 	}
 }
 
@@ -256,7 +256,7 @@ func TestTransformBigGroupChannels(t *testing.T) {
 			Topic: SlackChannelSub{
 				Value: "topic1",
 			},
-			Type: model.CHANNEL_GROUP,
+			Type: model.ChannelTypeGroup,
 		},
 		{
 			Id:      "id2",
@@ -269,7 +269,7 @@ func TestTransformBigGroupChannels(t *testing.T) {
 			Topic: SlackChannelSub{
 				Value: "topic2",
 			},
-			Type: model.CHANNEL_GROUP,
+			Type: model.ChannelTypeGroup,
 		},
 		{
 			Id:      "id3",
@@ -281,7 +281,7 @@ func TestTransformBigGroupChannels(t *testing.T) {
 			Topic: SlackChannelSub{
 				Value: "topic3",
 			},
-			Type: model.CHANNEL_GROUP,
+			Type: model.ChannelTypeGroup,
 		},
 	}
 
@@ -294,7 +294,7 @@ func TestTransformBigGroupChannels(t *testing.T) {
 		assert.Equal(t, channelMembers, result[i].Members)
 		assert.Equal(t, fmt.Sprintf("purpose%d", i+1), result[i].Purpose)
 		assert.Equal(t, fmt.Sprintf("topic%d", i+1), result[i].Header)
-		assert.Equal(t, model.CHANNEL_PRIVATE, result[i].Type)
+		assert.Equal(t, model.ChannelTypePrivate, result[i].Type)
 	}
 }
 
@@ -311,7 +311,7 @@ func TestTransformRegularGroupChannels(t *testing.T) {
 			Topic: SlackChannelSub{
 				Value: "topic1",
 			},
-			Type: model.CHANNEL_GROUP,
+			Type: model.ChannelTypeGroup,
 		},
 		{
 			Id:      "id2",
@@ -324,7 +324,7 @@ func TestTransformRegularGroupChannels(t *testing.T) {
 			Topic: SlackChannelSub{
 				Value: "topic2",
 			},
-			Type: model.CHANNEL_GROUP,
+			Type: model.ChannelTypeGroup,
 		},
 		{
 			Id:      "id3",
@@ -337,7 +337,7 @@ func TestTransformRegularGroupChannels(t *testing.T) {
 			Topic: SlackChannelSub{
 				Value: "topic3",
 			},
-			Type: model.CHANNEL_GROUP,
+			Type: model.ChannelTypeGroup,
 		},
 	}
 
@@ -350,7 +350,7 @@ func TestTransformRegularGroupChannels(t *testing.T) {
 		assert.Equal(t, []string{"m1", "m2", "m3"}, result[i].Members)
 		assert.Equal(t, fmt.Sprintf("purpose%d", i+1), result[i].Purpose)
 		assert.Equal(t, fmt.Sprintf("topic%d", i+1), result[i].Header)
-		assert.Equal(t, model.CHANNEL_GROUP, result[i].Type)
+		assert.Equal(t, model.ChannelTypeGroup, result[i].Type)
 	}
 }
 
@@ -361,19 +361,19 @@ func TestTransformDirectChannels(t *testing.T) {
 			Id:      "id1",
 			Creator: "creator1",
 			Members: []string{"m1", "m2", "m3"},
-			Type:    model.CHANNEL_DIRECT,
+			Type:    model.ChannelTypeDirect,
 		},
 		{
 			Id:      "id2",
 			Creator: "creator2",
 			Members: []string{"m1", "m2", "m3"},
-			Type:    model.CHANNEL_DIRECT,
+			Type:    model.ChannelTypeDirect,
 		},
 		{
 			Id:      "id2",
 			Creator: "creator2",
 			Members: []string{"m1", "m2", "m3"},
-			Type:    model.CHANNEL_DIRECT,
+			Type:    model.ChannelTypeDirect,
 		},
 	}
 
@@ -382,7 +382,7 @@ func TestTransformDirectChannels(t *testing.T) {
 
 	for i := range result {
 		assert.Equal(t, []string{"m1", "m2", "m3"}, result[i].Members)
-		assert.Equal(t, model.CHANNEL_DIRECT, result[i].Type)
+		assert.Equal(t, model.ChannelTypeDirect, result[i].Type)
 	}
 }
 
@@ -394,7 +394,7 @@ func TestTransformChannelWithOneValidMember(t *testing.T) {
 				Id:      "id1",
 				Creator: "creator1",
 				Members: []string{"m1", "m2", "m3"},
-				Type:    model.CHANNEL_DIRECT,
+				Type:    model.ChannelTypeDirect,
 			},
 		}
 
@@ -414,7 +414,7 @@ func TestTransformChannelWithOneValidMember(t *testing.T) {
 				Topic: SlackChannelSub{
 					Value: "topic1",
 				},
-				Type: model.CHANNEL_GROUP,
+				Type: model.ChannelTypeGroup,
 			},
 		}
 
@@ -578,7 +578,7 @@ func TestAddPostToThreads(t *testing.T) {
 		for _, tc := range testCases {
 			t.Run(tc.Name, func(t *testing.T) {
 				original := SlackPost{TimeStamp: "thread-ts"}
-				channel := &IntermediateChannel{Type: model.CHANNEL_OPEN}
+				channel := &IntermediateChannel{Type: model.ChannelTypeOpen}
 				threads := map[string]*IntermediatePost{}
 
 				AddPostToThreads(original, tc.Post, threads, channel, tc.Timestamps)
