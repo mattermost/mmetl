@@ -1,7 +1,6 @@
 package slack
 
 import (
-	"log"
 	"sort"
 	"strings"
 )
@@ -11,39 +10,41 @@ func getDirectChannelNameFromMembers(members []string) string {
 	return strings.Join(members, "_")
 }
 
-func Check(intermediate *Intermediate) {
+func (t *Transformer) CheckIntermediate() {
+	t.Logger.Info("Checking intermediate resources")
+
 	// create channels index
 	channelsByName := map[string]*IntermediateChannel{}
-	for _, channel := range intermediate.PublicChannels {
+	for _, channel := range t.Intermediate.PublicChannels {
 		if _, ok := channelsByName[channel.Name]; ok {
-			log.Printf("WARNING -- Duplicate public channel name: %s\n", channel.Name)
+			t.Logger.Warnf("WARNING -- Duplicate public channel name: %s", channel.Name)
 			continue
 		}
 		channelsByName[channel.Name] = channel
 	}
 
-	for _, channel := range intermediate.PrivateChannels {
+	for _, channel := range t.Intermediate.PrivateChannels {
 		if _, ok := channelsByName[channel.Name]; ok {
-			log.Printf("WARNING -- Duplicate private channel name: %s\n", channel.Name)
+			t.Logger.Warnf("WARNING -- Duplicate private channel name: %s", channel.Name)
 			continue
 		}
 		channelsByName[channel.Name] = channel
 	}
 
 	// create direct channels index
-	for _, channel := range intermediate.GroupChannels {
+	for _, channel := range t.Intermediate.GroupChannels {
 		channelName := getDirectChannelNameFromMembers(channel.Members)
 		if _, ok := channelsByName[channelName]; ok {
-			log.Printf("WARNING -- Duplicate group channel name: %s\n", channelName)
+			t.Logger.Warnf("WARNING -- Duplicate group channel name: %s", channelName)
 			continue
 		}
 		channelsByName[channelName] = channel
 	}
 
-	for _, channel := range intermediate.DirectChannels {
+	for _, channel := range t.Intermediate.DirectChannels {
 		channelName := getDirectChannelNameFromMembers(channel.Members)
 		if _, ok := channelsByName[channelName]; ok {
-			log.Printf("WARNING -- Duplicate direct channel name: %s\n", channelName)
+			t.Logger.Warnf("WARNING -- Duplicate direct channel name: %s", channelName)
 			continue
 		}
 		channelsByName[channelName] = channel
@@ -51,7 +52,7 @@ func Check(intermediate *Intermediate) {
 
 	// create post index
 	postsByChannelName := map[string][]*IntermediatePost{}
-	for _, post := range intermediate.Posts {
+	for _, post := range t.Intermediate.Posts {
 		channelName := post.Channel
 		if post.IsDirect && len(post.ChannelMembers) != 0 {
 			channelName = getDirectChannelNameFromMembers(post.ChannelMembers)
@@ -64,18 +65,18 @@ func Check(intermediate *Intermediate) {
 		visitedChannels[channelName] = true
 		usernames := []string{}
 		for _, member := range channel.Members {
-			if user, ok := intermediate.UsersById[member]; !ok {
-				log.Printf("-- Invalid member: %s\n", member)
+			if user, ok := t.Intermediate.UsersById[member]; !ok {
+				t.Logger.Warnf("-- Invalid member: %s", member)
 			} else {
 				usernames = append(usernames, user.Username)
 			}
 		}
-		log.Printf("> Channel: \"%s\" Type: \"%s\" Post count: %d Members: \"%s\"", channelName, channel.Type, len(postsByChannelName[channelName]), strings.Join(usernames, ", "))
+		t.Logger.Debugf("Channel: \"%s\" Type: \"%s\" Post count: %d Members: \"%s\"", channelName, channel.Type, len(postsByChannelName[channelName]), strings.Join(usernames, ", "))
 	}
 
 	for channelName, posts := range postsByChannelName {
 		if _, ok := visitedChannels[channelName]; !ok {
-			log.Printf("-- Channel %s has %d posts but not a channel\n", channelName, len(posts))
+			t.Logger.Warnf("-- Channel %s has %d posts but not a channel", channelName, len(posts))
 		}
 	}
 }

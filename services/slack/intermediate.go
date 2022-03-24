@@ -5,16 +5,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"path"
 	"sort"
 	"strings"
 	"unicode/utf8"
 
-	"golang.org/x/text/unicode/norm"
-
 	"github.com/mattermost/mattermost-server/v6/model"
+	"github.com/pkg/errors"
+	log "github.com/sirupsen/logrus"
+	"golang.org/x/text/unicode/norm"
 )
 
 type IntermediateChannel struct {
@@ -30,14 +30,14 @@ type IntermediateChannel struct {
 	Type             model.ChannelType `json:"type"`
 }
 
-func (c *IntermediateChannel) Sanitise() {
+func (c *IntermediateChannel) Sanitise(logger log.FieldLogger) {
 	if c.Type == model.ChannelTypeDirect {
 		return
 	}
 
 	c.Name = strings.Trim(c.Name, "_-")
 	if len(c.Name) > model.ChannelNameMaxLength {
-		log.Println(fmt.Sprintf("Slack Import: Channel %v handle exceeds the maximum length. It will be truncated when imported.", c.DisplayName))
+		logger.Warnf("Channel %s handle exceeds the maximum length. It will be truncated when imported.", c.DisplayName)
 		c.Name = c.Name[0:model.ChannelNameMaxLength]
 	}
 	if len(c.Name) == 1 {
@@ -49,7 +49,7 @@ func (c *IntermediateChannel) Sanitise() {
 
 	c.DisplayName = strings.Trim(c.DisplayName, "_-")
 	if utf8.RuneCountInString(c.DisplayName) > model.ChannelDisplayNameMaxRunes {
-		log.Println(fmt.Sprintf("Slack Import: Channel %v display name exceeds the maximum length. It will be truncated when imported.", c.DisplayName))
+		logger.Warnf("Channel %s display name exceeds the maximum length. It will be truncated when imported.", c.DisplayName)
 		c.DisplayName = truncateRunes(c.DisplayName, model.ChannelDisplayNameMaxRunes)
 	}
 	if len(c.DisplayName) == 1 {
@@ -60,12 +60,12 @@ func (c *IntermediateChannel) Sanitise() {
 	}
 
 	if utf8.RuneCountInString(c.Purpose) > model.ChannelPurposeMaxRunes {
-		log.Println(fmt.Sprintf("Slack Import: Channel %v purpose exceeds the maximum length. It will be truncated when imported.", c.DisplayName))
+		logger.Warnf("Channel %s purpose exceeds the maximum length. It will be truncated when imported.", c.DisplayName)
 		c.Purpose = truncateRunes(c.Purpose, model.ChannelPurposeMaxRunes)
 	}
 
 	if utf8.RuneCountInString(c.Header) > model.ChannelHeaderMaxRunes {
-		log.Println(fmt.Sprintf("Slack Import: Channel %v header exceeds the maximum length. It will be truncated when imported.", c.DisplayName))
+		logger.Warnf("Channel %s header exceeds the maximum length. It will be truncated when imported.", c.DisplayName)
 		c.Header = truncateRunes(c.Header, model.ChannelHeaderMaxRunes)
 	}
 }
@@ -80,10 +80,10 @@ type IntermediateUser struct {
 	Memberships []string `json:"memberships"`
 }
 
-func (u *IntermediateUser) Sanitise() {
+func (u *IntermediateUser) Sanitise(logger log.FieldLogger) {
 	if u.Email == "" {
 		u.Email = u.Username + "@example.com"
-		log.Println(fmt.Sprintf("User %s does not have an email address in the Slack export. Used %s as a placeholder. The user should update their email address once logged in to the system.", u.Username, u.Email))
+		logger.Warnf("User %s does not have an email address in the Slack export. Used %s as a placeholder. The user should update their email address once logged in to the system.", u.Username, u.Email)
 	}
 }
 
@@ -109,7 +109,9 @@ type Intermediate struct {
 	Posts           []*IntermediatePost          `json:"posts"`
 }
 
-func TransformUsers(users []SlackUser, intermediate *Intermediate) {
+func (t *Transformer) TransformUsers(users []SlackUser) {
+	t.Logger.Info("Transforming users")
+
 	resultUsers := map[string]*IntermediateUser{}
 	for _, user := range users {
 		newUser := &IntermediateUser{
@@ -121,12 +123,12 @@ func TransformUsers(users []SlackUser, intermediate *Intermediate) {
 			Password:  model.NewId(),
 		}
 
-		newUser.Sanitise()
+		newUser.Sanitise(t.Logger)
 		resultUsers[newUser.Id] = newUser
-		log.Println(fmt.Sprintf("Slack user with email %s and password %s has been imported.", newUser.Email, newUser.Password))
+		t.Logger.Debugf("Slack user with email %s and password %s has been imported.", newUser.Email, newUser.Password)
 	}
 
-	intermediate.UsersById = resultUsers
+	t.Intermediate.UsersById = resultUsers
 }
 
 func filterValidMembers(members []string, users map[string]*IntermediateUser) []string {
@@ -148,12 +150,12 @@ func getOriginalName(channel SlackChannel) string {
 	}
 }
 
-func TransformChannels(channels []SlackChannel, users map[string]*IntermediateUser) []*IntermediateChannel {
+func (t *Transformer) TransformChannels(channels []SlackChannel) []*IntermediateChannel {
 	resultChannels := []*IntermediateChannel{}
 	for _, channel := range channels {
-		validMembers := filterValidMembers(channel.Members, users)
+		validMembers := filterValidMembers(channel.Members, t.Intermediate.UsersById)
 		if (channel.Type == model.ChannelTypeDirect || channel.Type == model.ChannelTypeGroup) && len(validMembers) <= 1 {
-			log.Println("Bulk export for direct channels containing a single member is not supported. Not importing channel " + channel.Name)
+			t.Logger.Warnf("Bulk export for direct channels containing a single member is not supported. Not importing channel %s", channel.Name)
 			continue
 		}
 
@@ -173,17 +175,19 @@ func TransformChannels(channels []SlackChannel, users map[string]*IntermediateUs
 			Type:         channel.Type,
 		}
 
-		newChannel.Sanitise()
+		newChannel.Sanitise(t.Logger)
 		resultChannels = append(resultChannels, newChannel)
 	}
 
 	return resultChannels
 }
 
-func PopulateUserMemberships(intermediate *Intermediate) {
-	for userId, user := range intermediate.UsersById {
+func (t *Transformer) PopulateUserMemberships() {
+	t.Logger.Info("Populating user memberships")
+
+	for userId, user := range t.Intermediate.UsersById {
 		memberships := []string{}
-		for _, channel := range intermediate.PublicChannels {
+		for _, channel := range t.Intermediate.PublicChannels {
 			for _, memberId := range channel.Members {
 				if userId == memberId {
 					memberships = append(memberships, channel.Name)
@@ -191,7 +195,7 @@ func PopulateUserMemberships(intermediate *Intermediate) {
 				}
 			}
 		}
-		for _, channel := range intermediate.PrivateChannels {
+		for _, channel := range t.Intermediate.PrivateChannels {
 			for _, memberId := range channel.Members {
 				if userId == memberId {
 					memberships = append(memberships, channel.Name)
@@ -203,21 +207,23 @@ func PopulateUserMemberships(intermediate *Intermediate) {
 	}
 }
 
-func PopulateChannelMemberships(intermediate *Intermediate) {
-	for _, channel := range intermediate.GroupChannels {
+func (t *Transformer) PopulateChannelMemberships() {
+	t.Logger.Info("Populating channel memberships")
+
+	for _, channel := range t.Intermediate.GroupChannels {
 		members := []string{}
 		for _, memberId := range channel.Members {
-			if user, ok := intermediate.UsersById[memberId]; ok {
+			if user, ok := t.Intermediate.UsersById[memberId]; ok {
 				members = append(members, user.Username)
 			}
 		}
 
 		channel.MembersUsernames = members
 	}
-	for _, channel := range intermediate.DirectChannels {
+	for _, channel := range t.Intermediate.DirectChannels {
 		members := []string{}
 		for _, memberId := range channel.Members {
-			if user, ok := intermediate.UsersById[memberId]; ok {
+			if user, ok := t.Intermediate.UsersById[memberId]; ok {
 				members = append(members, user.Username)
 			}
 		}
@@ -226,22 +232,24 @@ func PopulateChannelMemberships(intermediate *Intermediate) {
 	}
 }
 
-func TransformAllChannels(slackExport *SlackExport, intermediate *Intermediate) error {
+func (t *Transformer) TransformAllChannels(slackExport *SlackExport) error {
+	t.Logger.Info("Transforming channels")
+
 	// transform public
-	intermediate.PublicChannels = TransformChannels(slackExport.PublicChannels, intermediate.UsersById)
+	t.Intermediate.PublicChannels = t.TransformChannels(slackExport.PublicChannels)
 
 	// transform private
-	intermediate.PrivateChannels = TransformChannels(slackExport.PrivateChannels, intermediate.UsersById)
+	t.Intermediate.PrivateChannels = t.TransformChannels(slackExport.PrivateChannels)
 
 	// transform group
 	regularGroupChannels, bigGroupChannels := SplitChannelsByMemberSize(slackExport.GroupChannels, model.ChannelGroupMaxUsers)
 
-	intermediate.PrivateChannels = append(intermediate.PrivateChannels, TransformChannels(bigGroupChannels, intermediate.UsersById)...)
+	t.Intermediate.PrivateChannels = append(t.Intermediate.PrivateChannels, t.TransformChannels(bigGroupChannels)...)
 
-	intermediate.GroupChannels = TransformChannels(regularGroupChannels, intermediate.UsersById)
+	t.Intermediate.GroupChannels = t.TransformChannels(regularGroupChannels)
 
 	// transform direct
-	intermediate.DirectChannels = TransformChannels(slackExport.DirectChannels, intermediate.UsersById)
+	t.Intermediate.DirectChannels = t.TransformChannels(slackExport.DirectChannels)
 
 	return nil
 }
@@ -314,49 +322,49 @@ func getNormalisedFilePath(file *SlackFile, attachmentsDir string) string {
 	return string(norm.NFC.Bytes([]byte(filePath)))
 }
 
-func addFileToPost(file *SlackFile, uploads map[string]*zip.File, post *IntermediatePost, attachmentsDir string) {
+func addFileToPost(file *SlackFile, uploads map[string]*zip.File, post *IntermediatePost, attachmentsDir string) error {
 	zipFile, ok := uploads[file.Id]
 	if !ok {
-		log.Printf("Error retrieving file with id %s", file.Id)
-		return
+		return errors.Errorf("failed to retrieve file with id %s", file.Id)
 	}
 
 	zipFileReader, err := zipFile.Open()
 	if err != nil {
-		log.Printf("Error opening attachment from zipfile for id %s. Err=%s", file.Id, err.Error())
-		return
+		return errors.Wrapf(err, "failed to open attachment from zipfile for id %s", file.Id)
 	}
 	defer zipFileReader.Close()
 
 	destFilePath := getNormalisedFilePath(file, attachmentsDir)
 	destFile, err := os.Create(destFilePath)
 	if err != nil {
-		log.Printf("Error creating file %s in the attachments directory. Err=%s", file.Id, err.Error())
-		return
+		return errors.Wrapf(err, "failed to create file %s in the attachments directory", file.Id)
 	}
 	defer destFile.Close()
 
 	_, err = io.Copy(destFile, zipFileReader)
 	if err != nil {
-		log.Printf("Error creating file %s in the attachments directory. Err=%s", file.Id, err.Error())
-		return
-	} else {
-		log.Printf("SUCCESS COPYING FILE %s TO DEST %s", file.Id, destFilePath)
+		return errors.Wrapf(err, "failed to create file %s in the attachments directory", file.Id)
 	}
 
+	log.Printf("SUCCESS COPYING FILE %s TO DEST %s", file.Id, destFilePath)
+
 	post.Attachments = append(post.Attachments, destFilePath)
+
+	return nil
 }
 
-func TransformPosts(slackExport *SlackExport, intermediate *Intermediate, attachmentsDir string, skipAttachments bool, discardInvalidProps bool) error {
+func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir string, skipAttachments, discardInvalidProps bool) error {
+	t.Logger.Info("Transforming posts")
+
 	newGroupChannels := []*IntermediateChannel{}
 	newDirectChannels := []*IntermediateChannel{}
-	channelsByOriginalName := buildChannelsByOriginalNameMap(intermediate)
+	channelsByOriginalName := buildChannelsByOriginalNameMap(t.Intermediate)
 
 	resultPosts := []*IntermediatePost{}
 	for originalChannelName, channelPosts := range slackExport.Posts {
 		channel, ok := channelsByOriginalName[originalChannelName]
 		if !ok {
-			log.Printf("--- Couldn't find channel %s referenced by posts", originalChannelName)
+			t.Logger.Warnf("--- Couldn't find channel %s referenced by posts", originalChannelName)
 			continue
 		}
 
@@ -371,12 +379,12 @@ func TransformPosts(slackExport *SlackExport, intermediate *Intermediate, attach
 			// plain message that can have files attached
 			case post.IsPlainMessage():
 				if post.User == "" {
-					log.Println("Slack Import: Unable to import the message as the user field is missing.")
+					t.Logger.Warn("Unable to import the message as the user field is missing.")
 					continue
 				}
-				author := intermediate.UsersById[post.User]
+				author := t.Intermediate.UsersById[post.User]
 				if author == nil {
-					log.Println("Slack Import: Unable to add the message as the Slack user does not exist in Mattermost. user=" + post.User)
+					t.Logger.Warnf("Unable to add the message as the Slack user does not exist in Mattermost. user=%s", post.User)
 					continue
 				}
 				newPost := &IntermediatePost{
@@ -387,10 +395,16 @@ func TransformPosts(slackExport *SlackExport, intermediate *Intermediate, attach
 				}
 				if (post.File != nil || post.Files != nil) && !skipAttachments {
 					if post.File != nil {
-						addFileToPost(post.File, slackExport.Uploads, newPost, attachmentsDir)
+						err := addFileToPost(post.File, slackExport.Uploads, newPost, attachmentsDir)
+						if err != nil {
+							t.Logger.WithError(err).Error("Failed to add file to post")
+						}
 					} else if post.Files != nil {
 						for _, file := range post.Files {
-							addFileToPost(file, slackExport.Uploads, newPost, attachmentsDir)
+							err := addFileToPost(file, slackExport.Uploads, newPost, attachmentsDir)
+							if err != nil {
+								t.Logger.WithError(err).Error("Failed to add file to post")
+							}
 						}
 					}
 				}
@@ -403,10 +417,10 @@ func TransformPosts(slackExport *SlackExport, intermediate *Intermediate, attach
 						newPost.Props = props
 					} else {
 						if discardInvalidProps {
-							log.Println("Slack Import: Unable import post as props exceed the maximum character count. Skipping as --discard-invalid-props is enabled.")
+							t.Logger.Warn("Unable import post as props exceed the maximum character count. Skipping as --discard-invalid-props is enabled.")
 							continue
 						} else {
-							log.Println("Slack Import: Unable to add props to post as they exceed the maximum character count.")
+							t.Logger.Warn("Unable to add props to post as they exceed the maximum character count.")
 						}
 					}
 				}
@@ -416,16 +430,16 @@ func TransformPosts(slackExport *SlackExport, intermediate *Intermediate, attach
 			// file comment
 			case post.IsFileComment():
 				if post.Comment == nil {
-					log.Println("Slack Import: Unable to import the message as it has no comments.")
+					t.Logger.Warn("Unable to import the message as it has no comments.")
 					continue
 				}
 				if post.Comment.User == "" {
-					log.Println("Slack Import: Unable to import the message as the user field is missing.")
+					t.Logger.Warn("Unable to import the message as the user field is missing.")
 					continue
 				}
-				author := intermediate.UsersById[post.Comment.User]
+				author := t.Intermediate.UsersById[post.Comment.User]
 				if author == nil {
-					log.Println("Slack Import: Unable to add the message as the Slack user does not exist in Mattermost. user=" + post.Comment.User)
+					t.Logger.Warnf("Unable to add the message as the Slack user does not exist in Mattermost. user=%s", post.Comment.User)
 					continue
 				}
 				newPost := &IntermediatePost{
@@ -455,12 +469,12 @@ func TransformPosts(slackExport *SlackExport, intermediate *Intermediate, attach
 			// change topic message
 			case post.IsChannelTopicMessage():
 				if post.User == "" {
-					log.Println("Slack Import: Unable to import the message as the user field is missing.")
+					t.Logger.Warn("Unable to import the message as the user field is missing.")
 					continue
 				}
-				author := intermediate.UsersById[post.User]
+				author := t.Intermediate.UsersById[post.User]
 				if author == nil {
-					log.Println("Slack Import: Unable to add the message as the Slack user does not exist in Mattermost. user=" + post.User)
+					t.Logger.Warnf("Unable to add the message as the Slack user does not exist in Mattermost. user=%s", post.User)
 					continue
 				}
 
@@ -477,12 +491,12 @@ func TransformPosts(slackExport *SlackExport, intermediate *Intermediate, attach
 			// change channel purpose message
 			case post.IsChannelPurposeMessage():
 				if post.User == "" {
-					log.Println("Slack Import: Unable to import the message as the user field is missing.")
+					t.Logger.Warn("Unable to import the message as the user field is missing.")
 					continue
 				}
-				author := intermediate.UsersById[post.User]
+				author := t.Intermediate.UsersById[post.User]
 				if author == nil {
-					log.Println("Slack Import: Unable to add the message as the Slack user does not exist in Mattermost. user=" + post.User)
+					t.Logger.Warnf("Unable to add the message as the Slack user does not exist in Mattermost. user=%s", post.User)
 					continue
 				}
 
@@ -499,12 +513,12 @@ func TransformPosts(slackExport *SlackExport, intermediate *Intermediate, attach
 			// change channel name message
 			case post.IsChannelNameMessage():
 				if post.User == "" {
-					log.Println("Slack Import: Unable to import the message as the user field is missing.")
+					t.Logger.Warn("Slack Import: Unable to import the message as the user field is missing.")
 					continue
 				}
-				author := intermediate.UsersById[post.User]
+				author := t.Intermediate.UsersById[post.User]
 				if author == nil {
-					log.Println("Slack Import: Unable to add the message as the Slack user does not exist in Mattermost. user=" + post.User)
+					t.Logger.Warnf("Slack Import: Unable to add the message as the Slack user does not exist in Mattermost. user=%s", post.User)
 					continue
 				}
 
@@ -519,7 +533,7 @@ func TransformPosts(slackExport *SlackExport, intermediate *Intermediate, attach
 				AddPostToThreads(post, newPost, threads, channel, timestamps)
 
 			default:
-				log.Println("Slack Import: Unable to import the message as its type is not supported. post_type=" + post.Type + " post_subtype=" + post.SubType)
+				t.Logger.Warnf("Unable to import the message as its type is not supported. post_type=%s, post_subtype=%s", post.Type, post.SubType)
 			}
 		}
 
@@ -530,35 +544,26 @@ func TransformPosts(slackExport *SlackExport, intermediate *Intermediate, attach
 		resultPosts = append(resultPosts, channelPosts...)
 	}
 
-	intermediate.Posts = resultPosts
-	intermediate.GroupChannels = append(intermediate.GroupChannels, newGroupChannels...)
-	intermediate.DirectChannels = append(intermediate.DirectChannels, newDirectChannels...)
+	t.Intermediate.Posts = resultPosts
+	t.Intermediate.GroupChannels = append(t.Intermediate.GroupChannels, newGroupChannels...)
+	t.Intermediate.DirectChannels = append(t.Intermediate.DirectChannels, newDirectChannels...)
 
 	return nil
 }
 
-func Transform(slackExport *SlackExport, attachmentsDir string, skipAttachments bool, discardInvalidProps bool) (*Intermediate, error) {
-	intermediate := &Intermediate{}
+func (t *Transformer) Transform(slackExport *SlackExport, attachmentsDir string, skipAttachments, discardInvalidProps bool) error {
+	t.TransformUsers(slackExport.Users)
 
-	// ToDo: change log lines to something more meaningful
-	log.Println("Transforming users")
-	TransformUsers(slackExport.Users, intermediate)
-
-	log.Println("Transforming channels")
-	if err := TransformAllChannels(slackExport, intermediate); err != nil {
-		return nil, err
+	if err := t.TransformAllChannels(slackExport); err != nil {
+		return err
 	}
 
-	log.Println("Populating user memberships")
-	PopulateUserMemberships(intermediate)
+	t.PopulateUserMemberships()
+	t.PopulateChannelMemberships()
 
-	log.Println("Populating channel memberships")
-	PopulateChannelMemberships(intermediate)
-
-	log.Println("Transforming posts")
-	if err := TransformPosts(slackExport, intermediate, attachmentsDir, skipAttachments, discardInvalidProps); err != nil {
-		return nil, err
+	if err := t.TransformPosts(slackExport, attachmentsDir, skipAttachments, discardInvalidProps); err != nil {
+		return err
 	}
 
-	return intermediate, nil
+	return nil
 }

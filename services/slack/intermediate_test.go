@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -25,7 +26,7 @@ func TestIntermediateChannelSanitise(t *testing.T) {
 		expectedPurpose := strings.Repeat("c", 250)
 		expectedHeader := strings.Repeat("d", 1024)
 
-		channel.Sanitise()
+		channel.Sanitise(log.New())
 
 		assert.Equal(t, expectedName, channel.Name)
 		assert.Equal(t, expectedDisplayName, channel.DisplayName)
@@ -39,7 +40,7 @@ func TestIntermediateChannelSanitise(t *testing.T) {
 			DisplayName: "-display_name--",
 		}
 
-		channel.Sanitise()
+		channel.Sanitise(log.New())
 
 		assert.Equal(t, "channel--name", channel.Name)
 		assert.Equal(t, "display_name", channel.DisplayName)
@@ -51,7 +52,7 @@ func TestIntermediateChannelSanitise(t *testing.T) {
 			DisplayName: "-_---_--b----",
 		}
 
-		channel.Sanitise()
+		channel.Sanitise(log.New())
 
 		assert.Equal(t, "slack-channel-a", channel.Name)
 		assert.Equal(t, "slack-channel-b", channel.DisplayName)
@@ -64,7 +65,7 @@ func TestIntermediateChannelSanitise(t *testing.T) {
 			DisplayName: "-døsplay_name--",
 		}
 
-		channel.Sanitise()
+		channel.Sanitise(log.New())
 
 		assert.Equal(t, "channelid1", channel.Name)
 		assert.Equal(t, "channelid1", channel.DisplayName)
@@ -72,7 +73,9 @@ func TestIntermediateChannelSanitise(t *testing.T) {
 }
 
 func TestTransformPublicChannels(t *testing.T) {
-	users := map[string]*IntermediateUser{"m1": {}, "m2": {}, "m3": {}}
+	slackTransformer := NewTransformer("test", log.New())
+	slackTransformer.Intermediate.UsersById = map[string]*IntermediateUser{"m1": {}, "m2": {}, "m3": {}}
+
 	publicChannels := []SlackChannel{
 		{
 			Id:      "id1",
@@ -115,7 +118,7 @@ func TestTransformPublicChannels(t *testing.T) {
 		},
 	}
 
-	result := TransformChannels(publicChannels, users)
+	result := slackTransformer.TransformChannels(publicChannels)
 	require.Len(t, result, len(publicChannels))
 
 	for i := range result {
@@ -129,7 +132,9 @@ func TestTransformPublicChannels(t *testing.T) {
 }
 
 func TestTransformPublicChannelsWithAnInvalidMember(t *testing.T) {
-	users := map[string]*IntermediateUser{"m1": {}, "m2": {}}
+	slackTransformer := NewTransformer("test", log.New())
+	slackTransformer.Intermediate.UsersById = map[string]*IntermediateUser{"m1": {}, "m2": {}}
+
 	publicChannels := []SlackChannel{
 		{
 			Id:      "id1",
@@ -172,7 +177,7 @@ func TestTransformPublicChannelsWithAnInvalidMember(t *testing.T) {
 		},
 	}
 
-	result := TransformChannels(publicChannels, users)
+	result := slackTransformer.TransformChannels(publicChannels)
 	require.Len(t, result, len(publicChannels))
 
 	for i := range result {
@@ -186,7 +191,9 @@ func TestTransformPublicChannelsWithAnInvalidMember(t *testing.T) {
 }
 
 func TestTransformPrivateChannels(t *testing.T) {
-	users := map[string]*IntermediateUser{"m1": {}, "m2": {}, "m3": {}}
+	slackTransformer := NewTransformer("test", log.New())
+	slackTransformer.Intermediate.UsersById = map[string]*IntermediateUser{"m1": {}, "m2": {}, "m3": {}}
+
 	privateChannels := []SlackChannel{
 		{
 			Id:      "id1",
@@ -229,7 +236,7 @@ func TestTransformPrivateChannels(t *testing.T) {
 		},
 	}
 
-	result := TransformChannels(privateChannels, users)
+	result := slackTransformer.TransformChannels(privateChannels)
 	require.Len(t, result, len(privateChannels))
 
 	for i := range result {
@@ -243,8 +250,10 @@ func TestTransformPrivateChannels(t *testing.T) {
 }
 
 func TestTransformBigGroupChannels(t *testing.T) {
+	slackTransformer := NewTransformer("test", log.New())
+	slackTransformer.Intermediate.UsersById = map[string]*IntermediateUser{"m1": {}, "m2": {}, "m3": {}, "m4": {}, "m5": {}, "m6": {}, "m7": {}, "m8": {}, "m9": {}}
 	channelMembers := []string{"m1", "m2", "m3", "m4", "m5", "m6", "m7", "m8", "m9"}
-	users := map[string]*IntermediateUser{"m1": {}, "m2": {}, "m3": {}, "m4": {}, "m5": {}, "m6": {}, "m7": {}, "m8": {}, "m9": {}}
+
 	bigGroupChannels := []SlackChannel{
 		{
 			Id:      "id1",
@@ -285,7 +294,7 @@ func TestTransformBigGroupChannels(t *testing.T) {
 		},
 	}
 
-	result := TransformChannels(bigGroupChannels, users)
+	result := slackTransformer.TransformChannels(bigGroupChannels)
 	require.Len(t, result, len(bigGroupChannels))
 
 	for i := range result {
@@ -299,7 +308,9 @@ func TestTransformBigGroupChannels(t *testing.T) {
 }
 
 func TestTransformRegularGroupChannels(t *testing.T) {
-	users := map[string]*IntermediateUser{"m1": {}, "m2": {}, "m3": {}}
+	slackTransformer := NewTransformer("test", log.New())
+	slackTransformer.Intermediate.UsersById = map[string]*IntermediateUser{"m1": {}, "m2": {}, "m3": {}}
+
 	regularGroupChannels := []SlackChannel{
 		{
 			Id:      "id1",
@@ -341,7 +352,7 @@ func TestTransformRegularGroupChannels(t *testing.T) {
 		},
 	}
 
-	result := TransformChannels(regularGroupChannels, users)
+	result := slackTransformer.TransformChannels(regularGroupChannels)
 	require.Len(t, result, len(regularGroupChannels))
 
 	for i := range result {
@@ -355,7 +366,9 @@ func TestTransformRegularGroupChannels(t *testing.T) {
 }
 
 func TestTransformDirectChannels(t *testing.T) {
-	users := map[string]*IntermediateUser{"m1": {}, "m2": {}, "m3": {}}
+	slackTransformer := NewTransformer("test", log.New())
+	slackTransformer.Intermediate.UsersById = map[string]*IntermediateUser{"m1": {}, "m2": {}, "m3": {}}
+
 	directChannels := []SlackChannel{
 		{
 			Id:      "id1",
@@ -377,7 +390,7 @@ func TestTransformDirectChannels(t *testing.T) {
 		},
 	}
 
-	result := TransformChannels(directChannels, users)
+	result := slackTransformer.TransformChannels(directChannels)
 	require.Len(t, result, len(directChannels))
 
 	for i := range result {
@@ -387,7 +400,9 @@ func TestTransformDirectChannels(t *testing.T) {
 }
 
 func TestTransformChannelWithOneValidMember(t *testing.T) {
-	users := map[string]*IntermediateUser{"m1": {}}
+	slackTransformer := NewTransformer("test", log.New())
+	slackTransformer.Intermediate.UsersById = map[string]*IntermediateUser{"m1": {}}
+
 	t.Run("A direct channel with only one valid member should not be transformed", func(t *testing.T) {
 		directChannels := []SlackChannel{
 			{
@@ -398,7 +413,7 @@ func TestTransformChannelWithOneValidMember(t *testing.T) {
 			},
 		}
 
-		result := TransformChannels(directChannels, users)
+		result := slackTransformer.TransformChannels(directChannels)
 		require.Len(t, result, 0)
 	})
 
@@ -418,7 +433,7 @@ func TestTransformChannelWithOneValidMember(t *testing.T) {
 			},
 		}
 
-		result := TransformChannels(groupChannels, users)
+		result := slackTransformer.TransformChannels(groupChannels)
 		require.Len(t, result, 0)
 	})
 }
@@ -430,7 +445,7 @@ func TestIntermediateUserSanitise(t *testing.T) {
 			Email:    "",
 		}
 
-		user.Sanitise()
+		user.Sanitise(log.New())
 
 		assert.Equal(t, "test-username@example.com", user.Email)
 	})
@@ -441,7 +456,7 @@ func TestTransformUsers(t *testing.T) {
 	id2 := "id2"
 	id3 := "id3"
 
-	intermediate := &Intermediate{}
+	slackTransformer := NewTransformer("test", log.New())
 	users := []SlackUser{
 		{
 			Id:       id1,
@@ -472,20 +487,22 @@ func TestTransformUsers(t *testing.T) {
 		},
 	}
 
-	TransformUsers(users, intermediate)
-	require.Len(t, intermediate.UsersById, len(users))
+	slackTransformer.TransformUsers(users)
+	require.Len(t, slackTransformer.Intermediate.UsersById, len(users))
 
 	for i, id := range []string{id1, id2, id3} {
-		assert.Equal(t, fmt.Sprintf("id%d", i+1), intermediate.UsersById[id].Id)
-		assert.Equal(t, fmt.Sprintf("username%d", i+1), intermediate.UsersById[id].Username)
-		assert.Equal(t, fmt.Sprintf("firstname%d", i+1), intermediate.UsersById[id].FirstName)
-		assert.Equal(t, fmt.Sprintf("lastname%d", i+1), intermediate.UsersById[id].LastName)
-		assert.Equal(t, fmt.Sprintf("email%d@example.com", i+1), intermediate.UsersById[id].Email)
+		assert.Equal(t, fmt.Sprintf("id%d", i+1), slackTransformer.Intermediate.UsersById[id].Id)
+		assert.Equal(t, fmt.Sprintf("username%d", i+1), slackTransformer.Intermediate.UsersById[id].Username)
+		assert.Equal(t, fmt.Sprintf("firstname%d", i+1), slackTransformer.Intermediate.UsersById[id].FirstName)
+		assert.Equal(t, fmt.Sprintf("lastname%d", i+1), slackTransformer.Intermediate.UsersById[id].LastName)
+		assert.Equal(t, fmt.Sprintf("email%d@example.com", i+1), slackTransformer.Intermediate.UsersById[id].Email)
 	}
 }
 
 func TestPopulateUserMemberships(t *testing.T) {
-	intermediate := &Intermediate{
+	slackTransformer := NewTransformer("test", log.New())
+
+	slackTransformer.Intermediate = &Intermediate{
 		UsersById: map[string]*IntermediateUser{"id1": {}, "id2": {}, "id3": {}},
 		PublicChannels: []*IntermediateChannel{
 			{
@@ -505,14 +522,16 @@ func TestPopulateUserMemberships(t *testing.T) {
 		},
 	}
 
-	PopulateUserMemberships(intermediate)
+	slackTransformer.PopulateUserMemberships()
 
-	assert.Equal(t, []string{"c1", "c2"}, intermediate.UsersById["id1"].Memberships)
-	assert.Equal(t, []string{"c2"}, intermediate.UsersById["id2"].Memberships)
-	assert.Equal(t, []string{"c1", "c3"}, intermediate.UsersById["id3"].Memberships)
+	assert.Equal(t, []string{"c1", "c2"}, slackTransformer.Intermediate.UsersById["id1"].Memberships)
+	assert.Equal(t, []string{"c2"}, slackTransformer.Intermediate.UsersById["id2"].Memberships)
+	assert.Equal(t, []string{"c1", "c3"}, slackTransformer.Intermediate.UsersById["id3"].Memberships)
 }
 
 func TestPopulateChannelMemberships(t *testing.T) {
+	slackTransformer := NewTransformer("test", log.New())
+
 	c1 := IntermediateChannel{
 		Name:    "c1",
 		Members: []string{"id1", "id3"},
@@ -526,7 +545,7 @@ func TestPopulateChannelMemberships(t *testing.T) {
 		Members: []string{"id3"},
 	}
 
-	intermediate := &Intermediate{
+	slackTransformer.Intermediate = &Intermediate{
 		UsersById: map[string]*IntermediateUser{
 			"id1": {Username: "u1"},
 			"id2": {Username: "u2"},
@@ -536,7 +555,7 @@ func TestPopulateChannelMemberships(t *testing.T) {
 		DirectChannels: []*IntermediateChannel{&c3},
 	}
 
-	PopulateChannelMemberships(intermediate)
+	slackTransformer.PopulateChannelMemberships()
 
 	assert.Equal(t, []string{"u1", "u3"}, c1.MembersUsernames)
 	assert.Equal(t, []string{"u1", "u2"}, c2.MembersUsernames)

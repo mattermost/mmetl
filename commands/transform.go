@@ -3,11 +3,12 @@ package commands
 import (
 	"archive/zip"
 	"fmt"
-	"log"
 	"os"
 
-	"github.com/mattermost/mmetl/services/slack"
+	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
+
+	"github.com/mattermost/mmetl/services/slack"
 )
 
 var TransformCmd = &cobra.Command{
@@ -38,6 +39,7 @@ func init() {
 	TransformSlackCmd.Flags().BoolP("skip-convert-posts", "c", false, "Skips converting mentions and post markup. Only for testing purposes")
 	TransformSlackCmd.Flags().BoolP("skip-attachments", "a", false, "Skips copying the attachments from the import file")
 	TransformSlackCmd.Flags().BoolP("discard-invalid-props", "p", false, "Skips converting posts with invalid props instead discarding the props themselves")
+	TransformSlackCmd.Flags().Bool("debug", true, "Whether to show debug logs or not")
 
 	TransformCmd.AddCommand(
 		TransformSlackCmd,
@@ -56,6 +58,7 @@ func transformSlackCmdF(cmd *cobra.Command, args []string) error {
 	skipConvertPosts, _ := cmd.Flags().GetBool("skip-convert-posts")
 	skipAttachments, _ := cmd.Flags().GetBool("skip-attachments")
 	discardInvalidProps, _ := cmd.Flags().GetBool("discard-invalid-props")
+	debug, _ := cmd.Flags().GetBool("debug")
 
 	// output file
 	if fileInfo, err := os.Stat(outputFilePath); err != nil && !os.IsNotExist(err) {
@@ -94,21 +97,27 @@ func transformSlackCmdF(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	slackExport, err := slack.ParseSlackExportFile(team, zipReader, skipConvertPosts)
+	logger := log.New()
+	if debug {
+		logger.Level = log.DebugLevel
+	}
+	slackTransformer := slack.NewTransformer(team, logger)
+
+	slackExport, err := slackTransformer.ParseSlackExportFile(zipReader, skipConvertPosts)
 	if err != nil {
 		return err
 	}
 
-	intermediate, err := slack.Transform(slackExport, attachmentsDir, skipAttachments, discardInvalidProps)
+	err = slackTransformer.Transform(slackExport, attachmentsDir, skipAttachments, discardInvalidProps)
 	if err != nil {
 		return err
 	}
 
-	if err = slack.Export(team, intermediate, outputFilePath); err != nil {
+	if err = slackTransformer.Export(outputFilePath); err != nil {
 		return err
 	}
 
-	log.Println("Transformation succeeded!!")
+	slackTransformer.Logger.Info("Transformation succeeded!")
 
 	return nil
 }
