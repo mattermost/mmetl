@@ -116,7 +116,7 @@ func GetImportLineFromUser(user *IntermediateUser, team string) *app.LineImportD
 			FirstName: model.NewString(user.FirstName),
 			LastName:  model.NewString(user.LastName),
 			Position:  model.NewString(""),
-			Roles:     model.NewString(model.SystemUserManagerRoleId),
+			Roles:     model.NewString(model.SystemUserRoleId),
 			Teams: &[]app.UserTeamImportData{
 				{
 					Name:     model.NewString(team),
