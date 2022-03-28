@@ -245,7 +245,7 @@ func ExportWriteLine(writer io.Writer, line *app.LineImportData) error {
 	return nil
 }
 
-func ExportVersion(writer io.Writer) error {
+func (t *Transformer) ExportVersion(writer io.Writer) error {
 	version := 1
 	versionLine := &app.LineImportData{
 		Type:    "version",
@@ -256,9 +256,9 @@ func ExportVersion(writer io.Writer) error {
 }
 
 // valid for open or private, as they export with no members
-func ExportChannels(team string, channels []*IntermediateChannel, writer io.Writer) error {
+func (t *Transformer) ExportChannels(channels []*IntermediateChannel, writer io.Writer) error {
 	for _, channel := range channels {
-		line := GetImportLineFromChannel(team, channel)
+		line := GetImportLineFromChannel(t.TeamName, channel)
 		if err := ExportWriteLine(writer, line); err != nil {
 			return err
 		}
@@ -268,9 +268,9 @@ func ExportChannels(team string, channels []*IntermediateChannel, writer io.Writ
 }
 
 // valid for group or direct, as they export with members
-func ExportDirectChannels(team string, channels []*IntermediateChannel, writer io.Writer) error {
+func (t *Transformer) ExportDirectChannels(channels []*IntermediateChannel, writer io.Writer) error {
 	for _, channel := range channels {
-		line := GetImportLineFromDirectChannel(team, channel)
+		line := GetImportLineFromDirectChannel(t.TeamName, channel)
 		if err := ExportWriteLine(writer, line); err != nil {
 			return err
 		}
@@ -279,9 +279,9 @@ func ExportDirectChannels(team string, channels []*IntermediateChannel, writer i
 	return nil
 }
 
-func ExportUsers(team string, usersById map[string]*IntermediateUser, writer io.Writer) error {
-	for _, user := range usersById {
-		line := GetImportLineFromUser(user, team)
+func (t *Transformer) ExportUsers(writer io.Writer) error {
+	for _, user := range t.Intermediate.UsersById {
+		line := GetImportLineFromUser(user, t.TeamName)
 		if err := ExportWriteLine(writer, line); err != nil {
 			return err
 		}
@@ -290,9 +290,9 @@ func ExportUsers(team string, usersById map[string]*IntermediateUser, writer io.
 	return nil
 }
 
-func ExportPosts(team string, posts []*IntermediatePost, writer io.Writer) error {
-	for _, post := range posts {
-		line := GetImportLineFromPost(post, team)
+func (t *Transformer) ExportPosts(writer io.Writer) error {
+	for _, post := range t.Intermediate.Posts {
+		line := GetImportLineFromPost(post, t.TeamName)
 		if err := ExportWriteLine(writer, line); err != nil {
 			return err
 		}
@@ -300,45 +300,45 @@ func ExportPosts(team string, posts []*IntermediatePost, writer io.Writer) error
 	return nil
 }
 
-func Export(team string, intermediate *Intermediate, outputFilePath string) error {
+func (t *Transformer) Export(outputFilePath string) error {
 	outputFile, err := os.Create(outputFilePath)
 	if err != nil {
 		return err
 	}
 	defer outputFile.Close()
 
-	log.Println("Exporting version")
-	if err := ExportVersion(outputFile); err != nil {
+	t.Logger.Info("Exporting version")
+	if err := t.ExportVersion(outputFile); err != nil {
 		return err
 	}
 
-	log.Println("Exporting public channels")
-	if err := ExportChannels(team, intermediate.PublicChannels, outputFile); err != nil {
+	t.Logger.Info("Exporting public channels")
+	if err := t.ExportChannels(t.Intermediate.PublicChannels, outputFile); err != nil {
 		return err
 	}
 
-	log.Println("Exporting private channels")
-	if err := ExportChannels(team, intermediate.PrivateChannels, outputFile); err != nil {
+	t.Logger.Info("Exporting private channels")
+	if err := t.ExportChannels(t.Intermediate.PrivateChannels, outputFile); err != nil {
 		return err
 	}
 
-	log.Println("Exporting users")
-	if err := ExportUsers(team, intermediate.UsersById, outputFile); err != nil {
+	t.Logger.Info("Exporting users")
+	if err := t.ExportUsers(outputFile); err != nil {
 		return err
 	}
 
-	log.Println("Exporting group channels")
-	if err := ExportDirectChannels(team, intermediate.GroupChannels, outputFile); err != nil {
+	t.Logger.Info("Exporting group channels")
+	if err := t.ExportDirectChannels(t.Intermediate.GroupChannels, outputFile); err != nil {
 		return err
 	}
 
-	log.Println("Exporting direct channels")
-	if err := ExportDirectChannels(team, intermediate.DirectChannels, outputFile); err != nil {
+	t.Logger.Info("Exporting direct channels")
+	if err := t.ExportDirectChannels(t.Intermediate.DirectChannels, outputFile); err != nil {
 		return err
 	}
 
-	log.Println("Exporting posts")
-	if err := ExportPosts(team, intermediate.Posts, outputFile); err != nil {
+	t.Logger.Info("Exporting posts")
+	if err := t.ExportPosts(outputFile); err != nil {
 		return err
 	}
 

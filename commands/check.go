@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/mattermost/mmetl/services/slack"
+	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 )
 
@@ -23,6 +24,7 @@ var CheckSlackCmd = &cobra.Command{
 
 func init() {
 	CheckSlackCmd.Flags().StringP("file", "f", "", "the Slack export file to transform")
+	CheckSlackCmd.Flags().Bool("debug", true, "Whether to show debug logs or not")
 	if err := CheckSlackCmd.MarkFlagRequired("file"); err != nil {
 		panic(err)
 	}
@@ -38,6 +40,7 @@ func init() {
 
 func checkSlackCmdF(cmd *cobra.Command, args []string) error {
 	inputFilePath, _ := cmd.Flags().GetString("file")
+	debug, _ := cmd.Flags().GetBool("debug")
 
 	// input file
 	fileReader, err := os.Open(inputFilePath)
@@ -56,17 +59,23 @@ func checkSlackCmdF(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	slackExport, err := slack.ParseSlackExportFile("test", zipReader, true)
+	logger := log.New()
+	if debug {
+		logger.Level = log.DebugLevel
+	}
+	slackTransformer := slack.NewTransformer("test", logger)
+
+	slackExport, err := slackTransformer.ParseSlackExportFile(zipReader, true)
 	if err != nil {
 		return err
 	}
 
-	intermediate, err := slack.Transform(slackExport, "", true, true)
+	err = slackTransformer.Transform(slackExport, "", true, true)
 	if err != nil {
 		return err
 	}
 
-	slack.Check(intermediate)
+	slackTransformer.CheckIntermediate()
 
 	return nil
 }

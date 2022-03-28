@@ -4,10 +4,11 @@ import (
 	"archive/zip"
 	"encoding/json"
 	"io"
-	"log"
 	"regexp"
 	"strings"
 	"time"
+
+	log "github.com/sirupsen/logrus"
 
 	"github.com/mattermost/mattermost-server/v6/model"
 )
@@ -261,8 +262,8 @@ func SlackConvertPostsMarkup(posts map[string][]SlackPost) map[string][]SlackPos
 	return posts
 }
 
-func ParseSlackExportFile(team string, zipReader *zip.Reader, skipConvertPosts bool) (*SlackExport, error) {
-	slackExport := SlackExport{TeamName: team}
+func (t *Transformer) ParseSlackExportFile(zipReader *zip.Reader, skipConvertPosts bool) (*SlackExport, error) {
+	slackExport := SlackExport{TeamName: t.TeamName}
 	slackExport.Posts = make(map[string][]SlackPost)
 	slackExport.Uploads = make(map[string]*zip.File)
 
@@ -303,14 +304,13 @@ func ParseSlackExportFile(team string, zipReader *zip.Reader, skipConvertPosts b
 	}
 
 	if !skipConvertPosts {
-		log.Println("Converting post mentions and markup")
+		t.Logger.Info("Converting post mentions and markup")
 		start := time.Now()
 		slackExport.Posts = SlackConvertUserMentions(slackExport.Users, slackExport.Posts)
 		slackExport.Posts = SlackConvertChannelMentions(slackExport.Channels, slackExport.Posts)
 		slackExport.Posts = SlackConvertPostsMarkup(slackExport.Posts)
 		elapsed := time.Since(start)
-		log.Println("Converting post mentions and markup done")
-		log.Printf("Converting mentions took %s", elapsed)
+		t.Logger.Debug("Converting mentions finished (%s)", elapsed)
 	}
 
 	return &slackExport, nil
