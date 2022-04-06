@@ -75,6 +75,7 @@ type IntermediateUser struct {
 	Username    string   `json:"username"`
 	FirstName   string   `json:"first_name"`
 	LastName    string   `json:"last_name"`
+	Position    string   `json:"position"`
 	Email       string   `json:"email"`
 	Password    string   `json:"password"`
 	Memberships []string `json:"memberships"`
@@ -119,6 +120,7 @@ func (t *Transformer) TransformUsers(users []SlackUser) {
 			Username:  user.Username,
 			FirstName: user.Profile.FirstName,
 			LastName:  user.Profile.LastName,
+			Position:  user.Profile.Title,
 			Email:     user.Profile.Email,
 			Password:  model.NewId(),
 		}

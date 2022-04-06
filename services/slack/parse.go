@@ -31,6 +31,7 @@ type SlackProfile struct {
 	FirstName string `json:"first_name"`
 	LastName  string `json:"last_name"`
 	Email     string `json:"email"`
+	Title     string `json:"title"`
 }
 
 type SlackUser struct {

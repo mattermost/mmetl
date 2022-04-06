@@ -464,6 +464,7 @@ func TestTransformUsers(t *testing.T) {
 			Profile: SlackProfile{
 				FirstName: "firstname1",
 				LastName:  "lastname1",
+				Title:     "position1",
 				Email:     "email1@example.com",
 			},
 		},
@@ -473,6 +474,7 @@ func TestTransformUsers(t *testing.T) {
 			Profile: SlackProfile{
 				FirstName: "firstname2",
 				LastName:  "lastname2",
+				Title:     "position2",
 				Email:     "email2@example.com",
 			},
 		},
@@ -482,6 +484,7 @@ func TestTransformUsers(t *testing.T) {
 			Profile: SlackProfile{
 				FirstName: "firstname3",
 				LastName:  "lastname3",
+				Title:     "position3",
 				Email:     "email3@example.com",
 			},
 		},
@@ -495,6 +498,7 @@ func TestTransformUsers(t *testing.T) {
 		assert.Equal(t, fmt.Sprintf("username%d", i+1), slackTransformer.Intermediate.UsersById[id].Username)
 		assert.Equal(t, fmt.Sprintf("firstname%d", i+1), slackTransformer.Intermediate.UsersById[id].FirstName)
 		assert.Equal(t, fmt.Sprintf("lastname%d", i+1), slackTransformer.Intermediate.UsersById[id].LastName)
+		assert.Equal(t, fmt.Sprintf("position%d", i+1), slackTransformer.Intermediate.UsersById[id].Position)
 		assert.Equal(t, fmt.Sprintf("email%d@example.com", i+1), slackTransformer.Intermediate.UsersById[id].Email)
 	}
 }
