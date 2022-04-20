@@ -65,6 +65,11 @@ func checkSlackCmdF(cmd *cobra.Command, args []string) error {
 	}
 	slackTransformer := slack.NewTransformer("test", logger)
 
+	valid := slackTransformer.Precheck(zipReader)
+	if !valid {
+		return nil
+	}
+
 	slackExport, err := slackTransformer.ParseSlackExportFile(zipReader, true)
 	if err != nil {
 		return err
