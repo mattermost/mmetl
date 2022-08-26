@@ -4,7 +4,7 @@ import (
 	"archive/zip"
 	"fmt"
 	"os"
-	"path/filepath"
+	"path"
 
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
@@ -71,7 +71,7 @@ func transformSlackCmdF(cmd *cobra.Command, args []string) error {
 	}
 
 	// attachments dir
-	attachmentsRealDir := filepath.Join(attachmentsDir, attachmentsInternal)
+	attachmentsRealDir := path.Join(attachmentsDir, attachmentsInternal)
 
 	if !skipAttachments {
 		if fileInfo, err := os.Stat(attachmentsRealDir); os.IsNotExist(err) {

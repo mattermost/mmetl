@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
+	"path"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -322,7 +322,7 @@ func buildChannelsByOriginalNameMap(intermediate *Intermediate) map[string]*Inte
 }
 
 func getNormalisedFilePath(file *SlackFile, attachmentsDir string) string {
-	filePath := filepath.Join(attachmentsDir, fmt.Sprintf("%s_%s", file.Id, file.Name))
+	filePath := path.Join(attachmentsDir, fmt.Sprintf("%s_%s", file.Id, file.Name))
 	return string(norm.NFC.Bytes([]byte(filePath)))
 }
 
@@ -339,7 +339,7 @@ func addFileToPost(file *SlackFile, uploads map[string]*zip.File, post *Intermed
 	defer zipFileReader.Close()
 
 	destFilePath := getNormalisedFilePath(file, attachmentsInternal)
-	destFile, err := os.Create(filepath.Join(attachmentsDir, destFilePath))
+	destFile, err := os.Create(path.Join(attachmentsDir, destFilePath))
 	if err != nil {
 		return errors.Wrapf(err, "failed to create file %s in the attachments directory", file.Id)
 	}
