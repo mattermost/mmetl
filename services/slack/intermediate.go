@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path"
+	"path/filepath"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -16,6 +16,8 @@ import (
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/text/unicode/norm"
 )
+
+const attachmentsInternal = "bulk-export-attachments"
 
 type IntermediateChannel struct {
 	Id               string            `json:"id"`
@@ -320,7 +322,7 @@ func buildChannelsByOriginalNameMap(intermediate *Intermediate) map[string]*Inte
 }
 
 func getNormalisedFilePath(file *SlackFile, attachmentsDir string) string {
-	filePath := path.Join(attachmentsDir, fmt.Sprintf("%s_%s", file.Id, file.Name))
+	filePath := filepath.Join(attachmentsDir, fmt.Sprintf("%s_%s", file.Id, file.Name))
 	return string(norm.NFC.Bytes([]byte(filePath)))
 }
 
@@ -336,8 +338,8 @@ func addFileToPost(file *SlackFile, uploads map[string]*zip.File, post *Intermed
 	}
 	defer zipFileReader.Close()
 
-	destFilePath := getNormalisedFilePath(file, attachmentsDir)
-	destFile, err := os.Create(destFilePath)
+	destFilePath := getNormalisedFilePath(file, attachmentsInternal)
+	destFile, err := os.Create(filepath.Join(attachmentsDir, destFilePath))
 	if err != nil {
 		return errors.Wrapf(err, "failed to create file %s in the attachments directory", file.Id)
 	}
