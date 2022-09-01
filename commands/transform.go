@@ -4,12 +4,15 @@ import (
 	"archive/zip"
 	"fmt"
 	"os"
+	"path"
 
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 
 	"github.com/mattermost/mmetl/services/slack"
 )
+
+const attachmentsInternal = "bulk-export-attachments"
 
 var TransformCmd = &cobra.Command{
 	Use:   "transform",
@@ -35,7 +38,7 @@ func init() {
 		panic(err)
 	}
 	TransformSlackCmd.Flags().StringP("output", "o", "bulk-export.jsonl", "the output path")
-	TransformSlackCmd.Flags().StringP("attachments-dir", "d", "bulk-export-attachments", "the path for the attachments directory")
+	TransformSlackCmd.Flags().StringP("attachments-dir", "d", "data", "the path for the attachments directory")
 	TransformSlackCmd.Flags().BoolP("skip-convert-posts", "c", false, "Skips converting mentions and post markup. Only for testing purposes")
 	TransformSlackCmd.Flags().BoolP("skip-attachments", "a", false, "Skips copying the attachments from the import file")
 	TransformSlackCmd.Flags().BoolP("discard-invalid-props", "p", false, "Skips converting posts with invalid props instead discarding the props themselves")
@@ -68,9 +71,11 @@ func transformSlackCmdF(cmd *cobra.Command, args []string) error {
 	}
 
 	// attachments dir
+	attachmentsFullDir := path.Join(attachmentsDir, attachmentsInternal)
+
 	if !skipAttachments {
-		if fileInfo, err := os.Stat(attachmentsDir); os.IsNotExist(err) {
-			if createErr := os.Mkdir(attachmentsDir, 0755); createErr != nil {
+		if fileInfo, err := os.Stat(attachmentsFullDir); os.IsNotExist(err) {
+			if createErr := os.MkdirAll(attachmentsFullDir, 0755); createErr != nil {
 				return createErr
 			}
 		} else if err != nil {

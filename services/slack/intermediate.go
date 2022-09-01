@@ -17,6 +17,8 @@ import (
 	"golang.org/x/text/unicode/norm"
 )
 
+const attachmentsInternal = "bulk-export-attachments"
+
 type IntermediateChannel struct {
 	Id               string            `json:"id"`
 	OriginalName     string            `json:"original_name"`
@@ -336,8 +338,8 @@ func addFileToPost(file *SlackFile, uploads map[string]*zip.File, post *Intermed
 	}
 	defer zipFileReader.Close()
 
-	destFilePath := getNormalisedFilePath(file, attachmentsDir)
-	destFile, err := os.Create(destFilePath)
+	destFilePath := getNormalisedFilePath(file, attachmentsInternal)
+	destFile, err := os.Create(path.Join(attachmentsDir, destFilePath))
 	if err != nil {
 		return errors.Wrapf(err, "failed to create file %s in the attachments directory", file.Id)
 	}
