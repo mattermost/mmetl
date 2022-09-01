@@ -71,11 +71,11 @@ func transformSlackCmdF(cmd *cobra.Command, args []string) error {
 	}
 
 	// attachments dir
-	attachmentsRealDir := path.Join(attachmentsDir, attachmentsInternal)
+	attachmentsFullDir := path.Join(attachmentsDir, attachmentsInternal)
 
 	if !skipAttachments {
-		if fileInfo, err := os.Stat(attachmentsRealDir); os.IsNotExist(err) {
-			if createErr := os.MkdirAll(attachmentsRealDir, 0755); createErr != nil {
+		if fileInfo, err := os.Stat(attachmentsFullDir); os.IsNotExist(err) {
+			if createErr := os.MkdirAll(attachmentsFullDir, 0755); createErr != nil {
 				return createErr
 			}
 		} else if err != nil {
