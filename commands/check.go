@@ -75,7 +75,7 @@ func checkSlackCmdF(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	err = slackTransformer.Transform(slackExport, "", true, true)
+	err = slackTransformer.Transform(slackExport, "", true, true, false)
 	if err != nil {
 		return err
 	}
