@@ -371,7 +371,7 @@ func (t *Transformer) CreateIntermediateUser(userID string) {
 		Password:  model.NewId(),
 	}
 	t.Intermediate.UsersById[userID] = newUser
-	t.Logger.Warnf("Created a new user because the original user was missing from the import files. user=%s", user)
+	t.Logger.Warnf("Created a new user because the original user was missing from the import files. user=%s", userID)
 }
 
 func (t *Transformer) CreateAndAddPostToThreads(post SlackPost, threads map[string]*IntermediatePost, timestamps map[int64]bool, channel *IntermediateChannel) {
