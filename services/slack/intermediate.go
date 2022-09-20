@@ -127,6 +127,10 @@ func (t *Transformer) TransformUsers(users []SlackUser) {
 			Password:  model.NewId(),
 		}
 
+		if user.IsBot {
+			newUser.Id = user.Profile.BotID
+		}
+
 		newUser.Sanitise(t.Logger)
 		resultUsers[newUser.Id] = newUser
 		t.Logger.Debugf("Slack user with email %s and password %s has been imported.", newUser.Email, newUser.Password)
@@ -357,6 +361,63 @@ func addFileToPost(file *SlackFile, uploads map[string]*zip.File, post *Intermed
 	return nil
 }
 
+func (t *Transformer) CreateIntermediateUser(userID string) {
+	newUser := &IntermediateUser{
+		Id:        userID,
+		Username:  strings.ToLower(userID),
+		FirstName: "Deleted",
+		LastName:  "User",
+		Email:     fmt.Sprintf("%s@local", userID),
+		Password:  model.NewId(),
+	}
+	t.Intermediate.UsersById[userID] = newUser
+	t.Logger.Warnf("Created a new user because the original user was missing from the import files. user=%s", user)
+}
+
+func (t *Transformer) CreateAndAddPostToThreads(post SlackPost, threads map[string]*IntermediatePost, timestamps map[int64]bool, channel *IntermediateChannel) {
+	author := t.Intermediate.UsersById[post.User]
+	if author == nil {
+		t.CreateIntermediateUser(post.User)
+		author = t.Intermediate.UsersById[post.User]
+	}
+
+	newPost := &IntermediatePost{
+		User:     author.Username,
+		Channel:  channel.Name,
+		Message:  post.Text,
+		CreateAt: SlackConvertTimeStamp(post.TimeStamp),
+	}
+
+	AddPostToThreads(post, newPost, threads, channel, timestamps)
+}
+
+func (t *Transformer) AddFilesToPost(post *SlackPost, skipAttachments bool, slackExport *SlackExport, attachmentsDir string, newPost *IntermediatePost) {
+	if skipAttachments || (post.File == nil && post.Files == nil) {
+		return
+	}
+	if post.File != nil {
+		if err := addFileToPost(post.File, slackExport.Uploads, newPost, attachmentsDir); err != nil {
+			t.Logger.WithError(err).Error("Failed to add file to post")
+		}
+	} else if post.Files != nil {
+		for _, file := range post.Files {
+			if file.Name == "" {
+				t.Logger.Warnf("Not able to access the file %s as file access is denied so skipping", file.Id)
+				continue
+			}
+			if err := addFileToPost(file, slackExport.Uploads, newPost, attachmentsDir); err != nil {
+				t.Logger.WithError(err).Error("Failed to add file to post")
+			}
+		}
+	}
+}
+
+func (t *Transformer) AddAttachmentsToPost(post *SlackPost, newPost *IntermediatePost) (model.StringInterface, []byte) {
+	props := model.StringInterface{"attachments": post.Attachments}
+	propsByteArray, _ := json.Marshal(props)
+	return props, propsByteArray
+}
+
 func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir string, skipAttachments, discardInvalidProps bool) error {
 	t.Logger.Info("Transforming posts")
 
@@ -388,8 +449,8 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 				}
 				author := t.Intermediate.UsersById[post.User]
 				if author == nil {
-					t.Logger.Warnf("Unable to add the message as the Slack user does not exist in Mattermost. user=%s", post.User)
-					continue
+					t.CreateIntermediateUser(post.User)
+					author = t.Intermediate.UsersById[post.User]
 				}
 				newPost := &IntermediatePost{
 					User:     author.Username,
@@ -397,26 +458,10 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 					Message:  post.Text,
 					CreateAt: SlackConvertTimeStamp(post.TimeStamp),
 				}
-				if (post.File != nil || post.Files != nil) && !skipAttachments {
-					if post.File != nil {
-						err := addFileToPost(post.File, slackExport.Uploads, newPost, attachmentsDir)
-						if err != nil {
-							t.Logger.WithError(err).Error("Failed to add file to post")
-						}
-					} else if post.Files != nil {
-						for _, file := range post.Files {
-							err := addFileToPost(file, slackExport.Uploads, newPost, attachmentsDir)
-							if err != nil {
-								t.Logger.WithError(err).Error("Failed to add file to post")
-							}
-						}
-					}
-				}
+				t.AddFilesToPost(&post, skipAttachments, slackExport, attachmentsDir, newPost)
 
 				if len(post.Attachments) > 0 {
-					props := model.StringInterface{"attachments": post.Attachments}
-					propsB, _ := json.Marshal(props)
-
+					props, propsB := t.AddAttachmentsToPost(&post, newPost)
 					if utf8.RuneCountInString(string(propsB)) <= model.PostPropsMaxRunes {
 						newPost.Props = props
 					} else {
@@ -443,8 +488,8 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 				}
 				author := t.Intermediate.UsersById[post.Comment.User]
 				if author == nil {
-					t.Logger.Warnf("Unable to add the message as the Slack user does not exist in Mattermost. user=%s", post.Comment.User)
-					continue
+					t.CreateIntermediateUser(post.User)
+					author = t.Intermediate.UsersById[post.User]
 				}
 				newPost := &IntermediatePost{
 					User:     author.Username,
@@ -457,18 +502,61 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 
 			// bot message
 			case post.IsBotMessage():
-				// log.Println("Slack Import: bot messages are not yet supported")
-				break
+				if post.BotId == "" {
+					if post.User == "" {
+						t.Logger.Warn("Unable to import the message as the user field is missing.")
+						continue
+					}
+					post.BotId = post.User
+				}
+
+				author := t.Intermediate.UsersById[post.BotId]
+				if author == nil {
+					t.CreateIntermediateUser(post.BotId)
+					author = t.Intermediate.UsersById[post.BotId]
+				}
+
+				newPost := &IntermediatePost{
+					User:     author.Username,
+					Channel:  channel.Name,
+					Message:  post.Text,
+					CreateAt: SlackConvertTimeStamp(post.TimeStamp),
+				}
+
+				t.AddFilesToPost(&post, skipAttachments, slackExport, attachmentsDir, newPost)
+
+				if len(post.Attachments) > 0 {
+					props, propsB := t.AddAttachmentsToPost(&post, newPost)
+					if utf8.RuneCountInString(string(propsB)) <= model.PostPropsMaxRunes {
+						newPost.Props = props
+					} else {
+						if discardInvalidProps {
+							t.Logger.Warn("Unable to import the post as props exceed the maximum character count. Skipping as --discard-invalid-props is enabled.")
+							continue
+						} else {
+							t.Logger.Warn("Unable to add the props to post as they exceed the maximum character count.")
+						}
+					}
+				}
+
+				AddPostToThreads(post, newPost, threads, channel, timestamps)
 
 			// channel join/leave messages
 			case post.IsJoinLeaveMessage():
-				// log.Println("Slack Import: Join/Leave messages are not yet supported")
-				break
+				if post.User == "" {
+					t.Logger.Warn("Unable to import the message as the user field is missing.")
+					continue
+				}
+
+				t.CreateAndAddPostToThreads(post, threads, timestamps, channel)
 
 			// me message
 			case post.IsMeMessage():
-				// log.Println("Slack Import: me messages are not yet supported")
-				break
+				if post.User == "" {
+					t.Logger.Warn("Unable to import the message as the user field is missing.")
+					continue
+				}
+				t.CreateAndAddPostToThreads(post, threads, timestamps, channel)
 
 			// change topic message
 			case post.IsChannelTopicMessage():
@@ -476,21 +564,7 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 					t.Logger.Warn("Unable to import the message as the user field is missing.")
 					continue
 				}
-				author := t.Intermediate.UsersById[post.User]
-				if author == nil {
-					t.Logger.Warnf("Unable to add the message as the Slack user does not exist in Mattermost. user=%s", post.User)
-					continue
-				}
-
-				newPost := &IntermediatePost{
-					User:     author.Username,
-					Channel:  channel.Name,
-					Message:  post.Text,
-					CreateAt: SlackConvertTimeStamp(post.TimeStamp),
-					// Type:     model.POST_HEADER_CHANGE,
-				}
-
-				AddPostToThreads(post, newPost, threads, channel, timestamps)
+				t.CreateAndAddPostToThreads(post, threads, timestamps, channel)
 
 			// change channel purpose message
 			case post.IsChannelPurposeMessage():
@@ -498,21 +572,7 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 					t.Logger.Warn("Unable to import the message as the user field is missing.")
 					continue
 				}
-				author := t.Intermediate.UsersById[post.User]
-				if author == nil {
-					t.Logger.Warnf("Unable to add the message as the Slack user does not exist in Mattermost. user=%s", post.User)
-					continue
-				}
-
-				newPost := &IntermediatePost{
-					User:     author.Username,
-					Channel:  channel.Name,
-					Message:  post.Text,
-					CreateAt: SlackConvertTimeStamp(post.TimeStamp),
-					// Type:     model.POST_HEADER_CHANGE,
-				}
-
-				AddPostToThreads(post, newPost, threads, channel, timestamps)
+				t.CreateAndAddPostToThreads(post, threads, timestamps, channel)
 
 			// change channel name message
 			case post.IsChannelNameMessage():
@@ -520,21 +580,7 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 					t.Logger.Warn("Slack Import: Unable to import the message as the user field is missing.")
 					continue
 				}
-				author := t.Intermediate.UsersById[post.User]
-				if author == nil {
-					t.Logger.Warnf("Slack Import: Unable to add the message as the Slack user does not exist in Mattermost. user=%s", post.User)
-					continue
-				}
-
-				newPost := &IntermediatePost{
-					User:     author.Username,
-					Channel:  channel.Name,
-					Message:  post.Text,
-					CreateAt: SlackConvertTimeStamp(post.TimeStamp),
-					// Type:     model.POST_DISPLAYNAME_CHANGE,
-				}
-
-				AddPostToThreads(post, newPost, threads, channel, timestamps)
+				t.CreateAndAddPostToThreads(post, threads, timestamps, channel)
 
 			default:
 				t.Logger.Warnf("Unable to import the message as its type is not supported. post_type=%s, post_subtype=%s", post.Type, post.SubType)
