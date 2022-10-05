@@ -462,7 +462,7 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 
 				if len(post.Attachments) > 0 {
 					props, propsB := t.AddAttachmentsToPost(&post, newPost)
-					if utf8.RuneCountInString(string(propsB)) <= model.PostPropsMaxRunes {
+					if utf8.RuneCount(propsB) <= model.PostPropsMaxRunes {
 						newPost.Props = props
 					} else {
 						if discardInvalidProps {
@@ -527,7 +527,7 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 
 				if len(post.Attachments) > 0 {
 					props, propsB := t.AddAttachmentsToPost(&post, newPost)
-					if utf8.RuneCountInString(string(propsB)) <= model.PostPropsMaxRunes {
+					if utf8.RuneCount(propsB) <= model.PostPropsMaxRunes {
 						newPost.Props = props
 					} else {
 						if discardInvalidProps {
