@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path"
 	"sort"
@@ -326,11 +327,85 @@ func buildChannelsByOriginalNameMap(intermediate *Intermediate) map[string]*Inte
 }
 
 func getNormalisedFilePath(file *SlackFile, attachmentsDir string) string {
-	filePath := path.Join(attachmentsDir, fmt.Sprintf("%s_%s", file.Id, file.Name))
-	return string(norm.NFC.Bytes([]byte(filePath)))
+	n := makeAlphaNum(file.Name, '.', '-', '_')
+	p := path.Join(attachmentsDir, fmt.Sprintf("%s_%s", file.Id, n))
+	return norm.NFC.String(p)
 }
 
-func addFileToPost(file *SlackFile, uploads map[string]*zip.File, post *IntermediatePost, attachmentsDir string) error {
+func addFileToPost(file *SlackFile, uploads map[string]*zip.File, post *IntermediatePost, attachmentsDir string, allowDownload bool) error {
+	if _, ok := uploads[file.Id]; ok || !allowDownload {
+		return addZipFileToPost(file, uploads, post, attachmentsDir)
+	}
+
+	return addDownloadToPost(file, post, attachmentsDir)
+}
+
+func addDownloadToPost(file *SlackFile, post *IntermediatePost, attachmentsDir string) error {
+	destFilePath := getNormalisedFilePath(file, attachmentsInternal)
+	log.Printf("Downloading %q to %q...\n", file.DownloadURL, destFilePath)
+
+	fullFilePath := path.Join(attachmentsDir, destFilePath)
+
+	// TODO(noxer): Use the file info to resume incomplete downloads
+	if info, err := os.Stat(fullFilePath); err == nil {
+		if info.Size() == file.Size {
+			log.Println("File has already been downloaded, skipping...")
+			return nil
+		}
+	}
+
+	destFile, err := os.Create(fullFilePath)
+	if err != nil {
+		return errors.Wrapf(err, "failed to create file %s in the attachments directory", file.Id)
+	}
+	defer destFile.Close()
+
+	resp, err := http.Get(file.DownloadURL)
+	if err != nil {
+		return errors.Wrap(err, "unable to request file")
+	}
+	defer resp.Body.Close()
+
+	log.Printf("Download size is %s\n", humanSize(resp.ContentLength))
+
+	if resp.StatusCode != http.StatusOK {
+		return errors.Errorf("error requesting %q: %q", file.DownloadURL, resp.Status)
+	}
+
+	_, err = io.Copy(destFile, resp.Body)
+	if err != nil {
+		return errors.Wrap(err, "error downloading file")
+	}
+
+	log.Println("Download successful!")
+
+	post.Attachments = append(post.Attachments, destFilePath)
+	return nil
+}
+
+var sizes = []string{"KiB", "MiB", "GiB", "TiB", "PiB"}
+
+func humanSize(size int64) string {
+	if size < 0 {
+		return "unknown"
+	}
+	if size < 1024 {
+		return fmt.Sprintf("%d B", size)
+	}
+
+	limit := int64(1024 * 1024)
+	for _, name := range sizes {
+		if size < limit {
+			return fmt.Sprintf("%.2f %s", float64(size)/float64(limit/1024), name)
+		}
+
+		limit *= 1024
+	}
+
+	return fmt.Sprintf("%.2f %s", float64(size)/float64(limit/1024), sizes[len(sizes)-1])
+}
+
+func addZipFileToPost(file *SlackFile, uploads map[string]*zip.File, post *IntermediatePost, attachmentsDir string) error {
 	zipFile, ok := uploads[file.Id]
 	if !ok {
 		return errors.Errorf("failed to retrieve file with id %s", file.Id)
@@ -391,12 +466,12 @@ func (t *Transformer) CreateAndAddPostToThreads(post SlackPost, threads map[stri
 	AddPostToThreads(post, newPost, threads, channel, timestamps)
 }
 
-func (t *Transformer) AddFilesToPost(post *SlackPost, skipAttachments bool, slackExport *SlackExport, attachmentsDir string, newPost *IntermediatePost) {
+func (t *Transformer) AddFilesToPost(post *SlackPost, skipAttachments bool, slackExport *SlackExport, attachmentsDir string, newPost *IntermediatePost, allowDownload bool) {
 	if skipAttachments || (post.File == nil && post.Files == nil) {
 		return
 	}
 	if post.File != nil {
-		if err := addFileToPost(post.File, slackExport.Uploads, newPost, attachmentsDir); err != nil {
+		if err := addFileToPost(post.File, slackExport.Uploads, newPost, attachmentsDir, allowDownload); err != nil {
 			t.Logger.WithError(err).Error("Failed to add file to post")
 		}
 	} else if post.Files != nil {
@@ -405,7 +480,7 @@ func (t *Transformer) AddFilesToPost(post *SlackPost, skipAttachments bool, slac
 				t.Logger.Warnf("Not able to access the file %s as file access is denied so skipping", file.Id)
 				continue
 			}
-			if err := addFileToPost(file, slackExport.Uploads, newPost, attachmentsDir); err != nil {
+			if err := addFileToPost(file, slackExport.Uploads, newPost, attachmentsDir, allowDownload); err != nil {
 				t.Logger.WithError(err).Error("Failed to add file to post")
 			}
 		}
@@ -418,7 +493,8 @@ func (t *Transformer) AddAttachmentsToPost(post *SlackPost, newPost *Intermediat
 	return props, propsByteArray
 }
 
-func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir string, skipAttachments, discardInvalidProps bool) error {
+//func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir string, skipAttachments, discardInvalidProps bool) error {
+func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir string, skipAttachments, discardInvalidProps, allowDownload bool) error {
 	t.Logger.Info("Transforming posts")
 
 	newGroupChannels := []*IntermediateChannel{}
@@ -458,7 +534,7 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 					Message:  post.Text,
 					CreateAt: SlackConvertTimeStamp(post.TimeStamp),
 				}
-				t.AddFilesToPost(&post, skipAttachments, slackExport, attachmentsDir, newPost)
+				t.AddFilesToPost(&post, skipAttachments, slackExport, attachmentsDir, newPost, allowDownload)
 
 				if len(post.Attachments) > 0 {
 					props, propsB := t.AddAttachmentsToPost(&post, newPost)
@@ -523,7 +599,7 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 					CreateAt: SlackConvertTimeStamp(post.TimeStamp),
 				}
 
-				t.AddFilesToPost(&post, skipAttachments, slackExport, attachmentsDir, newPost)
+				t.AddFilesToPost(&post, skipAttachments, slackExport, attachmentsDir, newPost, allowDownload)
 
 				if len(post.Attachments) > 0 {
 					props, propsB := t.AddAttachmentsToPost(&post, newPost)
@@ -601,7 +677,7 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 	return nil
 }
 
-func (t *Transformer) Transform(slackExport *SlackExport, attachmentsDir string, skipAttachments, discardInvalidProps bool) error {
+func (t *Transformer) Transform(slackExport *SlackExport, attachmentsDir string, skipAttachments, discardInvalidProps, allowDownload bool) error {
 	t.TransformUsers(slackExport.Users)
 
 	if err := t.TransformAllChannels(slackExport); err != nil {
@@ -611,9 +687,47 @@ func (t *Transformer) Transform(slackExport *SlackExport, attachmentsDir string,
 	t.PopulateUserMemberships()
 	t.PopulateChannelMemberships()
 
-	if err := t.TransformPosts(slackExport, attachmentsDir, skipAttachments, discardInvalidProps); err != nil {
+	if err := t.TransformPosts(slackExport, attachmentsDir, skipAttachments, discardInvalidProps, allowDownload); err != nil {
 		return err
 	}
 
 	return nil
+}
+
+func makeAlphaNum(str string, allowAdditional ...rune) string {
+	for match, replace := range specialReplacements {
+		str = strings.ReplaceAll(str, match, replace)
+	}
+
+	str = norm.NFKD.String(str)
+	str = strings.Map(func(r rune) rune {
+		for _, allowed := range allowAdditional {
+			if r == allowed {
+				return r
+			}
+		}
+
+		// filter all non-ASCII runes
+		if r > 127 {
+			return -1
+		}
+
+		// restrict the remaining characters
+		if r >= 'a' && r <= 'z' {
+			return r
+		}
+		if r >= 'A' && r <= 'Z' {
+			return r
+		}
+		if r >= '0' && r <= '9' {
+			return r
+		}
+
+		return '_'
+	}, str)
+	return str
+}
+
+var specialReplacements = map[string]string{
+	"ß": "ss",
 }
