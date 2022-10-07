@@ -52,7 +52,9 @@ func resumeDownload(existing *os.File, size int64, downloadURL string) error {
 	case http.StatusOK:
 		// server doesn't support Range
 		overlap = 0
-		existing.Truncate(0)
+		if err = existing.Truncate(0); err != nil {
+			return err
+		}
 	default:
 		return fmt.Errorf("download failed with status %q", resp.Status)
 	}
