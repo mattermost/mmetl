@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"path"
 	"sort"
@@ -342,39 +341,13 @@ func addFileToPost(file *SlackFile, uploads map[string]*zip.File, post *Intermed
 
 func addDownloadToPost(file *SlackFile, post *IntermediatePost, attachmentsDir string) error {
 	destFilePath := getNormalisedFilePath(file, attachmentsInternal)
-	log.Printf("Downloading %q to %q...\n", file.DownloadURL, destFilePath)
-
 	fullFilePath := path.Join(attachmentsDir, destFilePath)
 
-	// TODO(noxer): Use the file info to resume incomplete downloads
-	if info, err := os.Stat(fullFilePath); err == nil {
-		if info.Size() == file.Size {
-			log.Println("File has already been downloaded, skipping...")
-			return nil
-		}
-	}
+	log.Printf("Downloading %q into %q...\n", file.DownloadURL, destFilePath)
 
-	destFile, err := os.Create(fullFilePath)
+	err := downloadInto(fullFilePath, file.DownloadURL, file.Size)
 	if err != nil {
-		return errors.Wrapf(err, "failed to create file %s in the attachments directory", file.Id)
-	}
-	defer destFile.Close()
-
-	resp, err := http.Get(file.DownloadURL)
-	if err != nil {
-		return errors.Wrap(err, "unable to request file")
-	}
-	defer resp.Body.Close()
-
-	log.Printf("Download size is %s\n", humanSize(resp.ContentLength))
-
-	if resp.StatusCode != http.StatusOK {
-		return errors.Errorf("error requesting %q: %q", file.DownloadURL, resp.Status)
-	}
-
-	_, err = io.Copy(destFile, resp.Body)
-	if err != nil {
-		return errors.Wrap(err, "error downloading file")
+		return err
 	}
 
 	log.Println("Download successful!")
@@ -493,7 +466,7 @@ func (t *Transformer) AddAttachmentsToPost(post *SlackPost, newPost *Intermediat
 	return props, propsByteArray
 }
 
-//func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir string, skipAttachments, discardInvalidProps bool) error {
+// func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir string, skipAttachments, discardInvalidProps bool) error {
 func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir string, skipAttachments, discardInvalidProps, allowDownload bool) error {
 	t.Logger.Info("Transforming posts")
 
