@@ -3,7 +3,7 @@
 GO_PACKAGES=$(shell go list ./...)
 GO ?= $(shell command -v go 2> /dev/null)
 BUILD_HASH ?= $(shell git rev-parse HEAD)
-BUILD_VERSION ?= $(shell git ls-remote --tags --refs git://github.com/mattermost/mmetl | tail -n1 | sed 's/.*\///')
+BUILD_VERSION ?= $(shell git ls-remote --tags --refs https://github.com/mattermost/mmetl.git | tail -n1 | sed 's/.*\///')
 
 LDFLAGS += -X "github.com/mattermost/mmetl/commands.BuildHash=$(BUILD_HASH)"
 LDFLAGS += -X "github.com/mattermost/mmetl/commands.Version=$(BUILD_VERSION)"
