@@ -12,7 +12,7 @@ import (
 
 const defaultOverlap int64 = 512
 
-var ErrOverlapNotEqual = errors.New("the downloaded file doesn't match the one on disk")
+var ErrOverlapNotEqual = errors.New("download: the downloaded file doesn't match the one on disk")
 
 // downloadInto downloads the contents of a URL into a file. If the file already exists it
 // will resume the download. To prevent corrupting the files it downloads a tiny bit of
@@ -28,7 +28,7 @@ var ErrOverlapNotEqual = errors.New("the downloaded file doesn't match the one o
 func downloadInto(filename, url string, size int64) error {
 	file, err := os.OpenFile(filename, os.O_RDWR|os.O_CREATE, 0660)
 	if err != nil {
-		return err
+		return fmt.Errorf("download: error opening the destination file: %w", err)
 	}
 	defer file.Close()
 
@@ -57,7 +57,7 @@ func resumeDownload(existing *os.File, size int64, downloadURL string) error {
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return err
+		return fmt.Errorf("download: error during HTTP request: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -68,10 +68,10 @@ func resumeDownload(existing *os.File, size int64, downloadURL string) error {
 		// server doesn't support Range
 		overlap = 0
 		if err = existing.Truncate(0); err != nil {
-			return err
+			return fmt.Errorf("download: error emptying file for re-download: %w", err)
 		}
 	default:
-		return fmt.Errorf("download failed with status %q", resp.Status)
+		return fmt.Errorf("download: HTTP request failed with status %q", resp.Status)
 	}
 
 	if overlap != 0 {
@@ -83,11 +83,11 @@ func resumeDownload(existing *os.File, size int64, downloadURL string) error {
 
 	_, err = existing.Seek(0, io.SeekEnd)
 	if err != nil {
-		return err
+		return fmt.Errorf("download: error seeking to the end of the existing file: %w", err)
 	}
 
 	_, err = io.Copy(existing, resp.Body)
-	return err
+	return fmt.Errorf("download: error during download: %w", err)
 }
 
 func checkOverlap(existing io.ReadSeeker, download io.Reader, overlap int64) error {
@@ -96,17 +96,17 @@ func checkOverlap(existing io.ReadSeeker, download io.Reader, overlap int64) err
 
 	_, err := io.ReadFull(download, bufW)
 	if err != nil {
-		return err
+		return fmt.Errorf("download: error downloading the overlapping data: %w", err)
 	}
 
 	_, err = existing.Seek(-overlap, io.SeekEnd)
 	if err != nil {
-		return err
+		return fmt.Errorf("download: error seeking to the start of the existing overlap: %w", err)
 	}
 
 	_, err = io.ReadFull(existing, bufL)
 	if err != nil {
-		return err
+		return fmt.Errorf("download: error reading the local overlapping data: %w", err)
 	}
 
 	if !bytes.Equal(bufW, bufL) {
@@ -119,7 +119,7 @@ func checkOverlap(existing io.ReadSeeker, download io.Reader, overlap int64) err
 func calculateSize(existing *os.File, size int64) (existingSize, overlap int64, err error) {
 	info, err := existing.Stat()
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, fmt.Errorf("download: error reading file info: %w", err)
 	}
 
 	existingSize = info.Size()
@@ -129,7 +129,7 @@ func calculateSize(existing *os.File, size int64) (existingSize, overlap int64, 
 	if existingSize > size {
 		err = existing.Truncate(0)
 		if err != nil {
-			return 0, 0, err
+			return 0, 0, fmt.Errorf("download: error emptying file: %w", err)
 		}
 		existingSize = 0
 	}
@@ -145,7 +145,7 @@ func calculateSize(existing *os.File, size int64) (existingSize, overlap int64, 
 func createRequest(url string, start int64) (*http.Request, error) {
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("download: error creating HTTP request: %w", err)
 	}
 
 	req.Header.Set("User-Agent", "mmetl/1.0")
