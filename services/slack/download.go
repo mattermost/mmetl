@@ -14,8 +14,19 @@ const defaultOverlap int64 = 512
 
 var ErrOverlapNotEqual = errors.New("the downloaded file doesn't match the one on disk")
 
-func downloadInto(name, url string, size int64) error {
-	file, err := os.OpenFile(name, os.O_RDWR|os.O_CREATE, 0660)
+// downloadInto downloads the contents of a URL into a file. If the file already exists it
+// will resume the download. To prevent corrupting the files it downloads a tiny bit of
+// overlapping data (512 byte) and compares it to the existing file:
+//
+//	[-----existing local file-----]
+//	                      [-------resumed download-------]
+//	                      [overlap]
+//
+// When the check fails, the function returns an error and doesn't silently re-download
+// the whole file. If the server doesn't support resumable downloads, the existing file will
+// be truncated and re-downloaded.
+func downloadInto(filename, url string, size int64) error {
+	file, err := os.OpenFile(filename, os.O_RDWR|os.O_CREATE, 0660)
 	if err != nil {
 		return err
 	}
@@ -26,11 +37,15 @@ func downloadInto(name, url string, size int64) error {
 
 func resumeDownload(existing *os.File, size int64, downloadURL string) error {
 	existingSize, overlap, err := calculateSize(existing, size)
-	if err != nil || existingSize == size {
+	if err != nil {
 		return err
 	}
+	if existingSize == size {
+		// the file has already been downloaded
+		return nil
+	}
 
-	start := existingSize - overlap
+	start := existingSize - overlap // calculateSize makes sure this can't be negative
 	req, err := createRequest(downloadURL, start)
 	if err != nil {
 		return err

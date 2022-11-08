@@ -466,7 +466,6 @@ func (t *Transformer) AddAttachmentsToPost(post *SlackPost, newPost *Intermediat
 	return props, propsByteArray
 }
 
-// func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir string, skipAttachments, discardInvalidProps bool) error {
 func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir string, skipAttachments, discardInvalidProps, allowDownload bool) error {
 	t.Logger.Info("Transforming posts")
 
