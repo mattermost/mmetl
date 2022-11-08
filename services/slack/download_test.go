@@ -153,20 +153,20 @@ func mockDefaultHTTPClient() (newServer *httptest.Server, oldClient *http.Client
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/no_resume", func(w http.ResponseWriter, r *http.Request) {
-		w.Write(mockData)
+		_, _ = w.Write(mockData)
 	})
 
 	mux.HandleFunc("/resume", func(w http.ResponseWriter, r *http.Request) {
 		rangeHeader := r.Header.Get("Range")
 		if rangeHeader == "" {
-			w.Write(mockData)
+			_, _ = w.Write(mockData)
 			return
 		}
 
 		from, _ := strconv.ParseInt(strings.TrimPrefix(strings.TrimRight(rangeHeader, "-"), "bytes="), 10, 64)
 
 		w.WriteHeader(http.StatusPartialContent)
-		w.Write(mockData[from:])
+		_, _ = w.Write(mockData[from:])
 	})
 
 	mux.HandleFunc("/wrong_resume", func(w http.ResponseWriter, r *http.Request) {
@@ -175,14 +175,14 @@ func mockDefaultHTTPClient() (newServer *httptest.Server, oldClient *http.Client
 
 		rangeHeader := r.Header.Get("Range")
 		if rangeHeader == "" {
-			w.Write(wrongData)
+			_, _ = w.Write(wrongData)
 			return
 		}
 
 		from, _ := strconv.ParseInt(strings.TrimPrefix(strings.TrimRight(rangeHeader, "-"), "bytes="), 10, 64)
 
 		w.WriteHeader(http.StatusPartialContent)
-		w.Write(wrongData[from:])
+		_, _ = w.Write(wrongData[from:])
 	})
 
 	newServer = httptest.NewServer(mux)
