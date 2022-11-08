@@ -22,13 +22,18 @@ package: vendor check-style
 
 	@echo Build Linux amd64
 	env GOOS=linux GOARCH=amd64 $(BUILD_COMMAND)
-	env GZIP=-9 tar czf build/linux_amd64.tar mmetl
-	md5sum < build/linux_amd64.tar.gz | cut -d ' ' -f 1 > build/linux_amd64.tar.md5.txt
+	env GZIP=-9 tar czf build/linux_amd64.tar.gz mmetl
+	md5sum < build/linux_amd64.tar.gz | cut -d ' ' -f 1 > build/linux_amd64.tar.gz.md5.txt
 
 	@echo Build OSX amd64
 	env GOOS=darwin GOARCH=amd64 $(BUILD_COMMAND)
 	GZIP=-9 tar czf build/darwin_amd64.tar.gz mmetl
-	md5sum < build/darwin_amd64.tar | cut -d ' ' -f 1 > build/darwin_amd64.tar.md5.txt
+	md5sum < build/darwin_amd64.tar.gz | cut -d ' ' -f 1 > build/darwin_amd64.tar.gz.md5.txt
+
+	@echo Build OSX arm64
+	env GOOS=darwin GOARCH=arm64 $(BUILD_COMMAND)
+	GZIP=-9 tar czf build/darwin_arm64.tar.gz mmetl
+	md5sum < build/darwin_arm64.tar.gz | cut -d ' ' -f 1 > build/darwin_arm64.tar.gz.md5.txt
 
 	@echo Build Windows amd64
 	env GOOS=windows GOARCH=amd64 $(BUILD_COMMAND)
