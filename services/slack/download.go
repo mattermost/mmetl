@@ -87,7 +87,11 @@ func resumeDownload(existing *os.File, size int64, downloadURL string) error {
 	}
 
 	_, err = io.Copy(existing, resp.Body)
-	return fmt.Errorf("download: error during download: %w", err)
+	if err != nil {
+		return fmt.Errorf("download: error during download: %w", err)
+	}
+
+	return nil
 }
 
 func checkOverlap(existing io.ReadSeeker, download io.Reader, overlap int64) error {
