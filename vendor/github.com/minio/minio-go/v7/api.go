@@ -20,8 +20,10 @@ package minio
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
+	"hash/crc32"
 	"io"
 	"io/ioutil"
 	"math/rand"
@@ -93,6 +95,8 @@ type Client struct {
 	sha256Hasher func() md5simd.Hasher
 
 	healthStatus int32
+
+	trailingHeaderSupport bool
 }
 
 // Options for New method
@@ -103,6 +107,10 @@ type Options struct {
 	Region       string
 	BucketLookup BucketLookupType
 
+	// TrailingHeaders indicates server support of trailing headers.
+	// Only supported for v4 signatures.
+	TrailingHeaders bool
+
 	// Custom hash routines. Leave nil to use standard.
 	CustomMD5    func() md5simd.Hasher
 	CustomSHA256 func() md5simd.Hasher
@@ -111,13 +119,13 @@ type Options struct {
 // Global constants.
 const (
 	libraryName    = "minio-go"
-	libraryVersion = "v7.0.21"
+	libraryVersion = "v7.0.43"
 )
 
 // User Agent should always following the below style.
 // Please open an issue to discuss any new changes here.
 //
-//       MinIO (OS; ARCH) LIB/VER APP/VER
+//	MinIO (OS; ARCH) LIB/VER APP/VER
 const (
 	libraryUserAgentPrefix = "MinIO (" + runtime.GOOS + "; " + runtime.GOARCH + ") "
 	libraryUserAgent       = libraryUserAgentPrefix + libraryName + "/" + libraryVersion
@@ -246,6 +254,9 @@ func privateNew(endpoint string, opts *Options) (*Client, error) {
 	if clnt.sha256Hasher == nil {
 		clnt.sha256Hasher = newSHA256Hasher
 	}
+
+	clnt.trailingHeaderSupport = opts.TrailingHeaders && clnt.overrideSignerType.IsV4()
+
 	// Sets bucket lookup style, whether server accepts DNS or Path lookup. Default is Auto - determined
 	// by the SDK. When Auto is specified, DNS lookup is used for Amazon/Google cloud endpoints and Path for all other endpoints.
 	clnt.lookup = opts.BucketLookup
@@ -312,17 +323,19 @@ func (c *Client) SetS3TransferAccelerate(accelerateEndpoint string) {
 // Hash materials provides relevant initialized hash algo writers
 // based on the expected signature type.
 //
-//  - For signature v4 request if the connection is insecure compute only sha256.
-//  - For signature v4 request if the connection is secure compute only md5.
-//  - For anonymous request compute md5.
-func (c *Client) hashMaterials(isMd5Requested bool) (hashAlgos map[string]md5simd.Hasher, hashSums map[string][]byte) {
+//   - For signature v4 request if the connection is insecure compute only sha256.
+//   - For signature v4 request if the connection is secure compute only md5.
+//   - For anonymous request compute md5.
+func (c *Client) hashMaterials(isMd5Requested, isSha256Requested bool) (hashAlgos map[string]md5simd.Hasher, hashSums map[string][]byte) {
 	hashSums = make(map[string][]byte)
 	hashAlgos = make(map[string]md5simd.Hasher)
 	if c.overrideSignerType.IsV4() {
 		if c.secure {
 			hashAlgos["md5"] = c.md5Hasher()
 		} else {
-			hashAlgos["sha256"] = c.sha256Hasher()
+			if isSha256Requested {
+				hashAlgos["sha256"] = c.sha256Hasher()
+			}
 		}
 	} else {
 		if c.overrideSignerType.IsAnonymous() {
@@ -377,21 +390,20 @@ func (c *Client) HealthCheck(hcDuration time.Duration) (context.CancelFunc, erro
 				atomic.StoreInt32(&c.healthStatus, unknown)
 				return
 			case <-timer.C:
-				timer.Reset(duration)
 				// Do health check the first time and ONLY if the connection is marked offline
 				if c.IsOffline() {
 					gctx, gcancel := context.WithTimeout(context.Background(), 3*time.Second)
 					_, err := c.getBucketLocation(gctx, probeBucketName)
 					gcancel()
-					if IsNetworkOrHostDown(err, false) {
-						// Still network errors do not need to do anything.
-						continue
-					}
-					switch ToErrorResponse(err).Code {
-					case "NoSuchBucket", "AccessDenied", "":
-						atomic.CompareAndSwapInt32(&c.healthStatus, offline, online)
+					if !IsNetworkOrHostDown(err, false) {
+						switch ToErrorResponse(err).Code {
+						case "NoSuchBucket", "AccessDenied", "":
+							atomic.CompareAndSwapInt32(&c.healthStatus, offline, online)
+						}
 					}
 				}
+
+				timer.Reset(duration)
 			}
 		}
 	}(hcDuration)
@@ -417,6 +429,9 @@ type requestMetadata struct {
 	contentLength    int64
 	contentMD5Base64 string // carries base64 encoded md5sum
 	contentSHA256Hex string // carries hex encoded sha256sum
+	streamSha256     bool
+	addCrc           bool
+	trailer          http.Header // (http.Request).Trailer. Requires v4 signature.
 }
 
 // dumpHTTP - dump HTTP request and response.
@@ -537,7 +552,7 @@ func (c *Client) executeMethod(ctx context.Context, method string, metadata requ
 
 	var retryable bool       // Indicates if request can be retried.
 	var bodySeeker io.Seeker // Extracted seeker from io.Reader.
-	var reqRetry = MaxRetry  // Indicates how many times we can retry the request
+	reqRetry := MaxRetry     // Indicates how many times we can retry the request
 
 	if metadata.contentBody != nil {
 		// Check if body is seekable then it is retryable.
@@ -579,6 +594,17 @@ func (c *Client) executeMethod(ctx context.Context, method string, metadata requ
 			}
 		}
 
+		if metadata.addCrc {
+			if metadata.trailer == nil {
+				metadata.trailer = make(http.Header, 1)
+			}
+			crc := crc32.New(crc32.MakeTable(crc32.Castagnoli))
+			metadata.contentBody = newHashReaderWrapper(metadata.contentBody, crc, func(hash []byte) {
+				// Update trailer when done.
+				metadata.trailer.Set("x-amz-checksum-crc32c", base64.StdEncoding.EncodeToString(hash))
+			})
+			metadata.trailer.Set("x-amz-checksum-crc32c", base64.StdEncoding.EncodeToString(crc.Sum(nil)))
+		}
 		// Instantiate a new request.
 		var req *http.Request
 		req, err = c.newRequest(ctx, method, metadata)
@@ -590,15 +616,15 @@ func (c *Client) executeMethod(ctx context.Context, method string, metadata requ
 
 			return nil, err
 		}
+
 		// Initiate the request.
 		res, err = c.do(req)
 		if err != nil {
-			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-				return nil, err
+			if isRequestErrorRetryable(err) {
+				// Retry the request
+				continue
 			}
-
-			// Retry the request
-			continue
+			return nil, err
 		}
 
 		// For any known successful http status, return quickly.
@@ -631,7 +657,7 @@ func (c *Client) executeMethod(ctx context.Context, method string, metadata requ
 		// code dictates invalid region, we can retry the request
 		// with the new region.
 		//
-		// Additionally we should only retry if bucketLocation and custom
+		// Additionally, we should only retry if bucketLocation and custom
 		// region is empty.
 		if c.region == "" {
 			switch errResponse.Code {
@@ -812,10 +838,13 @@ func (c *Client) newRequest(ctx context.Context, method string, metadata request
 	case signerType.IsV2():
 		// Add signature version '2' authorization header.
 		req = signer.SignV2(*req, accessKeyID, secretAccessKey, isVirtualHost)
-	case metadata.objectName != "" && metadata.queryValues == nil && method == http.MethodPut && metadata.customHeader.Get("X-Amz-Copy-Source") == "" && !c.secure:
-		// Streaming signature is used by default for a PUT object request. Additionally we also
-		// look if the initialized client is secure, if yes then we don't need to perform
-		// streaming signature.
+	case metadata.streamSha256 && !c.secure:
+		if len(metadata.trailer) > 0 {
+			req.Trailer = metadata.trailer
+		}
+		// Streaming signature is used by default for a PUT object request.
+		// Additionally, we also look if the initialized client is secure,
+		// if yes then we don't need to perform streaming signature.
 		req = signer.StreamingSignV4(req, accessKeyID,
 			secretAccessKey, sessionToken, location, metadata.contentLength, time.Now().UTC())
 	default:
@@ -823,11 +852,17 @@ func (c *Client) newRequest(ctx context.Context, method string, metadata request
 		shaHeader := unsignedPayload
 		if metadata.contentSHA256Hex != "" {
 			shaHeader = metadata.contentSHA256Hex
+			if len(metadata.trailer) > 0 {
+				// Sanity check, we should not end up here if upstream is sane.
+				return nil, errors.New("internal error: contentSHA256Hex with trailer not supported")
+			}
+		} else if len(metadata.trailer) > 0 {
+			shaHeader = unsignedPayloadTrailer
 		}
 		req.Header.Set("X-Amz-Content-Sha256", shaHeader)
 
 		// Add signature version '4' authorization header.
-		req = signer.SignV4(*req, accessKeyID, secretAccessKey, sessionToken, location)
+		req = signer.SignV4Trailer(*req, accessKeyID, secretAccessKey, sessionToken, location, metadata.trailer)
 	}
 
 	// Return request.
@@ -875,10 +910,14 @@ func (c *Client) makeTargetURL(bucketName, objectName, bucketLocation string, is
 	if h, p, err := net.SplitHostPort(host); err == nil {
 		if scheme == "http" && p == "80" || scheme == "https" && p == "443" {
 			host = h
+			if ip := net.ParseIP(h); ip != nil && ip.To16() != nil {
+				host = "[" + h + "]"
+			}
 		}
 	}
 
 	urlStr := scheme + "://" + host + "/"
+
 	// Make URL only if bucketName is available, otherwise use the
 	// endpoint URL.
 	if bucketName != "" {

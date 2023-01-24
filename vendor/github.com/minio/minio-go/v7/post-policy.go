@@ -32,12 +32,11 @@ const expirationDateFormat = "2006-01-02T15:04:05.999Z"
 //
 // Example:
 //
-//   policyCondition {
-//       matchType: "$eq",
-//       key: "$Content-Type",
-//       value: "image/png",
-//   }
-//
+//	policyCondition {
+//	    matchType: "$eq",
+//	    key: "$Content-Type",
+//	    value: "image/png",
+//	}
 type policyCondition struct {
 	matchType string
 	condition string
@@ -172,10 +171,8 @@ func (p *PostPolicy) SetContentType(contentType string) error {
 
 // SetContentTypeStartsWith - Sets what content-type of the object for this policy
 // based upload can start with.
+// If "" is provided it allows all content-types.
 func (p *PostPolicy) SetContentTypeStartsWith(contentTypeStartsWith string) error {
-	if strings.TrimSpace(contentTypeStartsWith) == "" || contentTypeStartsWith == "" {
-		return errInvalidArgument("No content type specified.")
-	}
 	policyCond := policyCondition{
 		matchType: "starts-with",
 		condition: "$Content-Type",
@@ -197,8 +194,8 @@ func (p *PostPolicy) SetContentLengthRange(min, max int64) error {
 	if min < 0 {
 		return errInvalidArgument("Minimum limit cannot be negative.")
 	}
-	if max < 0 {
-		return errInvalidArgument("Maximum limit cannot be negative.")
+	if max <= 0 {
+		return errInvalidArgument("Maximum limit cannot be non-positive.")
 	}
 	p.contentLengthRange.min = min
 	p.contentLengthRange.max = max

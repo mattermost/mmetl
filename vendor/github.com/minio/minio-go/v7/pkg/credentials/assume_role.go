@@ -19,6 +19,7 @@ package credentials
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/xml"
 	"errors"
@@ -31,7 +32,6 @@ import (
 	"time"
 
 	"github.com/minio/minio-go/v7/pkg/signer"
-	sha256 "github.com/minio/sha256-simd"
 )
 
 // AssumeRoleResponse contains the result of successful AssumeRole request.
@@ -93,6 +93,8 @@ type STSAssumeRoleOptions struct {
 	// Mandatory inputs.
 	AccessKey string
 	SecretKey string
+
+	Policy string // Optional to assign a policy to the assumed role
 
 	Location        string // Optional commonly needed with AWS STS.
 	DurationSeconds int    // Optional defaults to 1 hour.
@@ -156,6 +158,9 @@ func getAssumeRoleCredentials(clnt *http.Client, endpoint string, opts STSAssume
 		v.Set("DurationSeconds", strconv.Itoa(opts.DurationSeconds))
 	} else {
 		v.Set("DurationSeconds", strconv.Itoa(defaultDurationSeconds))
+	}
+	if opts.Policy != "" {
+		v.Set("Policy", opts.Policy)
 	}
 
 	u, err := url.Parse(endpoint)

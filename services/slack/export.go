@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mattermost/mattermost-server/v6/app"
+	"github.com/mattermost/mattermost-server/v6/app/imports"
 	"github.com/mattermost/mattermost-server/v6/model"
 	"github.com/pkg/errors"
 )
@@ -72,8 +72,8 @@ func SplitChannelsByMemberSize(channels []SlackChannel, limit int) (regularChann
 	return
 }
 
-func GetImportLineFromChannel(team string, channel *IntermediateChannel) *app.LineImportData {
-	newChannel := &app.ChannelImportData{
+func GetImportLineFromChannel(team string, channel *IntermediateChannel) *imports.LineImportData {
+	newChannel := &imports.ChannelImportData{
 		Team:        model.NewString(team),
 		Name:        model.NewString(channel.Name),
 		DisplayName: model.NewString(channel.DisplayName),
@@ -82,34 +82,34 @@ func GetImportLineFromChannel(team string, channel *IntermediateChannel) *app.Li
 		Purpose:     &channel.Purpose,
 	}
 
-	return &app.LineImportData{
+	return &imports.LineImportData{
 		Type:    "channel",
 		Channel: newChannel,
 	}
 }
 
-func GetImportLineFromDirectChannel(team string, channel *IntermediateChannel) *app.LineImportData {
-	return &app.LineImportData{
+func GetImportLineFromDirectChannel(team string, channel *IntermediateChannel) *imports.LineImportData {
+	return &imports.LineImportData{
 		Type: "direct_channel",
-		DirectChannel: &app.DirectChannelImportData{
+		DirectChannel: &imports.DirectChannelImportData{
 			Header:  &channel.Topic,
 			Members: &channel.MembersUsernames,
 		},
 	}
 }
 
-func GetImportLineFromUser(user *IntermediateUser, team string) *app.LineImportData {
-	channelMemberships := []app.UserChannelImportData{}
+func GetImportLineFromUser(user *IntermediateUser, team string) *imports.LineImportData {
+	channelMemberships := []imports.UserChannelImportData{}
 	for _, channelName := range user.Memberships {
-		channelMemberships = append(channelMemberships, app.UserChannelImportData{
+		channelMemberships = append(channelMemberships, imports.UserChannelImportData{
 			Name:  model.NewString(channelName),
 			Roles: model.NewString(model.ChannelUserRoleId),
 		})
 	}
 
-	return &app.LineImportData{
+	return &imports.LineImportData{
 		Type: "user",
-		User: &app.UserImportData{
+		User: &imports.UserImportData{
 			Username:  model.NewString(user.Username),
 			Email:     model.NewString(user.Email),
 			Nickname:  model.NewString(""),
@@ -117,7 +117,7 @@ func GetImportLineFromUser(user *IntermediateUser, team string) *app.LineImportD
 			LastName:  model.NewString(user.LastName),
 			Position:  model.NewString(user.Position),
 			Roles:     model.NewString(model.SystemUserRoleId),
-			Teams: &[]app.UserTeamImportData{
+			Teams: &[]imports.UserTeamImportData{
 				{
 					Name:     model.NewString(team),
 					Channels: &channelMemberships,
@@ -128,10 +128,10 @@ func GetImportLineFromUser(user *IntermediateUser, team string) *app.LineImportD
 	}
 }
 
-func GetAttachmentImportDataFromPaths(paths []string) []app.AttachmentImportData {
-	attachments := []app.AttachmentImportData{}
+func GetAttachmentImportDataFromPaths(paths []string) []imports.AttachmentImportData {
+	attachments := []imports.AttachmentImportData{}
 	for _, path := range paths {
-		attachmentImportData := app.AttachmentImportData{
+		attachmentImportData := imports.AttachmentImportData{
 			Path: model.NewString(path),
 		}
 		attachments = append(attachments, attachmentImportData)
@@ -143,8 +143,8 @@ func GetAttachmentImportDataFromPaths(paths []string) []app.AttachmentImportData
 // attachments above the maximum number of attachments per post.
 // The attachments that would fit in a post need to be processed
 // outside this function
-func createRepliesForAttachments(attachments []app.AttachmentImportData, user string, createAt int64) []app.ReplyImportData {
-	replies := []app.ReplyImportData{}
+func createRepliesForAttachments(attachments []imports.AttachmentImportData, user string, createAt int64) []imports.ReplyImportData {
+	replies := []imports.ReplyImportData{}
 
 	if len(attachments) > POST_MAX_ATTACHMENTS {
 		numberSplitPosts := len(attachments) / POST_MAX_ATTACHMENTS
@@ -156,7 +156,7 @@ func createRepliesForAttachments(attachments []app.AttachmentImportData, user st
 				replyAttachments = replyAttachments[0:POST_MAX_ATTACHMENTS]
 			}
 
-			newReply := app.ReplyImportData{
+			newReply := imports.ReplyImportData{
 				User:        model.NewString(user),
 				Message:     model.NewString(""),
 				CreateAt:    model.NewInt64(createAt + int64(i)),
@@ -169,8 +169,8 @@ func createRepliesForAttachments(attachments []app.AttachmentImportData, user st
 	return replies
 }
 
-func GetImportLineFromPost(post *IntermediatePost, team string) *app.LineImportData {
-	replies := []app.ReplyImportData{}
+func GetImportLineFromPost(post *IntermediatePost, team string) *imports.LineImportData {
+	replies := []imports.ReplyImportData{}
 	postAttachments := GetAttachmentImportDataFromPaths(post.Attachments)
 
 	// If the post has more attachments than the maximum, create the
@@ -190,7 +190,7 @@ func GetImportLineFromPost(post *IntermediatePost, team string) *app.LineImportD
 			replyAttachments = replyAttachments[0:POST_MAX_ATTACHMENTS]
 		}
 
-		newReply := app.ReplyImportData{
+		newReply := imports.ReplyImportData{
 			User:        &reply.User,
 			Message:     &reply.Message,
 			CreateAt:    &reply.CreateAt,
@@ -199,11 +199,11 @@ func GetImportLineFromPost(post *IntermediatePost, team string) *app.LineImportD
 		replies = append(replies, newReply)
 	}
 
-	var newPost *app.LineImportData
+	var newPost *imports.LineImportData
 	if post.IsDirect {
-		newPost = &app.LineImportData{
+		newPost = &imports.LineImportData{
 			Type: "direct_post",
-			DirectPost: &app.DirectPostImportData{
+			DirectPost: &imports.DirectPostImportData{
 				ChannelMembers: &post.ChannelMembers,
 				User:           &post.User,
 				Message:        &post.Message,
@@ -214,9 +214,9 @@ func GetImportLineFromPost(post *IntermediatePost, team string) *app.LineImportD
 			},
 		}
 	} else {
-		newPost = &app.LineImportData{
+		newPost = &imports.LineImportData{
 			Type: "post",
-			Post: &app.PostImportData{
+			Post: &imports.PostImportData{
 				Team:        model.NewString(team),
 				Channel:     &post.Channel,
 				User:        &post.User,
@@ -232,7 +232,7 @@ func GetImportLineFromPost(post *IntermediatePost, team string) *app.LineImportD
 	return newPost
 }
 
-func ExportWriteLine(writer io.Writer, line *app.LineImportData) error {
+func ExportWriteLine(writer io.Writer, line *imports.LineImportData) error {
 	b, err := json.Marshal(line)
 	if err != nil {
 		return errors.Wrap(err, "An error occurred marshalling the JSON data for export.")
@@ -247,7 +247,7 @@ func ExportWriteLine(writer io.Writer, line *app.LineImportData) error {
 
 func (t *Transformer) ExportVersion(writer io.Writer) error {
 	version := 1
-	versionLine := &app.LineImportData{
+	versionLine := &imports.LineImportData{
 		Type:    "version",
 		Version: &version,
 	}
