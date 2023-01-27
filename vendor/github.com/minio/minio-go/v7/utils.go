@@ -20,6 +20,7 @@ package minio
 import (
 	"context"
 	"crypto/md5"
+	fipssha256 "crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/xml"
@@ -39,6 +40,7 @@ import (
 	"time"
 
 	md5simd "github.com/minio/md5-simd"
+	"github.com/minio/minio-go/v7/pkg/encrypt"
 	"github.com/minio/minio-go/v7/pkg/s3utils"
 	"github.com/minio/sha256-simd"
 )
@@ -105,21 +107,6 @@ func sumMD5Base64(data []byte) string {
 
 // getEndpointURL - construct a new endpoint.
 func getEndpointURL(endpoint string, secure bool) (*url.URL, error) {
-	if strings.Contains(endpoint, ":") {
-		host, _, err := net.SplitHostPort(endpoint)
-		if err != nil {
-			return nil, err
-		}
-		if !s3utils.IsValidIP(host) && !s3utils.IsValidDomain(host) {
-			msg := "Endpoint: " + endpoint + " does not follow ip address or domain name standards."
-			return nil, errInvalidArgument(msg)
-		}
-	} else {
-		if !s3utils.IsValidIP(endpoint) && !s3utils.IsValidDomain(endpoint) {
-			msg := "Endpoint: " + endpoint + " does not follow ip address or domain name standards."
-			return nil, errInvalidArgument(msg)
-		}
-	}
 	// If secure is false, use 'http' scheme.
 	scheme := "https"
 	if !secure {
@@ -176,12 +163,18 @@ func isValidEndpointURL(endpointURL url.URL) error {
 	if endpointURL.Path != "/" && endpointURL.Path != "" {
 		return errInvalidArgument("Endpoint url cannot have fully qualified paths.")
 	}
-	if strings.Contains(endpointURL.Host, ".s3.amazonaws.com") {
+	host := endpointURL.Hostname()
+	if !s3utils.IsValidIP(host) && !s3utils.IsValidDomain(host) {
+		msg := "Endpoint: " + endpointURL.Host + " does not follow ip address or domain name standards."
+		return errInvalidArgument(msg)
+	}
+
+	if strings.Contains(host, ".s3.amazonaws.com") {
 		if !s3utils.IsAmazonEndpoint(endpointURL) {
 			return errInvalidArgument("Amazon S3 endpoint should be 's3.amazonaws.com'.")
 		}
 	}
-	if strings.Contains(endpointURL.Host, ".googleapis.com") {
+	if strings.Contains(host, ".googleapis.com") {
 		if !s3utils.IsGoogleEndpoint(endpointURL) {
 			return errInvalidArgument("Google Cloud Storage endpoint should be 'storage.googleapis.com'.")
 		}
@@ -385,6 +378,12 @@ func ToObjectInfo(bucketName string, objectName string, h http.Header) (ObjectIn
 		UserTags:     userTags,
 		UserTagCount: tagCount,
 		Restore:      restore,
+
+		// Checksum values
+		ChecksumCRC32:  h.Get("x-amz-checksum-crc32"),
+		ChecksumCRC32C: h.Get("x-amz-checksum-crc32c"),
+		ChecksumSHA1:   h.Get("x-amz-checksum-sha1"),
+		ChecksumSHA256: h.Get("x-amz-checksum-sha256"),
 	}, nil
 }
 
@@ -510,18 +509,23 @@ func isSSEHeader(headerKey string) bool {
 func isAmzHeader(headerKey string) bool {
 	key := strings.ToLower(headerKey)
 
-	return strings.HasPrefix(key, "x-amz-meta-") || strings.HasPrefix(key, "x-amz-grant-") || key == "x-amz-acl" || isSSEHeader(headerKey)
+	return strings.HasPrefix(key, "x-amz-meta-") || strings.HasPrefix(key, "x-amz-grant-") || key == "x-amz-acl" || isSSEHeader(headerKey) || strings.HasPrefix(key, "x-amz-checksum-")
 }
 
-var md5Pool = sync.Pool{New: func() interface{} { return md5.New() }}
-var sha256Pool = sync.Pool{New: func() interface{} { return sha256.New() }}
+var (
+	md5Pool    = sync.Pool{New: func() interface{} { return md5.New() }}
+	sha256Pool = sync.Pool{New: func() interface{} { return sha256.New() }}
+)
 
 func newMd5Hasher() md5simd.Hasher {
-	return hashWrapper{Hash: md5Pool.New().(hash.Hash), isMD5: true}
+	return &hashWrapper{Hash: md5Pool.Get().(hash.Hash), isMD5: true}
 }
 
 func newSHA256Hasher() md5simd.Hasher {
-	return hashWrapper{Hash: sha256Pool.New().(hash.Hash), isSHA256: true}
+	if encrypt.FIPS {
+		return &hashWrapper{Hash: fipssha256.New(), isSHA256: true}
+	}
+	return &hashWrapper{Hash: sha256Pool.Get().(hash.Hash), isSHA256: true}
 }
 
 // hashWrapper implements the md5simd.Hasher interface.
@@ -532,7 +536,7 @@ type hashWrapper struct {
 }
 
 // Close will put the hasher back into the pool.
-func (m hashWrapper) Close() {
+func (m *hashWrapper) Close() {
 	if m.isMD5 && m.Hash != nil {
 		m.Reset()
 		md5Pool.Put(m.Hash)
@@ -627,4 +631,39 @@ func IsNetworkOrHostDown(err error, expectTimeouts bool) bool {
 		return true
 	}
 	return false
+}
+
+// newHashReaderWrapper will hash all reads done through r.
+// When r returns io.EOF the done function will be called with the sum.
+func newHashReaderWrapper(r io.Reader, h hash.Hash, done func(hash []byte)) *hashReaderWrapper {
+	return &hashReaderWrapper{
+		r:    r,
+		h:    h,
+		done: done,
+	}
+}
+
+type hashReaderWrapper struct {
+	r    io.Reader
+	h    hash.Hash
+	done func(hash []byte)
+}
+
+// Read implements the io.Reader interface.
+func (h *hashReaderWrapper) Read(p []byte) (n int, err error) {
+	n, err = h.r.Read(p)
+	if n > 0 {
+		n2, err := h.h.Write(p[:n])
+		if err != nil {
+			return 0, err
+		}
+		if n2 != n {
+			return 0, io.ErrShortWrite
+		}
+	}
+	if err == io.EOF {
+		// Call back
+		h.done(h.h.Sum(nil))
+	}
+	return n, err
 }

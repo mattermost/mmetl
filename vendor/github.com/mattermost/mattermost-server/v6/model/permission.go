@@ -73,6 +73,7 @@ var PermissionDeleteOthersEmojis *Permission
 var PermissionCreatePost *Permission
 var PermissionCreatePostPublic *Permission
 var PermissionCreatePostEphemeral *Permission
+var PermissionReadDeletedPosts *Permission
 var PermissionEditPost *Permission
 var PermissionEditOthersPosts *Permission
 var PermissionDeletePost *Permission
@@ -337,12 +338,14 @@ var PermissionSysconsoleWriteExperimentalBleve *Permission
 var PermissionPublicPlaybookCreate *Permission
 var PermissionPublicPlaybookManageProperties *Permission
 var PermissionPublicPlaybookManageMembers *Permission
+var PermissionPublicPlaybookManageRoles *Permission
 var PermissionPublicPlaybookView *Permission
 var PermissionPublicPlaybookMakePrivate *Permission
 
 var PermissionPrivatePlaybookCreate *Permission
 var PermissionPrivatePlaybookManageProperties *Permission
 var PermissionPrivatePlaybookManageMembers *Permission
+var PermissionPrivatePlaybookManageRoles *Permission
 var PermissionPrivatePlaybookView *Permission
 var PermissionPrivatePlaybookMakePublic *Permission
 
@@ -350,6 +353,9 @@ var PermissionRunCreate *Permission
 var PermissionRunManageProperties *Permission
 var PermissionRunManageMembers *Permission
 var PermissionRunView *Permission
+
+var PermissionSysconsoleReadProductsBoards *Permission
+var PermissionSysconsoleWriteProductsBoards *Permission
 
 // General permission that encompasses all system admin functions
 // in the future this could be broken up to allow access to some
@@ -704,6 +710,12 @@ func initializePermissions() {
 		"create_post_ephemeral",
 		"authentication.permissions.create_post_ephemeral.name",
 		"authentication.permissions.create_post_ephemeral.description",
+		PermissionScopeChannel,
+	}
+	PermissionReadDeletedPosts = &Permission{
+		"read_deleted_posts",
+		"authentication.permissions.read_deleted_posts.name",
+		"authentication.permissions.read_deleted_posts.description",
 		PermissionScopeChannel,
 	}
 	PermissionEditPost = &Permission{
@@ -1970,6 +1982,13 @@ func initializePermissions() {
 		PermissionScopePlaybook,
 	}
 
+	PermissionPublicPlaybookManageRoles = &Permission{
+		"playbook_public_manage_roles",
+		"",
+		"",
+		PermissionScopePlaybook,
+	}
+
 	PermissionPublicPlaybookView = &Permission{
 		"playbook_public_view",
 		"",
@@ -2000,6 +2019,13 @@ func initializePermissions() {
 
 	PermissionPrivatePlaybookManageMembers = &Permission{
 		"playbook_private_manage_members",
+		"",
+		"",
+		PermissionScopePlaybook,
+	}
+
+	PermissionPrivatePlaybookManageRoles = &Permission{
+		"playbook_private_manage_roles",
 		"",
 		"",
 		PermissionScopePlaybook,
@@ -2045,6 +2071,19 @@ func initializePermissions() {
 		"",
 		"",
 		PermissionScopeRun,
+	}
+
+	PermissionSysconsoleReadProductsBoards = &Permission{
+		"sysconsole_read_products_boards",
+		"",
+		"",
+		PermissionScopeSystem,
+	}
+	PermissionSysconsoleWriteProductsBoards = &Permission{
+		"sysconsole_write_products_boards",
+		"",
+		"",
+		PermissionScopeSystem,
 	}
 
 	SysconsoleReadPermissions = []*Permission{
@@ -2102,6 +2141,7 @@ func initializePermissions() {
 		PermissionSysconsoleReadExperimentalFeatures,
 		PermissionSysconsoleReadExperimentalFeatureFlags,
 		PermissionSysconsoleReadExperimentalBleve,
+		PermissionSysconsoleReadProductsBoards,
 	}
 
 	SysconsoleWritePermissions = []*Permission{
@@ -2159,6 +2199,7 @@ func initializePermissions() {
 		PermissionSysconsoleWriteExperimentalFeatures,
 		PermissionSysconsoleWriteExperimentalFeatureFlags,
 		PermissionSysconsoleWriteExperimentalBleve,
+		PermissionSysconsoleWriteProductsBoards,
 	}
 
 	SystemScopedPermissionsMinusSysconsole := []*Permission{
@@ -2286,6 +2327,7 @@ func initializePermissions() {
 		PermissionCreatePost,
 		PermissionCreatePostPublic,
 		PermissionCreatePostEphemeral,
+		PermissionReadDeletedPosts,
 		PermissionEditPost,
 		PermissionEditOthersPosts,
 		PermissionDeletePost,
@@ -2327,10 +2369,12 @@ func initializePermissions() {
 	PlaybookScopedPermissions := []*Permission{
 		PermissionPublicPlaybookManageProperties,
 		PermissionPublicPlaybookManageMembers,
+		PermissionPublicPlaybookManageRoles,
 		PermissionPublicPlaybookView,
 		PermissionPublicPlaybookMakePrivate,
 		PermissionPrivatePlaybookManageProperties,
 		PermissionPrivatePlaybookManageMembers,
+		PermissionPrivatePlaybookManageRoles,
 		PermissionPrivatePlaybookView,
 		PermissionPrivatePlaybookMakePublic,
 		PermissionRunCreate,

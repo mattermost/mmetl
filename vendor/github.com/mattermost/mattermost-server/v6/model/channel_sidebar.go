@@ -37,12 +37,11 @@ const (
 )
 
 // SidebarCategory represents the corresponding DB table
-// SortOrder is never returned to the user and only used for queries
 type SidebarCategory struct {
 	Id          string                 `json:"id"`
 	UserId      string                 `json:"user_id"`
 	TeamId      string                 `json:"team_id"`
-	SortOrder   int64                  `json:"-"`
+	SortOrder   int64                  `json:"sort_order"`
 	Sorting     SidebarCategorySorting `json:"sorting"`
 	Type        SidebarCategoryType    `json:"type"`
 	DisplayName string                 `json:"display_name"`
@@ -98,7 +97,7 @@ func (t SidebarCategoryType) MarshalJSON() ([]byte, error) {
 	return json.Marshal(string(t))
 }
 
-func (t *SidebarCategoryType) UnmarshalGraphQL(input interface{}) error {
+func (t *SidebarCategoryType) UnmarshalGraphQL(input any) error {
 	chType, ok := input.(string)
 	if !ok {
 		return errors.New("wrong type")
@@ -116,7 +115,7 @@ func (t SidebarCategorySorting) MarshalJSON() ([]byte, error) {
 	return json.Marshal(string(t))
 }
 
-func (t *SidebarCategorySorting) UnmarshalGraphQL(input interface{}) error {
+func (t *SidebarCategorySorting) UnmarshalGraphQL(input any) error {
 	chType, ok := input.(string)
 	if !ok {
 		return errors.New("wrong type")
@@ -124,4 +123,8 @@ func (t *SidebarCategorySorting) UnmarshalGraphQL(input interface{}) error {
 
 	*t = SidebarCategorySorting(chType)
 	return nil
+}
+
+func (t *SidebarCategory) SortOrder_() float64 {
+	return float64(t.SortOrder)
 }
