@@ -81,6 +81,7 @@ type IntermediateUser struct {
 	Email       string   `json:"email"`
 	Password    string   `json:"password"`
 	Memberships []string `json:"memberships"`
+	DeleteAt    int64    `json:"delete_at"`
 }
 
 func (u *IntermediateUser) Sanitise(logger log.FieldLogger) {
@@ -117,6 +118,11 @@ func (t *Transformer) TransformUsers(users []SlackUser) {
 
 	resultUsers := map[string]*IntermediateUser{}
 	for _, user := range users {
+		var deleteAt int64 = 0
+		if user.Deleted {
+			deleteAt = model.GetMillis()
+		}
+
 		newUser := &IntermediateUser{
 			Id:        user.Id,
 			Username:  user.Username,
@@ -125,6 +131,7 @@ func (t *Transformer) TransformUsers(users []SlackUser) {
 			Position:  user.Profile.Title,
 			Email:     user.Profile.Email,
 			Password:  model.NewId(),
+			DeleteAt:  deleteAt,
 		}
 
 		if user.IsBot {
