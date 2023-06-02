@@ -40,6 +40,7 @@ type SlackUser struct {
 	Username string       `json:"name"`
 	IsBot    bool         `json:"is_bot"`
 	Profile  SlackProfile `json:"profile"`
+	Deleted  bool         `json:"deleted"`
 }
 
 type SlackFile struct {

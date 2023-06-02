@@ -500,7 +500,73 @@ func TestTransformUsers(t *testing.T) {
 		assert.Equal(t, fmt.Sprintf("lastname%d", i+1), slackTransformer.Intermediate.UsersById[id].LastName)
 		assert.Equal(t, fmt.Sprintf("position%d", i+1), slackTransformer.Intermediate.UsersById[id].Position)
 		assert.Equal(t, fmt.Sprintf("email%d@example.com", i+1), slackTransformer.Intermediate.UsersById[id].Email)
+		assert.Zero(t, slackTransformer.Intermediate.UsersById[id].DeleteAt)
 	}
+}
+
+func TestDeleteAt(t *testing.T) {
+	id1 := "id1"
+	id2 := "id2"
+	id3 := "id3"
+	id4 := "id4"
+
+	slackTransformer := NewTransformer("test", log.New())
+	activeUsers := []SlackUser{
+		{
+			Id:       id1,
+			Username: "username1",
+			Profile: SlackProfile{
+				FirstName: "firstname1",
+				LastName:  "lastname1",
+				Title:     "position1",
+				Email:     "email1@example.com",
+			},
+		},
+		{
+			Id:       id2,
+			Username: "username2",
+			Deleted:  false,
+			Profile: SlackProfile{
+				FirstName: "firstname2",
+				LastName:  "lastname2",
+				Title:     "position2",
+				Email:     "email2@example.com",
+			},
+		},
+	}
+
+	inactiveUsers := []SlackUser{
+		{
+			Id:       id3,
+			Username: "username3",
+			Deleted:  true,
+			Profile: SlackProfile{
+				FirstName: "firstname3",
+				LastName:  "lastname3",
+				Title:     "position3",
+				Email:     "email3@example.com",
+			},
+		},
+		{
+			Id:       id4,
+			Username: "username4",
+			Deleted:  true,
+			Profile: SlackProfile{
+				FirstName: "firstname4",
+				LastName:  "lastname4",
+				Title:     "position4",
+				Email:     "email4@example.com",
+			},
+		},
+	}
+
+	users := append(activeUsers, inactiveUsers...)
+
+	slackTransformer.TransformUsers(users)
+	require.Zero(t, slackTransformer.Intermediate.UsersById[activeUsers[0].Id].DeleteAt)
+	require.Zero(t, slackTransformer.Intermediate.UsersById[activeUsers[1].Id].DeleteAt)
+	require.NotZero(t, slackTransformer.Intermediate.UsersById[inactiveUsers[0].Id].DeleteAt)
+	require.NotZero(t, slackTransformer.Intermediate.UsersById[inactiveUsers[1].Id].DeleteAt)
 }
 
 func TestPopulateUserMemberships(t *testing.T) {
