@@ -75,18 +75,3 @@ jobs:
         with:
           name: Build artifacts
           path: build
-
-  publish-github-release:
-    needs: build
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v2
-
-      - name: Attach workspace
-        uses: actions/attach-workspace@v2
-
-      - name: Publish Release on GitHub
-        run: |
-          ghr -t ${{ secrets.GITHUB_TOKEN }} -u ${{ github.repository_owner }} -r ${{ github.repository }} -c ${{ github.sha }} -delete ${{ github.ref }} ./build
