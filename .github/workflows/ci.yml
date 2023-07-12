@@ -6,7 +6,7 @@ on:
     branches:
       - master
     tags:
-      - 'v*'
+      - "v*"
 
 jobs:
   test:
@@ -23,7 +23,10 @@ jobs:
 
       - name: Install golangci-lint
         run: |
-          go install github.com/golangci/golangci-lint/cmd/golangci-lint
+          mkdir -p /go/bin
+          command -v /go/bin/golangci-lint && exit
+          download=https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh
+          wget -O- -q $download | sh -s -- -b /go/bin/ v1.45.0
 
       - name: Verify and tidy go.mod
         run: |
@@ -54,7 +57,10 @@ jobs:
 
       - name: Install golangci-lint
         run: |
-          go install github.com/golangci/golangci-lint/cmd/golangci-lint
+          mkdir -p /go/bin
+          command -v /go/bin/golangci-lint && exit
+          download=https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh
+          wget -O- -q $download | sh -s -- -b /go/bin/ v1.45.0
 
       - name: Verify Go modules
         run: |
