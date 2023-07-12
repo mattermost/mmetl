@@ -1,9 +1,12 @@
 name: cd
 
 on:
+  pull_request:
   push:
+    branches:
+      - master
     tags:
-      - 'v*'
+      - "v*"
 
 jobs:
   build:
@@ -20,7 +23,8 @@ jobs:
 
       - name: Install golangci-lint
         run: |
-          go install github.com/golangci/golangci-lint/cmd/golangci-lint
+          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin v1.48.0
+
       - name: Verify Go modules
         run: |
           go mod download
