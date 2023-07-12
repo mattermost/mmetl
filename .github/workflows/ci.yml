@@ -23,7 +23,7 @@ jobs:
 
       - name: Install golangci-lint
         run: |
-          go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.45.0
+          go install github.com/golangci/golangci-lint/cmd/golangci-lint
 
       - name: Verify and tidy go.mod
         run: |
@@ -54,7 +54,7 @@ jobs:
 
       - name: Install golangci-lint
         run: |
-          go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.45.0
+          go install github.com/golangci/golangci-lint/cmd/golangci-lint
 
       - name: Verify Go modules
         run: |
