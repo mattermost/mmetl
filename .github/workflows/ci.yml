@@ -23,7 +23,6 @@ jobs:
 
       - name: Install golangci-lint
         run: |
-          mkdir -p /go/bin
           command -v /go/bin/golangci-lint && exit
           download=https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh
           wget -O- -q $download | sh -s -- -b /go/bin/ v1.45.0
@@ -57,7 +56,6 @@ jobs:
 
       - name: Install golangci-lint
         run: |
-          mkdir -p /go/bin
           command -v /go/bin/golangci-lint && exit
           download=https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh
           wget -O- -q $download | sh -s -- -b /go/bin/ v1.45.0
