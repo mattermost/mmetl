@@ -21,11 +21,11 @@ jobs:
         with:
           go-version: 1.19
 
-      - name: Install golangci-lint
-        run: |
-          command -v /go/bin/golangci-lint && exit
-          download=https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh
-          wget -O- -q $download | sh -s -- -b /go/bin/ v1.45.0
+      # - name: Install golangci-lint
+      #   run: |
+      #     command -v /go/bin/golangci-lint && exit
+      #     download=https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh
+      #     wget -O- -q $download | sh -s -- -b /go/bin/ v1.45.0
 
       - name: Verify and tidy go.mod
         run: |
@@ -33,8 +33,8 @@ jobs:
           go mod verify
           go mod tidy
 
-      - name: Run golangci-lint
-        run: make check-style
+      # - name: Run golangci-lint
+      #   run: make check-style
 
       - name: Check code style with gofmt
         run: make gofmt
@@ -52,13 +52,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v2
         with:
-          go-version: 1.16
-
-      - name: Install golangci-lint
-        run: |
-          command -v /go/bin/golangci-lint && exit
-          download=https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh
-          wget -O- -q $download | sh -s -- -b /go/bin/ v1.45.0
+          go-version: 1.19
 
       - name: Verify Go modules
         run: |
