@@ -1,7 +1,9 @@
 package slack
 
 import (
+	"bytes"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 
@@ -439,15 +441,95 @@ func TestTransformChannelWithOneValidMember(t *testing.T) {
 }
 
 func TestIntermediateUserSanitise(t *testing.T) {
-	t.Run("If there is no email, a placeholder should be used", func(t *testing.T) {
-		user := IntermediateUser{
+	t.Run("If there is no email, and --email-domain and --skip-email flags are not provided, we should exit the program.", func(t *testing.T) {
+		user := &IntermediateUser{
 			Username: "test-username",
 			Email:    "",
 		}
 
-		user.Sanitise(log.New())
+		exitCode := -1
+		exitFunc = func(code int) {
+			exitCode = code
+		}
+		defer func() {
+			exitFunc = os.Exit
+		}()
 
-		assert.Equal(t, "test-username@example.com", user.Email)
+		user.Sanitise(log.New(), "", false)
+
+		require.Equal(t, 1, exitCode)
+	})
+
+	t.Run("If there is no email, and --email-domain flag is provided, use domain to create an email address.", func(t *testing.T) {
+		user := &IntermediateUser{
+			Username: "test-username",
+			Email:    "",
+		}
+
+		exitCode := -1
+		exitFunc = func(code int) {
+			exitCode = code
+		}
+		defer func() {
+			exitFunc = os.Exit
+		}()
+
+		logger := log.New()
+		logOutput := logger.Out
+		buf := &bytes.Buffer{}
+		log.SetOutput(buf)
+		defer func() {
+			log.SetOutput(logOutput)
+		}()
+
+		emailDomain := "testdomain.com"
+		skipEmail := false
+		user.Sanitise(logger, emailDomain, skipEmail)
+
+		expectedEmail := "test-username@testdomain.com"
+		require.Equal(t, expectedEmail, user.Email)
+		require.Equal(t, -1, exitCode)
+	})
+
+	t.Run("If there is no email, and --skip-email flag is provided, set email to blank.", func(t *testing.T) {
+		user := &IntermediateUser{
+			Username: "test-username",
+			Email:    "",
+		}
+
+		exitCode := -1
+		exitFunc = func(code int) {
+			exitCode = code
+		}
+		defer func() {
+			exitFunc = os.Exit
+		}()
+
+		user.Sanitise(log.New(), "", true)
+
+		require.Equal(t, "", user.Email)
+		require.Equal(t, -1, exitCode)
+	})
+
+	t.Run("If there is an email, program should continue with no error logged.", func(t *testing.T) {
+		user := &IntermediateUser{
+			Username: "test-username",
+			Email:    "test-email@otherdomain.com",
+		}
+
+		exitCode := -1
+		exitFunc = func(code int) {
+			exitCode = code
+		}
+		defer func() {
+			exitFunc = os.Exit
+		}()
+
+		user.Sanitise(log.New(), "", false)
+
+		expectedEmail := "test-email@otherdomain.com"
+		require.Equal(t, expectedEmail, user.Email)
+		require.Equal(t, -1, exitCode)
 	})
 }
 
@@ -490,7 +572,9 @@ func TestTransformUsers(t *testing.T) {
 		},
 	}
 
-	slackTransformer.TransformUsers(users)
+	emailDomain := ""
+	skipEmail := false
+	slackTransformer.TransformUsers(users, skipEmail, emailDomain)
 	require.Len(t, slackTransformer.Intermediate.UsersById, len(users))
 
 	for i, id := range []string{id1, id2, id3} {
@@ -562,7 +646,9 @@ func TestDeleteAt(t *testing.T) {
 
 	users := append(activeUsers, inactiveUsers...)
 
-	slackTransformer.TransformUsers(users)
+	emailDomain := ""
+	skipEmail := false
+	slackTransformer.TransformUsers(users, skipEmail, emailDomain)
 	require.Zero(t, slackTransformer.Intermediate.UsersById[activeUsers[0].Id].DeleteAt)
 	require.Zero(t, slackTransformer.Intermediate.UsersById[activeUsers[1].Id].DeleteAt)
 	require.NotZero(t, slackTransformer.Intermediate.UsersById[inactiveUsers[0].Id].DeleteAt)

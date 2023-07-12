@@ -41,6 +41,8 @@ func init() {
 	TransformSlackCmd.Flags().StringP("attachments-dir", "d", "data", "the path for the attachments directory")
 	TransformSlackCmd.Flags().BoolP("skip-convert-posts", "c", false, "Skips converting mentions and post markup. Only for testing purposes")
 	TransformSlackCmd.Flags().BoolP("skip-attachments", "a", false, "Skips copying the attachments from the import file")
+	TransformSlackCmd.Flags().Bool("skip-email", false, "Ignore empty email addresses from the import file. Note that this results in invalid data.")
+	TransformSlackCmd.Flags().String("email-domain", "", "If this flag is provided: When a user's email address is empty, the output's email address will be generated from their username and the provided domain.")
 	TransformSlackCmd.Flags().BoolP("allow-download", "l", false, "Allows downloading the attachments for the import file")
 	TransformSlackCmd.Flags().BoolP("discard-invalid-props", "p", false, "Skips converting posts with invalid props instead discarding the props themselves")
 	TransformSlackCmd.Flags().Bool("debug", true, "Whether to show debug logs or not")
@@ -61,6 +63,8 @@ func transformSlackCmdF(cmd *cobra.Command, args []string) error {
 	attachmentsDir, _ := cmd.Flags().GetString("attachments-dir")
 	skipConvertPosts, _ := cmd.Flags().GetBool("skip-convert-posts")
 	skipAttachments, _ := cmd.Flags().GetBool("skip-attachments")
+	skipEmail, _ := cmd.Flags().GetBool("skip-email")
+	emailDomain, _ := cmd.Flags().GetString("email-domain")
 	allowDownload, _ := cmd.Flags().GetBool("allow-download")
 	discardInvalidProps, _ := cmd.Flags().GetBool("discard-invalid-props")
 	debug, _ := cmd.Flags().GetBool("debug")
@@ -115,7 +119,7 @@ func transformSlackCmdF(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	err = slackTransformer.Transform(slackExport, attachmentsDir, skipAttachments, discardInvalidProps, allowDownload)
+	err = slackTransformer.Transform(slackExport, attachmentsDir, skipAttachments, discardInvalidProps, allowDownload, skipEmail, emailDomain)
 	if err != nil {
 		return err
 	}
