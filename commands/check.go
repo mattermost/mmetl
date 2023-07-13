@@ -25,7 +25,7 @@ var CheckSlackCmd = &cobra.Command{
 func init() {
 	CheckSlackCmd.Flags().StringP("file", "f", "", "the Slack export file to transform")
 	CheckSlackCmd.Flags().Bool("debug", true, "Whether to show debug logs or not")
-	CheckSlackCmd.Flags().Bool("skip-email", false, "Ignore empty email addresses from the import file. Note that this results in invalid data.")
+	CheckSlackCmd.Flags().Bool("skip-empty-emails", false, "Ignore empty email addresses from the import file. Note that this results in invalid data.")
 	CheckSlackCmd.Flags().String("default-email-domain", "", "If this flag is provided: When a user's email address is empty, the output's email address will be generated from their username and the provided domain.")
 
 	if err := CheckSlackCmd.MarkFlagRequired("file"); err != nil {
@@ -44,7 +44,7 @@ func init() {
 func checkSlackCmdF(cmd *cobra.Command, args []string) error {
 	inputFilePath, _ := cmd.Flags().GetString("file")
 	debug, _ := cmd.Flags().GetBool("debug")
-	skipEmptyEmails, _ := cmd.Flags().GetBool("skip-email")
+	skipEmptyEmails, _ := cmd.Flags().GetBool("skip-empty-emails")
 	defaultEmailDomain, _ := cmd.Flags().GetString("default-email-domain")
 
 	// input file
