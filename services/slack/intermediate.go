@@ -86,18 +86,18 @@ type IntermediateUser struct {
 	DeleteAt    int64    `json:"delete_at"`
 }
 
-func (u *IntermediateUser) Sanitise(logger log.FieldLogger, emailDomain string, skipEmail bool) {
+func (u *IntermediateUser) Sanitise(logger log.FieldLogger, defaultEmailDomain string, skipEmail bool) {
 	if u.Email == "" {
 		if skipEmail {
 			logger.Warnf("User %s does not have an email address in the Slack export. Using blank email address due to --skip-email flag.", u.Username)
 			return
 		}
 
-		if emailDomain != "" {
-			u.Email = u.Username + "@" + emailDomain
+		if defaultEmailDomain != "" {
+			u.Email = u.Username + "@" + defaultEmailDomain
 			logger.Warnf("User %s does not have an email address in the Slack export. Used %s as a placeholder. The user should update their email address once logged in to the system.", u.Username, u.Email)
 		} else {
-			logger.Errorf("User %s does not have an email address in the Slack export. Please provide an email domain through the --email-domain flag, to assign this user's email address. Alternatively, use the --skip-email flag to set the user's email to an empty string.", u.Username)
+			logger.Errorf("User %s does not have an email address in the Slack export. Please provide an email domain through the --default-email-domain flag, to assign this user's email address. Alternatively, use the --skip-email flag to set the user's email to an empty string.", u.Username)
 			exitFunc(1)
 		}
 	}
@@ -125,7 +125,7 @@ type Intermediate struct {
 	Posts           []*IntermediatePost          `json:"posts"`
 }
 
-func (t *Transformer) TransformUsers(users []SlackUser, skipEmail bool, emailDomain string) {
+func (t *Transformer) TransformUsers(users []SlackUser, skipEmail bool, defaultEmailDomain string) {
 	t.Logger.Info("Transforming users")
 
 	resultUsers := map[string]*IntermediateUser{}
@@ -150,7 +150,7 @@ func (t *Transformer) TransformUsers(users []SlackUser, skipEmail bool, emailDom
 			newUser.Id = user.Profile.BotID
 		}
 
-		newUser.Sanitise(t.Logger, emailDomain, skipEmail)
+		newUser.Sanitise(t.Logger, defaultEmailDomain, skipEmail)
 		resultUsers[newUser.Id] = newUser
 		t.Logger.Debugf("Slack user with email %s and password %s has been imported.", newUser.Email, newUser.Password)
 	}
@@ -668,8 +668,8 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 	return nil
 }
 
-func (t *Transformer) Transform(slackExport *SlackExport, attachmentsDir string, skipAttachments, discardInvalidProps, allowDownload, skipEmail bool, emailDomain string) error {
-	t.TransformUsers(slackExport.Users, skipEmail, emailDomain)
+func (t *Transformer) Transform(slackExport *SlackExport, attachmentsDir string, skipAttachments, discardInvalidProps, allowDownload, skipEmail bool, defaultEmailDomain string) error {
+	t.TransformUsers(slackExport.Users, skipEmail, defaultEmailDomain)
 
 	if err := t.TransformAllChannels(slackExport); err != nil {
 		return err
