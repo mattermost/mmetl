@@ -63,7 +63,7 @@ func transformSlackCmdF(cmd *cobra.Command, args []string) error {
 	attachmentsDir, _ := cmd.Flags().GetString("attachments-dir")
 	skipConvertPosts, _ := cmd.Flags().GetBool("skip-convert-posts")
 	skipAttachments, _ := cmd.Flags().GetBool("skip-attachments")
-	skipEmail, _ := cmd.Flags().GetBool("skip-email")
+	skipEmptyEmails, _ := cmd.Flags().GetBool("skip-email")
 	defaultEmailDomain, _ := cmd.Flags().GetString("default-email-domain")
 	allowDownload, _ := cmd.Flags().GetBool("allow-download")
 	discardInvalidProps, _ := cmd.Flags().GetBool("discard-invalid-props")
@@ -119,7 +119,7 @@ func transformSlackCmdF(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	err = slackTransformer.Transform(slackExport, attachmentsDir, skipAttachments, discardInvalidProps, allowDownload, skipEmail, defaultEmailDomain)
+	err = slackTransformer.Transform(slackExport, attachmentsDir, skipAttachments, discardInvalidProps, allowDownload, skipEmptyEmails, defaultEmailDomain)
 	if err != nil {
 		return err
 	}

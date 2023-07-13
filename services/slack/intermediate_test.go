@@ -441,7 +441,7 @@ func TestTransformChannelWithOneValidMember(t *testing.T) {
 }
 
 func TestIntermediateUserSanitise(t *testing.T) {
-	t.Run("If there is no email, and --default-email-domain and --skip-email flags are not provided, we should exit the program.", func(t *testing.T) {
+	t.Run("If there is no email, and --default-email-domain and --skip-empty-emails flags are not provided, we should exit the program.", func(t *testing.T) {
 		user := &IntermediateUser{
 			Username: "test-username",
 			Email:    "",
@@ -483,15 +483,15 @@ func TestIntermediateUserSanitise(t *testing.T) {
 		}()
 
 		defaultEmailDomain := "testdomain.com"
-		skipEmail := false
-		user.Sanitise(logger, defaultEmailDomain, skipEmail)
+		skipEmptyEmails := false
+		user.Sanitise(logger, defaultEmailDomain, skipEmptyEmails)
 
 		expectedEmail := "test-username@testdomain.com"
 		require.Equal(t, expectedEmail, user.Email)
 		require.Equal(t, -1, exitCode)
 	})
 
-	t.Run("If there is no email, and --skip-email flag is provided, set email to blank.", func(t *testing.T) {
+	t.Run("If there is no email, and --skip-empty-emails flag is provided, set email to blank.", func(t *testing.T) {
 		user := &IntermediateUser{
 			Username: "test-username",
 			Email:    "",
@@ -573,8 +573,8 @@ func TestTransformUsers(t *testing.T) {
 	}
 
 	defaultEmailDomain := ""
-	skipEmail := false
-	slackTransformer.TransformUsers(users, skipEmail, defaultEmailDomain)
+	skipEmptyEmails := false
+	slackTransformer.TransformUsers(users, skipEmptyEmails, defaultEmailDomain)
 	require.Len(t, slackTransformer.Intermediate.UsersById, len(users))
 
 	for i, id := range []string{id1, id2, id3} {
@@ -647,8 +647,8 @@ func TestDeleteAt(t *testing.T) {
 	users := append(activeUsers, inactiveUsers...)
 
 	defaultEmailDomain := ""
-	skipEmail := false
-	slackTransformer.TransformUsers(users, skipEmail, defaultEmailDomain)
+	skipEmptyEmails := false
+	slackTransformer.TransformUsers(users, skipEmptyEmails, defaultEmailDomain)
 	require.Zero(t, slackTransformer.Intermediate.UsersById[activeUsers[0].Id].DeleteAt)
 	require.Zero(t, slackTransformer.Intermediate.UsersById[activeUsers[1].Id].DeleteAt)
 	require.NotZero(t, slackTransformer.Intermediate.UsersById[inactiveUsers[0].Id].DeleteAt)
