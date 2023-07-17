@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 
 	"github.com/mattermost/mattermost-server/v6/model"
@@ -119,9 +120,8 @@ func SlackParseUsers(data io.Reader) ([]SlackUser, error) {
 
 	var users []SlackUser
 	err := decoder.Decode(&users)
-	// This actually returns errors that are ignored.
-	// In this case it is erroring because of a null that Slack
-	// introduced. So we just return the users here.
+
+	// This returns errors that are ignored, unless --strict-user-errors flag is provided.
 	return users, err
 }
 
@@ -131,6 +131,7 @@ func SlackParseChannels(data io.Reader, channelType model.ChannelType) ([]SlackC
 	var channels []SlackChannel
 	if err := decoder.Decode(&channels); err != nil {
 		log.Println("Slack Import: Error occurred when parsing some Slack channels. Import may work anyway.")
+		log.Println(err.Error())
 		return channels, err
 	}
 
@@ -147,6 +148,7 @@ func SlackParsePosts(data io.Reader) ([]SlackPost, error) {
 	var posts []SlackPost
 	if err := decoder.Decode(&posts); err != nil {
 		log.Println("Slack Import: Error occurred when parsing some Slack posts. Import may work anyway.")
+		log.Println(err.Error())
 		return posts, err
 	}
 	return posts, nil
@@ -267,7 +269,7 @@ func SlackConvertPostsMarkup(posts map[string][]SlackPost) map[string][]SlackPos
 	return posts
 }
 
-func (t *Transformer) ParseSlackExportFile(zipReader *zip.Reader, skipConvertPosts bool) (*SlackExport, error) {
+func (t *Transformer) ParseSlackExportFile(zipReader *zip.Reader, skipConvertPosts, strictUserErrors bool) (*SlackExport, error) {
 	slackExport := SlackExport{TeamName: t.TeamName}
 	slackExport.Posts = make(map[string][]SlackPost)
 	slackExport.Uploads = make(map[string]*zip.File)
@@ -291,7 +293,11 @@ func (t *Transformer) ParseSlackExportFile(zipReader *zip.Reader, skipConvertPos
 			slackExport.GroupChannels, _ = SlackParseChannels(reader, model.ChannelTypeGroup)
 			slackExport.Channels = append(slackExport.Channels, slackExport.GroupChannels...)
 		} else if file.Name == "users.json" {
-			slackExport.Users, _ = SlackParseUsers(reader)
+			users, userErr := SlackParseUsers(reader)
+			if userErr != nil && strictUserErrors {
+				return nil, errors.Wrap(userErr, "failed to parse users")
+			}
+			slackExport.Users = users
 		} else {
 			spl := strings.Split(file.Name, "/")
 			if len(spl) == 2 && strings.HasSuffix(spl[1], ".json") {
