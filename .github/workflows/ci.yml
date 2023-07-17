@@ -1,0 +1,78 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+    tags:
+      - "v*"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Setup Go
+        uses: actions/setup-go@v2
+        with:
+          go-version: 1.19
+
+      - name: Install golangci-lint
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin v1.48.0
+
+      - name: Verify and tidy go.mod
+        run: |
+          go mod download
+          go mod verify
+          go mod tidy
+
+      - name: Run golangci-lint
+        run: make check-style
+
+      - name: Check code style with gofmt
+        run: make gofmt
+
+      - name: Run tests
+        run: make test
+
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Setup Go
+        uses: actions/setup-go@v2
+        with:
+          go-version: 1.19
+
+      - name: Install golangci-lint
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin v1.48.0
+
+      - name: Verify Go modules
+        run: |
+          go mod download
+          go mod verify
+          go mod tidy
+
+      - name: Build and package
+        run: make package
+
+      - name: Save cache
+        uses: actions/cache@v2
+        with:
+          path: build
+          key: go-mod-v1-${{ hashFiles('**/go.sum') }}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v2
+        with:
+          name: build
+          path: build
