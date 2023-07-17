@@ -135,11 +135,19 @@ func (t *Transformer) TransformUsers(users []SlackUser, skipEmptyEmails bool, de
 			deleteAt = model.GetMillis()
 		}
 
+		firstName := ""
+		lastName := ""
+		if user.Profile.RealName != "" {
+			names := strings.Split(user.Profile.RealName, " ")
+			firstName = names[0]
+			lastName = strings.Join(names[1:], " ")
+		}
+
 		newUser := &IntermediateUser{
 			Id:        user.Id,
 			Username:  user.Username,
-			FirstName: user.Profile.FirstName,
-			LastName:  user.Profile.LastName,
+			FirstName: firstName,
+			LastName:  lastName,
 			Position:  user.Profile.Title,
 			Email:     user.Profile.Email,
 			Password:  model.NewId(),
