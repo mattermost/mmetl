@@ -3,11 +3,9 @@ package commands_test
 import (
 	"archive/zip"
 	"io"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 
-	// "strconv"
 	"testing"
 
 	"github.com/mattermost/mmetl/commands"
@@ -140,7 +138,7 @@ func TestYourCommandFunction(t *testing.T) {
 
 			require.NoError(t, err)
 
-			output, err := ioutil.ReadFile(outputFilePath)
+			output, err := os.ReadFile(outputFilePath)
 			require.NoError(t, err, "failed to read output file")
 
 			require.Equal(t, tc.expectedOutput, string(output))
@@ -149,11 +147,11 @@ func TestYourCommandFunction(t *testing.T) {
 }
 
 func createTestZipFile(inputFilePath, channelsData, usersData, postsData string) error {
-	tempDir, err := ioutil.TempDir("", "")
+	tempDir, err := os.MkdirTemp(os.TempDir(), "")
+	defer os.RemoveAll(tempDir)
 	if err != nil {
 		return err
 	}
-	defer os.RemoveAll(tempDir)
 
 	err = writeFile(filepath.Join(tempDir, "channels.json"), channelsData)
 	if err != nil {
