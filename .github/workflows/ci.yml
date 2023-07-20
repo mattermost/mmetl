@@ -65,12 +65,6 @@ jobs:
       - name: Build and package
         run: make package
 
-      - name: Save cache
-        uses: actions/cache@v2
-        with:
-          path: build
-          key: go-mod-v1-${{ hashFiles('**/go.sum') }}
-
       - name: Upload artifacts
         uses: actions/upload-artifact@v2
         with:
