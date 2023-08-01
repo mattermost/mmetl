@@ -105,6 +105,11 @@ func TestYourCommandFunction(t *testing.T) {
 			team := "myteam"
 			inputFilePath := "test_input.zip"
 			outputFilePath := "test_output.txt"
+			defer func() {
+				os.Remove(inputFilePath)
+				os.Remove(outputFilePath)
+				os.Remove("transform-slack.log")
+			}()
 
 			var err error
 			err = createTestZipFile(inputFilePath, tc.channelsData, tc.usersData, tc.postsData)
@@ -116,7 +121,6 @@ func TestYourCommandFunction(t *testing.T) {
 				"--team", team,
 				"--file", inputFilePath,
 				"--output", outputFilePath,
-				"--strict-user-errors",
 			}
 
 			c := commands.RootCmd

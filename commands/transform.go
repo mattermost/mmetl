@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"runtime"
+	"strconv"
 
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
@@ -43,10 +45,9 @@ func init() {
 	TransformSlackCmd.Flags().BoolP("skip-attachments", "a", false, "Skips copying the attachments from the import file")
 	TransformSlackCmd.Flags().Bool("skip-empty-emails", false, "Ignore empty email addresses from the import file. Note that this results in invalid data.")
 	TransformSlackCmd.Flags().String("default-email-domain", "", "If this flag is provided: When a user's email address is empty, the output's email address will be generated from their username and the provided domain.")
-	TransformSlackCmd.Flags().Bool("strict-user-errors", false, "Surface any user parsing errors, and exit the program.")
 	TransformSlackCmd.Flags().BoolP("allow-download", "l", false, "Allows downloading the attachments for the import file")
 	TransformSlackCmd.Flags().BoolP("discard-invalid-props", "p", false, "Skips converting posts with invalid props instead discarding the props themselves")
-	TransformSlackCmd.Flags().Bool("debug", true, "Whether to show debug logs or not")
+	TransformSlackCmd.Flags().Bool("debug", false, "Whether to show debug logs or not")
 
 	TransformCmd.AddCommand(
 		TransformSlackCmd,
@@ -66,7 +67,6 @@ func transformSlackCmdF(cmd *cobra.Command, args []string) error {
 	skipAttachments, _ := cmd.Flags().GetBool("skip-attachments")
 	skipEmptyEmails, _ := cmd.Flags().GetBool("skip-empty-emails")
 	defaultEmailDomain, _ := cmd.Flags().GetString("default-email-domain")
-	strictUserErrors, _ := cmd.Flags().GetBool("strict-user-errors")
 	allowDownload, _ := cmd.Flags().GetBool("allow-download")
 	discardInvalidProps, _ := cmd.Flags().GetBool("discard-invalid-props")
 	debug, _ := cmd.Flags().GetBool("debug")
@@ -111,12 +111,22 @@ func transformSlackCmdF(cmd *cobra.Command, args []string) error {
 	}
 
 	logger := log.New()
+	logFile, err := os.OpenFile("transform-slack.log", os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0666)
+	if err != nil {
+		return err
+	}
+	defer logFile.Close()
+	logger.SetOutput(logFile)
+	logger.SetFormatter(customLogFormatter)
+	logger.SetReportCaller(true)
+
 	if debug {
 		logger.Level = log.DebugLevel
+		logger.Info("Debug mode enabled")
 	}
 	slackTransformer := slack.NewTransformer(team, logger)
 
-	slackExport, err := slackTransformer.ParseSlackExportFile(zipReader, skipConvertPosts, strictUserErrors)
+	slackExport, err := slackTransformer.ParseSlackExportFile(zipReader, skipConvertPosts)
 	if err != nil {
 		return err
 	}
@@ -133,4 +143,11 @@ func transformSlackCmdF(cmd *cobra.Command, args []string) error {
 	slackTransformer.Logger.Info("Transformation succeeded!")
 
 	return nil
+}
+
+var customLogFormatter = &log.JSONFormatter{
+	CallerPrettyfier: func(frame *runtime.Frame) (function string, file string) {
+		fileName := path.Base(frame.File) + ":" + strconv.Itoa(frame.Line)
+		return "", fileName
+	},
 }

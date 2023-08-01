@@ -27,7 +27,6 @@ func init() {
 	CheckSlackCmd.Flags().Bool("debug", true, "Whether to show debug logs or not")
 	CheckSlackCmd.Flags().Bool("skip-empty-emails", false, "Ignore empty email addresses from the import file. Note that this results in invalid data.")
 	CheckSlackCmd.Flags().String("default-email-domain", "", "If this flag is provided: When a user's email address is empty, the output's email address will be generated from their username and the provided domain.")
-	CheckSlackCmd.Flags().Bool("strict-user-errors", false, "Surface any user parsing errors, and exit the program.")
 
 	if err := CheckSlackCmd.MarkFlagRequired("file"); err != nil {
 		panic(err)
@@ -47,7 +46,6 @@ func checkSlackCmdF(cmd *cobra.Command, args []string) error {
 	debug, _ := cmd.Flags().GetBool("debug")
 	skipEmptyEmails, _ := cmd.Flags().GetBool("skip-empty-emails")
 	defaultEmailDomain, _ := cmd.Flags().GetString("default-email-domain")
-	strictUserErrors, _ := cmd.Flags().GetBool("strict-user-errors")
 
 	// input file
 	fileReader, err := os.Open(inputFilePath)
@@ -67,8 +65,18 @@ func checkSlackCmdF(cmd *cobra.Command, args []string) error {
 	}
 
 	logger := log.New()
+	logFile, err := os.OpenFile("check-slack.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+	if err != nil {
+		return err
+	}
+	defer logFile.Close()
+	logger.SetOutput(logFile)
+	logger.SetFormatter(customLogFormatter)
+	logger.SetReportCaller(true)
+
 	if debug {
 		logger.Level = log.DebugLevel
+		logger.Info("Debug mode enabled")
 	}
 	slackTransformer := slack.NewTransformer("test", logger)
 
@@ -77,7 +85,7 @@ func checkSlackCmdF(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	slackExport, err := slackTransformer.ParseSlackExportFile(zipReader, true, strictUserErrors)
+	slackExport, err := slackTransformer.ParseSlackExportFile(zipReader, true)
 	if err != nil {
 		return err
 	}
