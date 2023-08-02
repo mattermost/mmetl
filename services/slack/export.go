@@ -7,7 +7,6 @@ import (
 	"math"
 	"os"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -281,18 +280,8 @@ func (t *Transformer) ExportDirectChannels(channels []*IntermediateChannel, writ
 }
 
 func (t *Transformer) ExportUsers(writer io.Writer) error {
-	users := t.Intermediate.UsersById
-	userIds := make([]string, len(users))
-	i := 0
-	for k := range users {
-		userIds[i] = k
-		i++
-	}
-
-	sort.Strings(userIds)
-
-	for _, userId := range userIds {
-		line := GetImportLineFromUser(users[userId], t.TeamName)
+	for _, user := range t.Intermediate.UsersById {
+		line := GetImportLineFromUser(user, t.TeamName)
 		if err := ExportWriteLine(writer, line); err != nil {
 			return err
 		}
