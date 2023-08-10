@@ -132,7 +132,7 @@ type Intermediate struct {
 func (t *Transformer) TransformUsers(users []SlackUser, skipEmptyEmails bool, defaultEmailDomain string) {
 	t.Logger.Info("Transforming users")
 
-	t.Logger.Debugf("TransformUsers: Input user structs: %+v", users)
+	t.Logger.Debugf("TransformUsers: Input SlackUser structs: %+v", users)
 
 	resultUsers := map[string]*IntermediateUser{}
 	for _, user := range users {
@@ -149,8 +149,8 @@ func (t *Transformer) TransformUsers(users []SlackUser, skipEmptyEmails bool, de
 			lastName = strings.Join(names[1:], " ")
 		}
 
-		t.Logger.Debugf("TransformUsers: User struct: %+v", user)
-		t.Logger.Debugf("TransformUsers: User.Profile struct: %+v", user.Profile)
+		t.Logger.Debugf("TransformUsers: SlackUser struct: %+v", user)
+		t.Logger.Debugf("TransformUsers: SlackUser.Profile struct: %+v", user.Profile)
 
 		newUser := &IntermediateUser{
 			Id:        user.Id,
@@ -163,7 +163,7 @@ func (t *Transformer) TransformUsers(users []SlackUser, skipEmptyEmails bool, de
 			DeleteAt:  deleteAt,
 		}
 
-		t.Logger.Debugf("TransformUsers: newUser struct: %+v", newUser)
+		t.Logger.Debugf("TransformUsers: newUser IntermediateUser struct: %+v", newUser)
 
 		if user.IsBot {
 			newUser.Id = user.Profile.BotID

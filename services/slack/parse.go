@@ -130,10 +130,12 @@ func (t *Transformer) SlackParseUsers(data io.Reader) ([]SlackUser, error) {
 		return users, err
 	}
 
-	t.Logger.Debugf("SlackParseUsers: Parsed users struct data: %+v", users)
+	usersAsMaps := []map[string]interface{}{}
+	_ = json.Unmarshal(b, &usersAsMaps)
 
-	for _, u := range users {
+	for i, u := range users {
 		t.Logger.Debugf("SlackParseUsers: Parsed user struct data %+v", u)
+		t.Logger.Debugf("SlackParseUsers: Parsed user data as map %+v", usersAsMaps[i])
 	}
 
 	b, err = json.Marshal(users)
