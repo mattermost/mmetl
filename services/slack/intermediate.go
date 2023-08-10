@@ -97,7 +97,9 @@ func (u *IntermediateUser) Sanitise(logger log.FieldLogger, defaultEmailDomain s
 			u.Email = u.Username + "@" + defaultEmailDomain
 			logger.Warnf("User %s does not have an email address in the Slack export. Used %s as a placeholder. The user should update their email address once logged in to the system.", u.Username, u.Email)
 		} else {
-			logger.Errorf("User %s does not have an email address in the Slack export. Please provide an email domain through the --default-email-domain flag, to assign this user's email address. Alternatively, use the --skip-empty-emails flag to set the user's email to an empty string.", u.Username)
+			msg := fmt.Sprintf("User %s does not have an email address in the Slack export. Please provide an email domain through the --default-email-domain flag, to assign this user's email address. Alternatively, use the --skip-empty-emails flag to set the user's email to an empty string.", u.Username)
+			logger.Error(msg)
+			fmt.Println(msg)
 			exitFunc(1)
 		}
 	}
@@ -135,11 +137,19 @@ func (t *Transformer) TransformUsers(users []SlackUser, skipEmptyEmails bool, de
 			deleteAt = model.GetMillis()
 		}
 
+		firstName := ""
+		lastName := ""
+		if user.Profile.RealName != "" {
+			names := strings.Split(user.Profile.RealName, " ")
+			firstName = names[0]
+			lastName = strings.Join(names[1:], " ")
+		}
+
 		newUser := &IntermediateUser{
 			Id:        user.Id,
 			Username:  user.Username,
-			FirstName: user.Profile.FirstName,
-			LastName:  user.Profile.LastName,
+			FirstName: firstName,
+			LastName:  lastName,
 			Position:  user.Profile.Title,
 			Email:     user.Profile.Email,
 			Password:  model.NewId(),

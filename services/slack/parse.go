@@ -8,8 +8,6 @@ import (
 	"strings"
 	"time"
 
-	log "github.com/sirupsen/logrus"
-
 	"github.com/mattermost/mattermost-server/v6/model"
 )
 
@@ -28,11 +26,10 @@ type SlackChannelSub struct {
 }
 
 type SlackProfile struct {
-	BotID     string `json:"bot_id"`
-	FirstName string `json:"first_name"`
-	LastName  string `json:"last_name"`
-	Email     string `json:"email"`
-	Title     string `json:"title"`
+	BotID    string `json:"bot_id"`
+	RealName string `json:"real_name"`
+	Email    string `json:"email"`
+	Title    string `json:"title"`
 }
 
 type SlackUser struct {
@@ -115,23 +112,26 @@ type SlackExport struct {
 	Uploads         map[string]*zip.File
 }
 
-func SlackParseUsers(data io.Reader) ([]SlackUser, error) {
+func (t *Transformer) SlackParseUsers(data io.Reader) ([]SlackUser, error) {
 	decoder := json.NewDecoder(data)
 
 	var users []SlackUser
-	err := decoder.Decode(&users)
-	// This actually returns errors that are ignored.
-	// In this case it is erroring because of a null that Slack
-	// introduced. So we just return the users here.
-	return users, err
+	if err := decoder.Decode(&users); err != nil {
+		t.Logger.Warnf("Slack Import: Error occurred when parsing some Slack users. Import may work anyway. err=%v", err)
+
+		// This returns errors that are ignored
+		return users, err
+	}
+
+	return users, nil
 }
 
-func SlackParseChannels(data io.Reader, channelType model.ChannelType) ([]SlackChannel, error) {
+func (t *Transformer) SlackParseChannels(data io.Reader, channelType model.ChannelType) ([]SlackChannel, error) {
 	decoder := json.NewDecoder(data)
 
 	var channels []SlackChannel
 	if err := decoder.Decode(&channels); err != nil {
-		log.Println("Slack Import: Error occurred when parsing some Slack channels. Import may work anyway.")
+		t.Logger.Warnf("Slack Import: Error occurred when parsing some Slack channels. Import may work anyway. err=%v", err)
 		return channels, err
 	}
 
@@ -142,23 +142,23 @@ func SlackParseChannels(data io.Reader, channelType model.ChannelType) ([]SlackC
 	return channels, nil
 }
 
-func SlackParsePosts(data io.Reader) ([]SlackPost, error) {
+func (t *Transformer) SlackParsePosts(data io.Reader) ([]SlackPost, error) {
 	decoder := json.NewDecoder(data)
 
 	var posts []SlackPost
 	if err := decoder.Decode(&posts); err != nil {
-		log.Println("Slack Import: Error occurred when parsing some Slack posts. Import may work anyway.")
+		t.Logger.Warnf("Slack Import: Error occurred when parsing some Slack posts. Import may work anyway. err=%v", err)
 		return posts, err
 	}
 	return posts, nil
 }
 
-func SlackConvertUserMentions(users []SlackUser, posts map[string][]SlackPost) map[string][]SlackPost {
+func (t *Transformer) SlackConvertUserMentions(users []SlackUser, posts map[string][]SlackPost) map[string][]SlackPost {
 	var regexes = make(map[string]*regexp.Regexp, len(users))
 	for _, user := range users {
 		r, err := regexp.Compile("<@" + user.Id + `(\|` + user.Username + ")?>")
 		if err != nil {
-			log.Println("Slack Import: Unable to compile the @mention, matching regular expression for the Slack user. user_name=" + user.Username + " user_id" + user.Id)
+			t.Logger.Infof("Slack Import: Unable to compile the @mention, matching regular expression for the Slack user. username=%s user_id=%s", user.Username, user.Id)
 			continue
 		}
 		regexes["@"+user.Username] = r
@@ -181,12 +181,12 @@ func SlackConvertUserMentions(users []SlackUser, posts map[string][]SlackPost) m
 	return posts
 }
 
-func SlackConvertChannelMentions(channels []SlackChannel, posts map[string][]SlackPost) map[string][]SlackPost {
+func (t *Transformer) SlackConvertChannelMentions(channels []SlackChannel, posts map[string][]SlackPost) map[string][]SlackPost {
 	var regexes = make(map[string]*regexp.Regexp, len(channels))
 	for _, channel := range channels {
 		r, err := regexp.Compile("<#" + channel.Id + `(\|` + channel.Name + ")?>")
 		if err != nil {
-			log.Println("Slack Import: Unable to compile the !channel, matching regular expression for the Slack channel. channel_id=" + channel.Id + " channel_name" + channel.Name)
+			t.Logger.Infof("Slack Import: Unable to compile the !channel, matching regular expression for the Slack channel. channel_id=%s channel_name=%s", channel.Id, channel.Name)
 			continue
 		}
 		regexes["~"+channel.Name] = r
@@ -204,7 +204,7 @@ func SlackConvertChannelMentions(channels []SlackChannel, posts map[string][]Sla
 	return posts
 }
 
-func SlackConvertPostsMarkup(posts map[string][]SlackPost) map[string][]SlackPost {
+func (t *Transformer) SlackConvertPostsMarkup(posts map[string][]SlackPost) map[string][]SlackPost {
 	regexReplaceAllString := []struct {
 		regex *regexp.Regexp
 		rpl   string
@@ -272,31 +272,36 @@ func (t *Transformer) ParseSlackExportFile(zipReader *zip.Reader, skipConvertPos
 	slackExport := SlackExport{TeamName: t.TeamName}
 	slackExport.Posts = make(map[string][]SlackPost)
 	slackExport.Uploads = make(map[string]*zip.File)
+	numFiles := len(zipReader.File)
 
-	for _, file := range zipReader.File {
+	for i, file := range zipReader.File {
+		t.Logger.Infof("Processing file %d of %d: %s", i+1, numFiles, file.Name)
+
 		reader, err := file.Open()
 		if err != nil {
 			return nil, err
 		}
+		defer reader.Close()
 
 		if file.Name == "channels.json" {
-			slackExport.PublicChannels, _ = SlackParseChannels(reader, model.ChannelTypeOpen)
+			slackExport.PublicChannels, _ = t.SlackParseChannels(reader, model.ChannelTypeOpen)
 			slackExport.Channels = append(slackExport.Channels, slackExport.PublicChannels...)
 		} else if file.Name == "dms.json" {
-			slackExport.DirectChannels, _ = SlackParseChannels(reader, model.ChannelTypeDirect)
+			slackExport.DirectChannels, _ = t.SlackParseChannels(reader, model.ChannelTypeDirect)
 			slackExport.Channels = append(slackExport.Channels, slackExport.DirectChannels...)
 		} else if file.Name == "groups.json" {
-			slackExport.PrivateChannels, _ = SlackParseChannels(reader, model.ChannelTypePrivate)
+			slackExport.PrivateChannels, _ = t.SlackParseChannels(reader, model.ChannelTypePrivate)
 			slackExport.Channels = append(slackExport.Channels, slackExport.PrivateChannels...)
 		} else if file.Name == "mpims.json" {
-			slackExport.GroupChannels, _ = SlackParseChannels(reader, model.ChannelTypeGroup)
+			slackExport.GroupChannels, _ = t.SlackParseChannels(reader, model.ChannelTypeGroup)
 			slackExport.Channels = append(slackExport.Channels, slackExport.GroupChannels...)
 		} else if file.Name == "users.json" {
-			slackExport.Users, _ = SlackParseUsers(reader)
+			users, _ := t.SlackParseUsers(reader)
+			slackExport.Users = users
 		} else {
 			spl := strings.Split(file.Name, "/")
 			if len(spl) == 2 && strings.HasSuffix(spl[1], ".json") {
-				newposts, _ := SlackParsePosts(reader)
+				newposts, _ := t.SlackParsePosts(reader)
 				channel := spl[0]
 				if _, ok := slackExport.Posts[channel]; !ok {
 					slackExport.Posts[channel] = newposts
@@ -312,9 +317,9 @@ func (t *Transformer) ParseSlackExportFile(zipReader *zip.Reader, skipConvertPos
 	if !skipConvertPosts {
 		t.Logger.Info("Converting post mentions and markup")
 		start := time.Now()
-		slackExport.Posts = SlackConvertUserMentions(slackExport.Users, slackExport.Posts)
-		slackExport.Posts = SlackConvertChannelMentions(slackExport.Channels, slackExport.Posts)
-		slackExport.Posts = SlackConvertPostsMarkup(slackExport.Posts)
+		slackExport.Posts = t.SlackConvertUserMentions(slackExport.Users, slackExport.Posts)
+		slackExport.Posts = t.SlackConvertChannelMentions(slackExport.Channels, slackExport.Posts)
+		slackExport.Posts = t.SlackConvertPostsMarkup(slackExport.Posts)
 		elapsed := time.Since(start)
 		t.Logger.Debug("Converting mentions finished (%s)", elapsed)
 	}

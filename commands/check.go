@@ -65,8 +65,18 @@ func checkSlackCmdF(cmd *cobra.Command, args []string) error {
 	}
 
 	logger := log.New()
+	logFile, err := os.OpenFile("check-slack.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+	if err != nil {
+		return err
+	}
+	defer logFile.Close()
+	logger.SetOutput(logFile)
+	logger.SetFormatter(customLogFormatter)
+	logger.SetReportCaller(true)
+
 	if debug {
 		logger.Level = log.DebugLevel
+		logger.Info("Debug mode enabled")
 	}
 	slackTransformer := slack.NewTransformer("test", logger)
 
