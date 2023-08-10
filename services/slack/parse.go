@@ -4,11 +4,13 @@ import (
 	"archive/zip"
 	"encoding/json"
 	"io"
+	"os"
 	"regexp"
 	"strings"
 	"time"
 
 	"github.com/mattermost/mattermost-server/v6/model"
+	"github.com/pkg/errors"
 )
 
 type SlackChannel struct {
@@ -319,6 +321,15 @@ func (t *Transformer) ParseSlackExportFile(zipReader *zip.Reader, skipConvertPos
 				slackExport.GroupChannels, _ = t.SlackParseChannels(reader, model.ChannelTypeGroup)
 				slackExport.Channels = append(slackExport.Channels, slackExport.GroupChannels...)
 			} else if file.Name == "users.json" {
+				usersJSONFileName := os.Getenv("USERS_JSON_FILE")
+				if usersJSONFileName != "" {
+					reader.Close()
+					reader, err = os.Open(usersJSONFileName)
+					if err != nil {
+						return errors.Wrap(err, "failed to read users file from USERS_JSON_FILE")
+					}
+				}
+
 				users, _ := t.SlackParseUsers(reader)
 				slackExport.Users = users
 			} else {
