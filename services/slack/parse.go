@@ -4,7 +4,6 @@ import (
 	"archive/zip"
 	"encoding/json"
 	"io"
-	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -133,13 +132,8 @@ func (t *Transformer) SlackParseUsers(data io.Reader) ([]SlackUser, error) {
 
 	t.Logger.Debugf("SlackParseUsers: Parsed users struct data: %+v", users)
 
-	testUser := os.Getenv("DEBUG_TEST_USER")
-	if testUser != "" {
-		for _, u := range users {
-			if u.Username == testUser {
-				t.Logger.Debugf("SlackParseUsers: Test user %+v", u)
-			}
-		}
+	for _, u := range users {
+		t.Logger.Debugf("SlackParseUsers: Parsed user struct data %+v", u)
 	}
 
 	b, err = json.Marshal(users)
