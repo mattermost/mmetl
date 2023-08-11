@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"errors"
 	"os"
 
 	"github.com/mattermost/mattermost-server/v6/model"
@@ -68,8 +69,15 @@ func syncImportUsersCmdF(cmd *cobra.Command, args []string) error {
 	var client *model.Client4
 	if localMode {
 		client = model.NewAPIv4SocketClient("/var/tmp/mattermost_local.socket")
-		// } else {
-		// 	// TODO: handle site url client
+	} else {
+		siteURL := os.Getenv("MM_SITE_URL")
+		adminToken := os.Getenv("MM_ADMIN_TOKEN")
+		if siteURL == "" || adminToken == "" {
+			return errors.New("Please use the --local flag, or provide the Mattermost site URL and admin token via environment variables MM_SITE_URL and MM_ADMIN_TOKEN")
+		}
+
+		client = model.NewAPIv4Client(siteURL)
+		client.SetToken(adminToken)
 	}
 
 	flags := data_integrity.SyncImportUsersFlags{
