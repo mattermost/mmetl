@@ -19,7 +19,9 @@ var SyncImportUsersCmd = &cobra.Command{
 func init() {
 	SyncImportUsersCmd.Flags().StringP("file", "f", "", "the mmetl file to check")
 	SyncImportUsersCmd.Flags().StringP("output", "o", "", "the output file name")
-	SyncImportUsersCmd.Flags().Bool("debug", true, "Whether to show debug logs or not")
+	SyncImportUsersCmd.Flags().Bool("update-users", false, "Whether to update user records in the import file")
+
+	SyncImportUsersCmd.Flags().Bool("debug", false, "Whether to show debug logs or not")
 	SyncImportUsersCmd.Flags().Bool("local", false, "Whether to use local mode to check for existing users")
 
 	if err := SyncImportUsersCmd.MarkFlagRequired("file"); err != nil {
@@ -38,6 +40,7 @@ func init() {
 func syncImportUsersCmdF(cmd *cobra.Command, args []string) error {
 	importFilePath, _ := cmd.Flags().GetString("file")
 	outputFilePath, _ := cmd.Flags().GetString("output")
+	updateUsers, _ := cmd.Flags().GetBool("update-users")
 	debug, _ := cmd.Flags().GetBool("debug")
 	localMode, _ := cmd.Flags().GetBool("local")
 
@@ -48,7 +51,7 @@ func syncImportUsersCmdF(cmd *cobra.Command, args []string) error {
 	defer fileReader.Close()
 
 	logger := log.New()
-	logFile, err := os.OpenFile("sync-import-users.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+	logFile, err := os.OpenFile("sync-import-users.log", os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0666)
 	if err != nil {
 		return err
 	}
@@ -70,9 +73,8 @@ func syncImportUsersCmdF(cmd *cobra.Command, args []string) error {
 	}
 
 	flags := data_integrity.SyncImportUsersFlags{
-		UpdateUsernames: false,
-		UpdateEmails:    false,
-		OutputFile:      outputFilePath,
+		UpdateUsers: updateUsers,
+		OutputFile:  outputFilePath,
 	}
 
 	err = data_integrity.SyncImportUsers(fileReader, flags, client, logger)
