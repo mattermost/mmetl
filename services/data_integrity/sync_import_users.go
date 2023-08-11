@@ -44,6 +44,7 @@ func SyncImportUsers(reader io.Reader, flags SyncImportUsersFlags, client *model
 	}
 
 	foundUser := false
+	usersChanged := []string{}
 
 	logger.Info("Starting sync process")
 	for scanner.Scan() {
@@ -74,10 +75,14 @@ func SyncImportUsers(reader io.Reader, flags SyncImportUsersFlags, client *model
 		user := lineData.User
 		logger.Debugf("Processing user %s", *user.Username)
 
-		err = mergeImportFileUser(user, flags, client, logger)
+		recordChanged, err := mergeImportFileUser(user, flags, client, logger)
 		if err != nil {
 			logger.Errorf("Error checking user %s, keeping import record as-is. %v", *user.Username, err)
 			continue
+		}
+
+		if recordChanged {
+			usersChanged = append(usersChanged, *user.Username)
 		}
 
 		userOut, err := json.Marshal(user)
@@ -98,12 +103,17 @@ func SyncImportUsers(reader io.Reader, flags SyncImportUsersFlags, client *model
 		logger.Info("Exited after reading users from import file, due to not providing --update-users flag")
 	}
 
+	logger.Infof("Number of users with changes: %d", len(usersChanged))
+	if len(usersChanged) > 0 {
+		logger.Infof("Users changed: %s", strings.Join(usersChanged, ", "))
+	}
+
 	logger.Info("Finished sync process")
 
 	return nil
 }
 
-func mergeImportFileUser(user *imports.UserImportData, flags SyncImportUsersFlags, client *model.Client4, logger *logrus.Logger) error {
+func mergeImportFileUser(user *imports.UserImportData, flags SyncImportUsersFlags, client *model.Client4, logger *logrus.Logger) (bool, error) {
 	usernameExists := false
 	emailExists := false
 
@@ -113,7 +123,7 @@ func mergeImportFileUser(user *imports.UserImportData, flags SyncImportUsersFlag
 	existingUserByUsername, resp, err := client.GetUserByUsername(usernameFromImport, "")
 	if err != nil {
 		if resp.StatusCode != 404 {
-			return err
+			return false, err
 		}
 
 		logger.Debugf("Username %s does not exist in database", usernameFromImport)
@@ -125,7 +135,7 @@ func mergeImportFileUser(user *imports.UserImportData, flags SyncImportUsersFlag
 	existingUserByEmail, resp, err := client.GetUserByEmail(emailFromImport, "")
 	if err != nil {
 		if resp.StatusCode != 404 {
-			return err
+			return false, err
 		}
 
 		logger.Debugf("Email %s does not exist in database", emailFromImport)
@@ -144,9 +154,10 @@ func mergeImportFileUser(user *imports.UserImportData, flags SyncImportUsersFlag
 
 	recordChanged := false
 	if usernameExists && existingUserByUsername.Email != emailFromImport {
+		recordChanged = true
+		user.Email = &existingUserByUsername.Email
 		if flags.UpdateUsers {
 			logger.Infof("Updating email for user %s from %s to %s", usernameFromImport, emailFromImport, existingUserByUsername.Email)
-			user.Email = &existingUserByUsername.Email
 			recordChanged = true
 		} else {
 			logger.Infof("Use the `--update-users` flag to update the import file's user record for user %s", usernameFromImport)
@@ -154,10 +165,10 @@ func mergeImportFileUser(user *imports.UserImportData, flags SyncImportUsersFlag
 	}
 
 	if emailExists && existingUserByEmail.Username != usernameFromImport {
+		recordChanged = true
+		user.Username = &existingUserByEmail.Username
 		if flags.UpdateUsers {
 			logger.Infof("Updating username for user %s from %s to %s", emailFromImport, usernameFromImport, existingUserByEmail.Username)
-			user.Username = &existingUserByEmail.Username
-			recordChanged = true
 		} else {
 			logger.Infof("Use the `--update-users` flag to update the import file's user record for user %s", usernameFromImport)
 		}
@@ -167,6 +178,6 @@ func mergeImportFileUser(user *imports.UserImportData, flags SyncImportUsersFlag
 		logger.Debugf("Record not changed for user %s", usernameFromImport)
 	}
 
-	return nil
+	return recordChanged, nil
 
 }

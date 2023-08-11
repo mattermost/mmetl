@@ -20,7 +20,7 @@ var SyncImportUsersCmd = &cobra.Command{
 func init() {
 	SyncImportUsersCmd.Flags().StringP("file", "f", "", "the mmetl file to check")
 	SyncImportUsersCmd.Flags().StringP("output", "o", "", "the output file name")
-	SyncImportUsersCmd.Flags().Bool("update-users", false, "Whether to update user records in the import file")
+	SyncImportUsersCmd.Flags().Bool("update-users", false, "Whether to update user records in the import file. When this flag is not provided, the tool runs a dry run to note which users would be updated.")
 
 	SyncImportUsersCmd.Flags().Bool("debug", false, "Whether to show debug logs or not")
 	SyncImportUsersCmd.Flags().Bool("local", false, "Whether to use local mode to check for existing users")
