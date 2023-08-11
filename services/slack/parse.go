@@ -4,11 +4,13 @@ import (
 	"archive/zip"
 	"encoding/json"
 	"io"
+	"os"
 	"regexp"
 	"strings"
 	"time"
 
 	"github.com/mattermost/mattermost-server/v6/model"
+	"github.com/pkg/errors"
 )
 
 type SlackChannel struct {
@@ -113,15 +115,37 @@ type SlackExport struct {
 }
 
 func (t *Transformer) SlackParseUsers(data io.Reader) ([]SlackUser, error) {
-	decoder := json.NewDecoder(data)
-
 	var users []SlackUser
-	if err := decoder.Decode(&users); err != nil {
+
+	b, err := io.ReadAll(data)
+	if err != nil {
+		return users, err
+	}
+
+	t.Logger.Debugf("SlackParseUsers: Raw json input data: %s", string(b))
+
+	err = json.Unmarshal(b, &users)
+	if err != nil {
 		t.Logger.Warnf("Slack Import: Error occurred when parsing some Slack users. Import may work anyway. err=%v", err)
 
 		// This returns errors that are ignored
 		return users, err
 	}
+
+	usersAsMaps := []map[string]interface{}{}
+	_ = json.Unmarshal(b, &usersAsMaps)
+
+	for i, u := range users {
+		t.Logger.Debugf("SlackParseUsers: Parsed user struct data %+v", u)
+		t.Logger.Debugf("SlackParseUsers: Parsed user data as map %+v", usersAsMaps[i])
+	}
+
+	b, err = json.Marshal(users)
+	if err != nil {
+		return users, err
+	}
+
+	t.Logger.Debugf("SlackParseUsers: Marshalled users struct data: %s", string(b))
 
 	return users, nil
 }
@@ -275,42 +299,59 @@ func (t *Transformer) ParseSlackExportFile(zipReader *zip.Reader, skipConvertPos
 	numFiles := len(zipReader.File)
 
 	for i, file := range zipReader.File {
-		t.Logger.Infof("Processing file %d of %d: %s", i+1, numFiles, file.Name)
+		err := func(i int, file *zip.File) error {
+			t.Logger.Infof("Processing file %d of %d: %s", i+1, numFiles, file.Name)
 
-		reader, err := file.Open()
+			reader, err := file.Open()
+			if err != nil {
+				return err
+			}
+			defer reader.Close()
+
+			if file.Name == "channels.json" {
+				slackExport.PublicChannels, _ = t.SlackParseChannels(reader, model.ChannelTypeOpen)
+				slackExport.Channels = append(slackExport.Channels, slackExport.PublicChannels...)
+			} else if file.Name == "dms.json" {
+				slackExport.DirectChannels, _ = t.SlackParseChannels(reader, model.ChannelTypeDirect)
+				slackExport.Channels = append(slackExport.Channels, slackExport.DirectChannels...)
+			} else if file.Name == "groups.json" {
+				slackExport.PrivateChannels, _ = t.SlackParseChannels(reader, model.ChannelTypePrivate)
+				slackExport.Channels = append(slackExport.Channels, slackExport.PrivateChannels...)
+			} else if file.Name == "mpims.json" {
+				slackExport.GroupChannels, _ = t.SlackParseChannels(reader, model.ChannelTypeGroup)
+				slackExport.Channels = append(slackExport.Channels, slackExport.GroupChannels...)
+			} else if file.Name == "users.json" {
+				usersJSONFileName := os.Getenv("USERS_JSON_FILE")
+				if usersJSONFileName != "" {
+					reader.Close()
+					reader, err = os.Open(usersJSONFileName)
+					if err != nil {
+						return errors.Wrap(err, "failed to read users file from USERS_JSON_FILE")
+					}
+				}
+
+				users, _ := t.SlackParseUsers(reader)
+				slackExport.Users = users
+			} else {
+				spl := strings.Split(file.Name, "/")
+				if len(spl) == 2 && strings.HasSuffix(spl[1], ".json") {
+					newposts, _ := t.SlackParsePosts(reader)
+					channel := spl[0]
+					if _, ok := slackExport.Posts[channel]; !ok {
+						slackExport.Posts[channel] = newposts
+					} else {
+						slackExport.Posts[channel] = append(slackExport.Posts[channel], newposts...)
+					}
+				} else if len(spl) == 3 && spl[0] == "__uploads" {
+					slackExport.Uploads[spl[1]] = file
+				}
+			}
+
+			return nil
+		}(i, file)
+
 		if err != nil {
 			return nil, err
-		}
-		defer reader.Close()
-
-		if file.Name == "channels.json" {
-			slackExport.PublicChannels, _ = t.SlackParseChannels(reader, model.ChannelTypeOpen)
-			slackExport.Channels = append(slackExport.Channels, slackExport.PublicChannels...)
-		} else if file.Name == "dms.json" {
-			slackExport.DirectChannels, _ = t.SlackParseChannels(reader, model.ChannelTypeDirect)
-			slackExport.Channels = append(slackExport.Channels, slackExport.DirectChannels...)
-		} else if file.Name == "groups.json" {
-			slackExport.PrivateChannels, _ = t.SlackParseChannels(reader, model.ChannelTypePrivate)
-			slackExport.Channels = append(slackExport.Channels, slackExport.PrivateChannels...)
-		} else if file.Name == "mpims.json" {
-			slackExport.GroupChannels, _ = t.SlackParseChannels(reader, model.ChannelTypeGroup)
-			slackExport.Channels = append(slackExport.Channels, slackExport.GroupChannels...)
-		} else if file.Name == "users.json" {
-			users, _ := t.SlackParseUsers(reader)
-			slackExport.Users = users
-		} else {
-			spl := strings.Split(file.Name, "/")
-			if len(spl) == 2 && strings.HasSuffix(spl[1], ".json") {
-				newposts, _ := t.SlackParsePosts(reader)
-				channel := spl[0]
-				if _, ok := slackExport.Posts[channel]; !ok {
-					slackExport.Posts[channel] = newposts
-				} else {
-					slackExport.Posts[channel] = append(slackExport.Posts[channel], newposts...)
-				}
-			} else if len(spl) == 3 && spl[0] == "__uploads" {
-				slackExport.Uploads[spl[1]] = file
-			}
 		}
 	}
 
@@ -321,7 +362,7 @@ func (t *Transformer) ParseSlackExportFile(zipReader *zip.Reader, skipConvertPos
 		slackExport.Posts = t.SlackConvertChannelMentions(slackExport.Channels, slackExport.Posts)
 		slackExport.Posts = t.SlackConvertPostsMarkup(slackExport.Posts)
 		elapsed := time.Since(start)
-		t.Logger.Debug("Converting mentions finished (%s)", elapsed)
+		t.Logger.Debugf("Converting mentions finished (%s)", elapsed)
 	}
 
 	return &slackExport, nil

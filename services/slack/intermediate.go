@@ -87,6 +87,8 @@ type IntermediateUser struct {
 }
 
 func (u *IntermediateUser) Sanitise(logger log.FieldLogger, defaultEmailDomain string, skipEmptyEmails bool) {
+	logger.Debugf("TransformUsers: Sanitise: IntermediateUser receiver: %+v", u)
+
 	if u.Email == "" {
 		if skipEmptyEmails {
 			logger.Warnf("User %s does not have an email address in the Slack export. Using blank email address due to --skip-empty-emails flag.", u.Username)
@@ -130,6 +132,8 @@ type Intermediate struct {
 func (t *Transformer) TransformUsers(users []SlackUser, skipEmptyEmails bool, defaultEmailDomain string) {
 	t.Logger.Info("Transforming users")
 
+	t.Logger.Debugf("TransformUsers: Input SlackUser structs: %+v", users)
+
 	resultUsers := map[string]*IntermediateUser{}
 	for _, user := range users {
 		var deleteAt int64 = 0
@@ -145,6 +149,9 @@ func (t *Transformer) TransformUsers(users []SlackUser, skipEmptyEmails bool, de
 			lastName = strings.Join(names[1:], " ")
 		}
 
+		t.Logger.Debugf("TransformUsers: SlackUser struct: %+v", user)
+		t.Logger.Debugf("TransformUsers: SlackUser.Profile struct: %+v", user.Profile)
+
 		newUser := &IntermediateUser{
 			Id:        user.Id,
 			Username:  user.Username,
@@ -155,6 +162,8 @@ func (t *Transformer) TransformUsers(users []SlackUser, skipEmptyEmails bool, de
 			Password:  model.NewId(),
 			DeleteAt:  deleteAt,
 		}
+
+		t.Logger.Debugf("TransformUsers: newUser IntermediateUser struct: %+v", newUser)
 
 		if user.IsBot {
 			newUser.Id = user.Profile.BotID
