@@ -25,7 +25,7 @@ func SyncImportUsers(reader io.Reader, flags SyncImportUsersFlags, client *model
 	var out *os.File
 	var err error
 
-	var write = func(line string) error {
+	var writeLine = func(line string) error {
 		if out != nil {
 			if _, writeErr := out.WriteString(line + "\n"); writeErr != nil {
 				return errors.Wrap(writeErr, "Failed to write to output file")
@@ -54,7 +54,7 @@ func SyncImportUsers(reader io.Reader, flags SyncImportUsersFlags, client *model
 		err := json.Unmarshal([]byte(line), &lineData)
 		if err != nil {
 			logger.Warnf("Error unmarshalling line, continuing process anyway: %v", err)
-			if writeErr := write(line + "\n"); writeErr != nil {
+			if writeErr := writeLine(line); writeErr != nil {
 				return writeErr
 			}
 		}
@@ -64,7 +64,7 @@ func SyncImportUsers(reader io.Reader, flags SyncImportUsersFlags, client *model
 				break
 			}
 
-			if writeErr := write(line + "\n"); writeErr != nil {
+			if writeErr := writeLine(line); writeErr != nil {
 				return writeErr
 			}
 			continue
@@ -90,7 +90,7 @@ func SyncImportUsers(reader io.Reader, flags SyncImportUsersFlags, client *model
 			return errors.Wrap(err, "Error marshaling user")
 		}
 
-		if writeErr := write(string(userOut) + "\n"); writeErr != nil {
+		if writeErr := writeLine(string(userOut)); writeErr != nil {
 			return writeErr
 		}
 	}
