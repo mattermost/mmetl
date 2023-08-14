@@ -85,7 +85,7 @@ func SyncImportUsers(reader io.Reader, flags SyncImportUsersFlags, client *model
 			usersChanged = append(usersChanged, *user.Username)
 		}
 
-		userOut, err := json.Marshal(user)
+		userOut, err := json.Marshal(lineData)
 		if err != nil {
 			return errors.Wrap(err, "Error marshaling user")
 		}
