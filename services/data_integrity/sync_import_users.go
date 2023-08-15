@@ -85,6 +85,8 @@ func SyncImportUsers(reader io.Reader, flags SyncImportUsersFlags, client *model
 			usersChanged = append(usersChanged, *user.Username)
 		}
 
+		removeDuplicateChannelMemberships(user, flags, logger)
+
 		userOut, err := json.Marshal(lineData)
 		if err != nil {
 			return errors.Wrap(err, "Error marshaling user")
@@ -111,6 +113,25 @@ func SyncImportUsers(reader io.Reader, flags SyncImportUsersFlags, client *model
 	logger.Info("Finished sync process")
 
 	return nil
+}
+
+func removeDuplicateChannelMemberships(user *imports.UserImportData, flags SyncImportUsersFlags, logger *logrus.Logger) {
+	names := map[string]bool{}
+
+	teams := *user.Teams
+
+	chansOut := []imports.UserChannelImportData{}
+
+	for _, c := range *teams[0].Channels {
+		if names[*c.Name] {
+			logger.Warnf("Removing duplicate channel membership: user %s channel %s", *user.Username, *c.Name)
+		} else {
+			names[*c.Name] = true
+			chansOut = append(chansOut, c)
+		}
+	}
+
+	teams[0].Channels = &chansOut
 }
 
 func mergeImportFileUser(user *imports.UserImportData, flags SyncImportUsersFlags, client *model.Client4, logger *logrus.Logger) (bool, error) {
