@@ -36,6 +36,10 @@ func processDirectChannel(directChannel *imports.DirectChannelImportData, userna
 }
 
 func handleReplies(replies *[]imports.ReplyImportData, usernameMappings map[string]string) *[]imports.ReplyImportData {
+	if replies == nil {
+		return replies
+	}
+
 	outReplies := []imports.ReplyImportData{}
 
 	for _, reply := range *replies {
@@ -49,6 +53,10 @@ func handleReplies(replies *[]imports.ReplyImportData, usernameMappings map[stri
 }
 
 func handleReactions(reactions *[]imports.ReactionImportData, usernameMappings map[string]string) *[]imports.ReactionImportData {
+	if reactions == nil {
+		return reactions
+	}
+
 	outReactions := []imports.ReactionImportData{}
 	for _, reaction := range *reactions {
 		reaction.User = replaceUsername(reaction.User, usernameMappings)
@@ -59,6 +67,10 @@ func handleReactions(reactions *[]imports.ReactionImportData, usernameMappings m
 }
 
 func replaceUsername(input *string, usernameMappings map[string]string) *string {
+	if input == nil {
+		return input
+	}
+
 	if newUsername, ok := usernameMappings[*input]; ok {
 		return &newUsername
 	}
@@ -67,6 +79,10 @@ func replaceUsername(input *string, usernameMappings map[string]string) *string 
 }
 
 func replaceUsernames(input *[]string, usernameMappings map[string]string) *[]string {
+	if input == nil {
+		return input
+	}
+
 	newUsers := []string{}
 	for _, u := range *input {
 		if newUsername, ok := usernameMappings[u]; ok {
