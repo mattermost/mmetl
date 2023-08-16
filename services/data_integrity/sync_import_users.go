@@ -43,8 +43,8 @@ func SyncImportUsers(reader io.Reader, flags SyncImportUsersFlags, client *model
 		defer out.Close()
 	}
 
-	foundUser := false
 	usersChanged := []string{}
+	usernameMappings := map[string]string{}
 
 	logger.Info("Starting sync process")
 	for scanner.Scan() {
@@ -59,40 +59,43 @@ func SyncImportUsers(reader io.Reader, flags SyncImportUsersFlags, client *model
 			}
 		}
 
-		if lineData.Type != "user" {
-			if foundUser && !flags.UpdateUsers {
+		switch lineData.Type {
+		case "user":
+			user := lineData.User
+			oldUsername := *user.Username
+			logger.Debugf("Processing user %s", oldUsername)
+
+			usernameChanged, emailChanged, err := mergeImportFileUser(user, flags, client, logger)
+			if err != nil {
+				logger.Errorf("Error checking user %s, keeping import record as-is. %v", *user.Username, err)
 				break
 			}
 
-			if writeErr := writeLine(line); writeErr != nil {
-				return writeErr
+			if usernameChanged || emailChanged {
+				usersChanged = append(usersChanged, *user.Username)
 			}
-			continue
+
+			if usernameChanged {
+				usernameMappings[oldUsername] = *user.Username
+			}
+
+			removeDuplicateChannelMemberships(user, flags, logger)
+		case "post":
+			lineData.Post = processPost(lineData.Post, usernameMappings)
+		case "direct_post":
+			lineData.DirectPost = processDirectPost(lineData.DirectPost, usernameMappings)
+		case "channel":
+			lineData.Channel = processChannel(lineData.Channel, usernameMappings)
+		case "direct_channel":
+			lineData.DirectChannel = processDirectChannel(lineData.DirectChannel, usernameMappings)
 		}
 
-		foundUser = true
-
-		user := lineData.User
-		logger.Debugf("Processing user %s", *user.Username)
-
-		recordChanged, err := mergeImportFileUser(user, flags, client, logger)
-		if err != nil {
-			logger.Errorf("Error checking user %s, keeping import record as-is. %v", *user.Username, err)
-			continue
-		}
-
-		if recordChanged {
-			usersChanged = append(usersChanged, *user.Username)
-		}
-
-		removeDuplicateChannelMemberships(user, flags, logger)
-
-		userOut, err := json.Marshal(lineData)
+		lineMarshaled, err := json.Marshal(lineData)
 		if err != nil {
 			return errors.Wrap(err, "Error marshaling user")
 		}
 
-		if writeErr := writeLine(string(userOut)); writeErr != nil {
+		if writeErr := writeLine(string(lineMarshaled)); writeErr != nil {
 			return writeErr
 		}
 	}
@@ -134,7 +137,7 @@ func removeDuplicateChannelMemberships(user *imports.UserImportData, flags SyncI
 	teams[0].Channels = &chansOut
 }
 
-func mergeImportFileUser(user *imports.UserImportData, flags SyncImportUsersFlags, client *model.Client4, logger *logrus.Logger) (bool, error) {
+func mergeImportFileUser(user *imports.UserImportData, flags SyncImportUsersFlags, client *model.Client4, logger *logrus.Logger) (usernameChanged, emailChanged bool, err error) {
 	usernameExists := false
 	emailExists := false
 
@@ -144,7 +147,7 @@ func mergeImportFileUser(user *imports.UserImportData, flags SyncImportUsersFlag
 	existingUserByUsername, resp, err := client.GetUserByUsername(usernameFromImport, "")
 	if err != nil {
 		if resp.StatusCode != 404 {
-			return false, err
+			return false, false, err
 		}
 
 		logger.Debugf("Username %s does not exist in database", usernameFromImport)
@@ -156,7 +159,7 @@ func mergeImportFileUser(user *imports.UserImportData, flags SyncImportUsersFlag
 	existingUserByEmail, resp, err := client.GetUserByEmail(emailFromImport, "")
 	if err != nil {
 		if resp.StatusCode != 404 {
-			return false, err
+			return false, false, err
 		}
 
 		logger.Debugf("Email %s does not exist in database", emailFromImport)
@@ -173,20 +176,20 @@ func mergeImportFileUser(user *imports.UserImportData, flags SyncImportUsersFlag
 		logger.Warnf("Email %s already exists, but has a different username. DB username: (%s) Import file username (%s)", emailFromImport, existingUserByEmail.Username, usernameFromImport)
 	}
 
-	recordChanged := false
+	emailChanged = false
 	if usernameExists && existingUserByUsername.Email != emailFromImport {
-		recordChanged = true
+		emailChanged = true
 		user.Email = &existingUserByUsername.Email
 		if flags.UpdateUsers {
 			logger.Infof("Updating email for user %s from %s to %s", usernameFromImport, emailFromImport, existingUserByUsername.Email)
-			recordChanged = true
 		} else {
 			logger.Infof("Use the `--update-users` flag to update the import file's user record for user %s", usernameFromImport)
 		}
 	}
 
+	usernameChanged = false
 	if emailExists && existingUserByEmail.Username != usernameFromImport {
-		recordChanged = true
+		usernameChanged = true
 		user.Username = &existingUserByEmail.Username
 		if flags.UpdateUsers {
 			logger.Infof("Updating username for user %s from %s to %s", emailFromImport, usernameFromImport, existingUserByEmail.Username)
@@ -195,10 +198,10 @@ func mergeImportFileUser(user *imports.UserImportData, flags SyncImportUsersFlag
 		}
 	}
 
-	if !recordChanged {
+	if !emailChanged && !usernameChanged {
 		logger.Debugf("Record not changed for user %s", usernameFromImport)
 	}
 
-	return recordChanged, nil
+	return usernameChanged, emailChanged, nil
 
 }
