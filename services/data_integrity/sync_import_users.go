@@ -146,6 +146,10 @@ func mergeImportFileUser(user *imports.UserImportData, flags SyncImportUsersFlag
 
 	existingUserByUsername, resp, err := client.GetUserByUsername(usernameFromImport, "")
 	if err != nil {
+		if resp == nil {
+			return false, false, errors.Wrap(err, "error fetching user by username")
+		}
+
 		if resp.StatusCode != 404 {
 			return false, false, err
 		}
@@ -158,6 +162,10 @@ func mergeImportFileUser(user *imports.UserImportData, flags SyncImportUsersFlag
 
 	existingUserByEmail, resp, err := client.GetUserByEmail(emailFromImport, "")
 	if err != nil {
+		if resp == nil {
+			return false, false, errors.Wrap(err, "error fetching user by email")
+		}
+
 		if resp.StatusCode != 404 {
 			return false, false, err
 		}
