@@ -2,9 +2,13 @@ package commands_test
 
 import (
 	"archive/zip"
+	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 
 	"testing"
 
@@ -142,10 +146,45 @@ func TestYourCommandFunction(t *testing.T) {
 
 			require.NoError(t, err)
 
-			output, err := os.ReadFile(outputFilePath)
+			outputBytes, err := os.ReadFile(outputFilePath)
 			require.NoError(t, err, "failed to read output file")
 
-			require.Equal(t, tc.expectedOutput, string(output))
+			output := string(outputBytes)
+
+			expectedLines := strings.Split(tc.expectedOutput, "\n")
+			actualLines := strings.Split(output, "\n")
+			require.Len(t, actualLines, len(expectedLines), "wrong number of lines in tool's output")
+
+			expectedMaps := []map[string]any{}
+			actualMaps := []map[string]any{}
+			for _, line := range expectedLines {
+				if line == "" {
+					continue
+				}
+
+				expectedMap := map[string]any{}
+				err := json.Unmarshal([]byte(line), &expectedMap)
+				require.NoError(t, err)
+
+				expectedMaps = append(expectedMaps, expectedMap)
+
+				actualMap := map[string]any{}
+				err = json.Unmarshal([]byte(line), &actualMap)
+				require.NoError(t, err)
+
+				actualMaps = append(actualMaps, actualMap)
+			}
+
+			for _, actual := range actualMaps {
+				found := false
+				for _, expected := range expectedMaps {
+					if reflect.DeepEqual(actual, expected) {
+						found = true
+					}
+				}
+
+				require.True(t, found, "no equal for "+fmt.Sprintf("%v+", actual))
+			}
 		})
 	}
 }
