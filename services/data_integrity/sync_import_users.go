@@ -186,8 +186,30 @@ func mergeImportFileUser(user *imports.UserImportData, flags SyncImportUsersFlag
 		logger.Warnf("Email %s already exists, but has a different username. DB username: (%s) Import file username (%s)", emailFromImport, existingUserByEmail.Username, usernameFromImport)
 	}
 
+	avoidUpdatingEmail := false
+	if usernameExists && emailExists && existingUserByUsername.Id != existingUserByEmail.Id {
+		logger.Warnf("Found duplicate user %s in database. Import file username (%s). DB username 1 (%s). DB username 2 (%s). Import file email (%s). DB email 1 (%s). DB email 2 (%s)",
+			usernameFromImport, usernameFromImport, existingUserByUsername.Username, existingUserByEmail.Username, emailFromImport, existingUserByUsername.Email, existingUserByEmail.Email)
+
+		usernameUserActive := existingUserByUsername.DeleteAt == 0
+		emailUserActive := existingUserByEmail.DeleteAt == 0
+		if usernameUserActive && !emailUserActive {
+			avoidUpdatingEmail = true
+			logger.Infof("Duplicate user with email (%s) is marked as inactive in the database. Updating email to (%s) from active user with username (%s)", existingUserByEmail.Email, existingUserByUsername.Email, existingUserByUsername.Username)
+		} else if !usernameUserActive && emailUserActive {
+			avoidUpdatingEmail = false
+			logger.Infof("Duplicate user with username (%s) is marked as inactive in the database. Updating username to (%s) from active user with email (%s)", existingUserByUsername.Username, existingUserByEmail.Username, existingUserByEmail.Email)
+		} else if usernameUserActive && emailUserActive {
+			avoidUpdatingEmail = true
+			logger.Warnf("Duplicate user with username (%s) has two users in database marked as active. Updating new user's username from (%s) to (%s)", usernameFromImport, usernameFromImport, existingUserByEmail.Username)
+		} else {
+			avoidUpdatingEmail = true
+			logger.Warnf("Duplicate user with username (%s) has two users in database marked as inactive. Updating new user's username from (%s) to (%s)", usernameFromImport, usernameFromImport, existingUserByEmail.Username)
+		}
+	}
+
 	emailChanged = false
-	if usernameExists && existingUserByUsername.Email != emailFromImport {
+	if !avoidUpdatingEmail && usernameExists && existingUserByUsername.Email != emailFromImport {
 		emailChanged = true
 		user.Email = &existingUserByUsername.Email
 		if flags.UpdateUsers {
