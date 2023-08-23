@@ -194,10 +194,10 @@ func mergeImportFileUser(user *imports.UserImportData, flags SyncImportUsersFlag
 		usernameUserActive := existingUserByUsername.DeleteAt == 0
 		emailUserActive := existingUserByEmail.DeleteAt == 0
 		if usernameUserActive && !emailUserActive {
-			avoidUpdatingEmail = true
+			avoidUpdatingEmail = false
 			logger.Infof("Duplicate user with email (%s) is marked as inactive in the database. Updating email to (%s) from active user with username (%s)", existingUserByEmail.Email, existingUserByUsername.Email, existingUserByUsername.Username)
 		} else if !usernameUserActive && emailUserActive {
-			avoidUpdatingEmail = false
+			avoidUpdatingEmail = true
 			logger.Infof("Duplicate user with username (%s) is marked as inactive in the database. Updating username to (%s) from active user with email (%s)", existingUserByUsername.Username, existingUserByEmail.Username, existingUserByEmail.Email)
 		} else if usernameUserActive && emailUserActive {
 			avoidUpdatingEmail = true
