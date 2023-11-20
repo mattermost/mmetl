@@ -123,6 +123,9 @@ func SyncImportUsers(reader io.Reader, flags SyncImportUsersFlags, client *model
 func removeDuplicateChannelMemberships(user *imports.UserImportData, flags SyncImportUsersFlags, logger *logrus.Logger) {
 	names := map[string]bool{}
 
+	if user.Teams == nil || len(*user.Teams) == 0 {
+		return
+	}
 	teams := *user.Teams
 
 	chansOut := []imports.UserChannelImportData{}
