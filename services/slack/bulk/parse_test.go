@@ -95,8 +95,8 @@ func TestParseBulkSlackExportFile(t *testing.T) {
 
 	// Check the returned BulkSlackExport
 	// For example, you can check if the number of channels matches the expected number
-	assert.Equal(t, 5, len(slackExport.Channels))
+	assert.Equal(t, 5, len(slackExport.Private))
 	assert.Equal(t, 5, len(slackExport.DMs))
-	assert.Equal(t, 5, len(slackExport.Mpims))
-	assert.Equal(t, 5, len(slackExport.Groups))
+	assert.Equal(t, 5, len(slackExport.GMs))
+	assert.Equal(t, 5, len(slackExport.Public))
 }

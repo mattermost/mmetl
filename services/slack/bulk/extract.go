@@ -2,6 +2,7 @@ package slack_bulk
 
 import (
 	"archive/zip"
+	"fmt"
 	"io"
 	"io/fs"
 	"log"
@@ -49,6 +50,7 @@ func (t *BulkTransformer) dirHasContent(dest string) (bool, error) {
 }
 
 func (t *BulkTransformer) ExtractDirectory(zipReader *zip.Reader) error {
+	fmt.Println("Extracting files...")
 	pwd, err := t.GetWorkingDir()
 
 	if err != nil {
@@ -64,10 +66,13 @@ func (t *BulkTransformer) ExtractDirectory(zipReader *zip.Reader) error {
 	}
 
 	if yes {
+		t.Logger.Infof("content exists in the directory %s. Skipping extraction.", t.dirPath)
 		return nil
 	}
 
-	for _, f := range zipReader.File {
+	totalFiles := len(zipReader.File)
+
+	for i, f := range zipReader.File {
 		fpath := filepath.Join(t.dirPath, f.Name)
 
 		if f.FileInfo().IsDir() {
@@ -103,12 +108,15 @@ func (t *BulkTransformer) ExtractDirectory(zipReader *zip.Reader) error {
 		// Close the file without defer to close before next iteration of loop
 		outFile.Close()
 		rc.Close()
-
+		if i%1000 == 0 {
+			fmt.Printf("Extracting file %d of %d \n", i+1000, totalFiles)
+		}
 		if err != nil {
 			t.Logger.Errorf("Error copying file: %v", err)
 			return err
 		}
 	}
+	fmt.Print("Finished extracting files \n")
 
 	// Return the full path of the directory
 	return nil

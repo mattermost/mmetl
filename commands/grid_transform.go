@@ -118,10 +118,31 @@ func gridTransformCmdF(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	err = slackTransformer.HandleMovingChannels(slackExport)
+	err = slackTransformer.HandleMovingChannels(slackExport.Public, slack_bulk.ChannelFilePublic)
 
 	if err != nil {
-		logger.Error("error moving channels %w", err)
+		logger.Error("error moving public channels %w", err)
+		return err
+	}
+
+	err = slackTransformer.HandleMovingChannels(slackExport.Private, slack_bulk.ChannelFilePrivate)
+
+	if err != nil {
+		logger.Error("error moving public channels %w", err)
+		return err
+	}
+
+	err = slackTransformer.HandleMovingChannels(slackExport.GMs, slack_bulk.ChannelFileGM)
+
+	if err != nil {
+		logger.Error("error moving public channels %w", err)
+		return err
+	}
+
+	err = slackTransformer.HandleMovingChannels(slackExport.DMs, slack_bulk.ChannelFileDM)
+
+	if err != nil {
+		logger.Error("error moving public channels %w", err)
 		return err
 	}
 
