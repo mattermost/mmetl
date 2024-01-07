@@ -1,4 +1,4 @@
-package slack_bulk
+package slack_grid
 
 import (
 	"archive/zip"
@@ -11,42 +11,6 @@ import (
 	"github.com/mattermost/mattermost-server/v6/model"
 	slack "github.com/mattermost/mmetl/services/slack"
 	"github.com/pkg/errors"
-
-	// create a team mapping json file and pass it in as an arg
-	// read the team mapping file into a map
-
-	// DONE // Parse the Slack export file into a set of intermediate files.
-
-	// channels.json
-	// dms.json
-	// groups.json
-	// mpims.json
-	// org_users.json
-
-	// to parse channels:
-	// go through each channel in the channels.json and find the directory for it at the root level
-	// channel.name = a directory at the root level
-	// Pull the file names of the files in that dir
-	// look through the files for a post file. The post file should return an array of posts.
-	// inside of this array we should see a post with the key "team". This ID defines what team the channel belongs to.
-	// move that directory into the team directory in "teams/"
-	// append the channel to the channels.json file in the team directory
-	// continue this process for every channel in the channels.json file.
-
-	// continue this gor mpims. The structure of the posts are the same, so the general flow is the same.
-	// the mpims.jsonp[0].name = a file name at the root level.
-	// NOT THE ID
-
-	// continue this for groups. The structure of the posts are the same.
-	// Groups also use the name as the file name at the root level.
-
-	// continue this for DMs. The structure of the posts are the same.
-	// the dms.jsonp[0].id = a dir name at the root level.
-	// we need to create a dms.json file at each team level and append to it.
-
-	// when this is all done we should confirm the users.json of each team has the correct people.
-	// org_users[number].id = post.user
-	// need to look to see if all posts have a user that belongs to it.
 
 	log "github.com/sirupsen/logrus"
 )

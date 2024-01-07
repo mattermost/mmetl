@@ -5,8 +5,7 @@ import (
 	"encoding/json"
 	"os"
 
-	slack_bulk "github.com/mattermost/mmetl/services/slack/bulk"
-
+	"github.com/mattermost/mmetl/services/slack_grid"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 )
@@ -85,7 +84,7 @@ func gridTransformCmdF(cmd *cobra.Command, args []string) error {
 	}
 
 	// we do not need a team name here.
-	slackTransformer := slack_bulk.NewBulkTransformer(logger)
+	slackTransformer := slack_grid.NewBulkTransformer(logger)
 	teamMapFile, err := os.Open(teamMap)
 	if err != nil {
 		logger.Error("error parsing teams.json: %w", err)
@@ -118,28 +117,28 @@ func gridTransformCmdF(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	err = slackTransformer.HandleMovingChannels(slackExport.Public, slack_bulk.ChannelFilePublic)
+	err = slackTransformer.HandleMovingChannels(slackExport.Public, slack_grid.ChannelFilePublic)
 
 	if err != nil {
 		logger.Error("error moving public channels %w", err)
 		return err
 	}
 
-	err = slackTransformer.HandleMovingChannels(slackExport.Private, slack_bulk.ChannelFilePrivate)
+	err = slackTransformer.HandleMovingChannels(slackExport.Private, slack_grid.ChannelFilePrivate)
 
 	if err != nil {
 		logger.Error("error moving public channels %w", err)
 		return err
 	}
 
-	err = slackTransformer.HandleMovingChannels(slackExport.GMs, slack_bulk.ChannelFileGM)
+	err = slackTransformer.HandleMovingChannels(slackExport.GMs, slack_grid.ChannelFileGM)
 
 	if err != nil {
 		logger.Error("error moving public channels %w", err)
 		return err
 	}
 
-	err = slackTransformer.HandleMovingChannels(slackExport.DMs, slack_bulk.ChannelFileDM)
+	err = slackTransformer.HandleMovingChannels(slackExport.DMs, slack_grid.ChannelFileDM)
 
 	if err != nil {
 		logger.Error("error moving public channels %w", err)

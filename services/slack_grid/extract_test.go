@@ -1,4 +1,4 @@
-package slack_bulk
+package slack_grid
 
 import (
 	"archive/zip"
