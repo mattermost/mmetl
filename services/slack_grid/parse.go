@@ -15,6 +15,15 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+type ChannelFiles string
+
+const (
+	ChannelFilePublic  ChannelFiles = "channels"
+	ChannelFilePrivate ChannelFiles = "groups"
+	ChannelFileDM      ChannelFiles = "dms"
+	ChannelFileGM      ChannelFiles = "mpims"
+)
+
 type BulkSlackExport struct {
 	Public  []slack.SlackChannel
 	Private []slack.SlackChannel
@@ -30,7 +39,10 @@ type Post struct {
 
 type BulkTransformer struct {
 	slack.Transformer
-	Teams   map[string]string
+	Teams map[string]string
+
+	// the root path to export slack to for parsing.
+	// defaults to ./tmp/slack_grid
 	dirPath string
 }
 
@@ -40,17 +52,9 @@ func NewBulkTransformer(logger log.FieldLogger) *BulkTransformer {
 			Intermediate: &slack.Intermediate{},
 			Logger:       logger,
 		},
+		dirPath: "./tmp/slack_grid", // default value
 	}
 }
-
-type ChannelFiles string
-
-const (
-	ChannelFilePublic  ChannelFiles = "channels"
-	ChannelFilePrivate ChannelFiles = "groups"
-	ChannelFileDM      ChannelFiles = "dms"
-	ChannelFileGM      ChannelFiles = "mpims"
-)
 
 func (t *BulkTransformer) ParseBulkSlackExportFile(zipReader *zip.Reader) (*BulkSlackExport, error) {
 	slackExport := BulkSlackExport{}
@@ -119,9 +123,7 @@ type ChannelsToMove struct {
 	Path string
 }
 
-// all
 func (t *BulkTransformer) HandleMovingChannels(channels []slack.SlackChannel, channelType ChannelFiles) error {
-
 	channelsToMove := []ChannelsToMove{}
 	t.Logger.Info("Unzipped slack export path being used: ", t.dirPath)
 
@@ -135,6 +137,7 @@ func (t *BulkTransformer) HandleMovingChannels(channels []slack.SlackChannel, ch
 
 	totalChannels := len(channels)
 	fmt.Printf("Found %v %v. Looking for team IDs. \n", totalChannels, channelType)
+
 	for _, channel := range channels {
 		if channelHasBeenMoved(channel, channelsToMove) {
 			continue
@@ -277,7 +280,7 @@ func (t *BulkTransformer) appendChannelToTeamChannelsFile(channelType ChannelFil
 	return nil
 }
 
-// Loops over the entire directory provided to find the post[number].Team value.
+// Loops over the entoire directory provided to find the post[number].Team value.
 // This returns the FIRST value it finds.
 func (t *BulkTransformer) findTeamIdFromPostDir(dirName string) (string, error) {
 	// these should be post files
@@ -285,13 +288,15 @@ func (t *BulkTransformer) findTeamIdFromPostDir(dirName string) (string, error) 
 	if err != nil {
 		return "", errors.Wrap(err, "error reading directory")
 	}
+
+	basePath := filepath.Join(t.dirPath, dirName)
 	for _, innerFile := range innerFiles {
-		content, err := os.ReadFile(filepath.Join(t.dirPath, dirName, innerFile.Name()))
+		posts, err := os.ReadFile(filepath.Join(basePath, innerFile.Name()))
 		if err != nil {
 			return "", errors.Wrap(err, "Error reading file")
 		}
 
-		teamID, err := t.findTeamIDFromPost(content)
+		teamID, err := t.findTeamIDFromPostArray(posts)
 
 		if err != nil {
 			return "", errors.Wrapf(err, "Error reading file. %v", innerFile.Name())
@@ -301,11 +306,11 @@ func (t *BulkTransformer) findTeamIdFromPostDir(dirName string) (string, error) 
 			return teamID, nil
 		}
 	}
-	return "", nil
+	return "", errors.New("No team ID found")
 }
 
 // Simply looks through the post file and finds a Post[number].Team value. If it exists, it returns it.
-func (t *BulkTransformer) findTeamIDFromPost(content []byte) (string, error) {
+func (t *BulkTransformer) findTeamIDFromPostArray(content []byte) (string, error) {
 	var posts []Post
 	err := json.Unmarshal(content, &posts)
 	if err != nil {

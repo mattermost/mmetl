@@ -5,14 +5,23 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/sirupsen/logrus"
 )
 
 func TestExtractDirectory(t *testing.T) {
+	dir := createTestDir(t)
+
+	defer os.RemoveAll(dir)
 	// Create a new BulkTransformer
-	tf := &BulkTransformer{}
+	tf := NewBulkTransformer(
+		logrus.New(),
+	)
+
+	tf.dirPath = dir
 
 	// Create a new zip file for testing
-	zipFile, err := os.Create("test.zip")
+	zipFile, err := os.Create(filepath.Join(tf.dirPath, "test.zip"))
 	if err != nil {
 		t.Fatal(err)
 	}
