@@ -21,12 +21,18 @@ type TestStruct struct {
 	result string
 }
 
+func setupBulkTransformer(t *testing.T) *BulkTransformer {
+	bulkTransformer := NewBulkTransformer(logrus.New())
+	testDir := createTestDir(t)
+	defer os.RemoveAll(testDir)
+	bulkTransformer.dirPath = testDir
+
+	return bulkTransformer
+}
+
 func TestParseBulkSlackExportFile(t *testing.T) {
 	// Create a new logger for testing
-	logger := logrus.New()
-
-	// Create a new BulkTransformer
-	transformer := NewBulkTransformer(logger)
+	bt := setupBulkTransformer(t)
 
 	// Create a new zip file for testing
 	zipData := new(bytes.Buffer)
@@ -70,15 +76,14 @@ func TestParseBulkSlackExportFile(t *testing.T) {
 	assert.NoError(t, err)
 
 	// we do not need a team name here.
-	slackTransformer := NewBulkTransformer(logger)
 
-	valid := slackTransformer.GridPreCheck(zipReader)
+	valid := bt.GridPreCheck(zipReader)
 	if !valid {
 		t.Fatal(err)
 	}
 
 	// Call the ParseBulkSlackExportFile function
-	slackExport, err := transformer.ParseBulkSlackExportFile(zipReader)
+	slackExport, err := bt.ParseBulkSlackExportFile(zipReader)
 
 	// Check the returned error
 	assert.NoError(t, err)
@@ -114,10 +119,7 @@ func TestChannelHasBeenMoved(t *testing.T) {
 }
 
 func TestFindTeamIDFromPostArray(t *testing.T) {
-	bulkTransformer := NewBulkTransformer(
-		logrus.FieldLogger(logrus.New()),
-	)
-
+	bt := setupBulkTransformer(t)
 	tests := []TestStruct{
 		{posts: []Post{{Team: "team1"}, {}}, result: "team1"},
 		{posts: []Post{{}, {}, {Team: "team1"}}, result: "team1"},
@@ -128,7 +130,7 @@ func TestFindTeamIDFromPostArray(t *testing.T) {
 
 	t.Run("finds the team name in a post array", func(t *testing.T) {
 		for _, test := range tests {
-			teamID, err := bulkTransformer.findTeamIDFromPostArray(marshalJson(test.posts, t))
+			teamID, err := bt.findTeamIDFromPostArray(marshalJson(test.posts, t))
 			assert.NoError(t, err)
 			assert.Equal(t, test.result, teamID)
 		}
@@ -136,9 +138,7 @@ func TestFindTeamIDFromPostArray(t *testing.T) {
 }
 
 func TestFindTeamIdFromPostDir(t *testing.T) {
-	bulkTransformer := NewBulkTransformer(
-		logrus.FieldLogger(logrus.New()),
-	)
+	bt := setupBulkTransformer(t)
 
 	postsWithTwoTeams := [][]Post{
 		{{}, {}, {Team: ""}},
@@ -156,15 +156,15 @@ func TestFindTeamIdFromPostDir(t *testing.T) {
 
 		dir := createDirAndWriteFiles(postsWithTwoTeams, t)
 		defer os.RemoveAll(dir)
-		bulkTransformer.dirPath = dir
-		teamID, err := bulkTransformer.findTeamIdFromPostDir("")
+		bt.dirPath = dir
+		teamID, err := bt.findTeamIdFromPostDir("")
 		assert.NoError(t, err)
 		assert.Equal(t, "team1", teamID)
 	})
 
 	t.Run("directory does not exist", func(t *testing.T) {
 
-		teamID, err := bulkTransformer.findTeamIdFromPostDir("badPath")
+		teamID, err := bt.findTeamIdFromPostDir("badPath")
 		assert.ErrorContains(t, err, "error reading directory")
 		assert.Equal(t, "", teamID)
 	})
@@ -188,43 +188,100 @@ func TestFindTeamIdFromPostDir(t *testing.T) {
 	t.Run("finds no team name in a post directory", func(t *testing.T) {
 		dir := createDirAndWriteFiles(postsWithoutTeam, t)
 		defer os.RemoveAll(dir)
-		bulkTransformer.dirPath = dir
+		bt.dirPath = dir
 
-		teamID, err := bulkTransformer.findTeamIdFromPostDir("")
+		teamID, err := bt.findTeamIdFromPostDir("")
 		assert.ErrorContains(t, err, "No team ID found")
 		assert.Equal(t, "", teamID)
 	})
 }
 
 func TestAppendChannelToChannelsToMove(t *testing.T) {
-
-	dir := createTestDir(t)
-	defer os.RemoveAll(dir)
-	transformer := NewBulkTransformer(logrus.New())
-	transformer.dirPath = dir
+	bt := setupBulkTransformer(t)
 
 	teamName := "team1"
 
 	teamExistingChannels := marshalJson([]slack.SlackChannel{{Id: "0"}}, t)
-	writeToFileInTestDir(filepath.Join(dir, "teams", teamName), string(ChannelFilePublic)+".json", teamExistingChannels, t)
+	writeToFileInTestDir(filepath.Join(bt.dirPath, "teams", teamName), string(ChannelFilePublic)+".json", teamExistingChannels, t)
 
 	channelsToMerge := []ChannelsToMove{
 		{SlackChannel: slack.SlackChannel{Id: "1"}, TeamName: teamName},
 		{SlackChannel: slack.SlackChannel{Id: "2"}, TeamName: teamName},
 	}
 	for _, channel := range channelsToMerge {
-		err := transformer.appendChannelToTeamChannelsFile(ChannelFilePublic, channel)
+		err := bt.appendChannelToTeamChannelsFile(ChannelFilePublic, channel)
 		if err != nil {
 			t.Fatalf("error appending channel to team channels file %v", err)
 		}
 	}
 
-	teamUpdatedChannels := readChannelsFile(filepath.Join(dir, "teams", teamName, string(ChannelFilePublic)+".json"), t)
+	teamUpdatedChannels := readChannelsFile(filepath.Join(bt.dirPath, "teams", teamName, string(ChannelFilePublic)+".json"), t)
 
 	for i, channel := range teamUpdatedChannels {
 		if strconv.Itoa(i) != channel.Id {
 			t.Fatalf("channel id %v does not match expected value %v", channel.Id, i)
 		}
+	}
+}
+
+func TestGetChannelPath(t *testing.T) {
+	t.Run("Returns correct path for gm / public / private", func(t *testing.T) {
+		channelName := "channelName"
+		channelID := "channelID"
+		path := getChannelPath(ChannelFileGM, channelName, channelID)
+		if path != channelName {
+			t.Fatal("channel path for DMs does not return channel name")
+		}
+	})
+
+	t.Run("Returns correct path for dm", func(t *testing.T) {
+		channelName := "channelName"
+		channelID := "channelID"
+		path := getChannelPath(ChannelFileDM, channelName, channelID)
+		if path != channelID {
+			t.Fatal("channel path for DMs does not return channel ID")
+		}
+	})
+}
+
+func TestPerformChannelMove(t *testing.T) {
+
+	bt := setupBulkTransformer(t)
+
+	teamPath := filepath.Join(bt.dirPath, "teams", "team1")
+	channelPath := filepath.Join(bt.dirPath, "channel1")
+
+	// storing the channels.json file in the team directory to be used.
+	writeToFileInTestDir(teamPath, "channels.json",
+		marshalJson([]slack.SlackChannel{}, t),
+		t,
+	)
+
+	// creating a channel with a single post in it that we can move.
+	writeToFileInTestDir(channelPath, "posts.json",
+		marshalJson([]Post{{Team: "team1"}}, t),
+		t,
+	)
+
+	channelsToMove := []ChannelsToMove{
+		{SlackChannel: slack.SlackChannel{Id: "channel1"}, TeamName: "team1", Moved: false, Path: "channel1"},
+	}
+
+	err := bt.performChannelMove(
+		ChannelFilePublic,
+		channelsToMove[0],
+		channelsToMove,
+		0,
+	)
+
+	if err != nil {
+		t.Fatalf("error moving channel %v", err)
+	}
+
+	channels := readChannelsFile(teamPath+"/channels.json", t)
+
+	if len(channels) != 1 {
+		t.Fatal("channel was not moved. Channel IDs in team path are: ", channels)
 	}
 }
 
