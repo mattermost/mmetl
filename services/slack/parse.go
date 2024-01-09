@@ -193,7 +193,10 @@ func (t *Transformer) SlackConvertUserMentions(users []SlackUser, posts map[stri
 	regexes["@channel"], _ = regexp.Compile("<!channel>")
 	regexes["@all"], _ = regexp.Compile("<!everyone>")
 
+	convertCount := 0
 	for channelName, channelPosts := range posts {
+		convertCount++
+		t.Logger.Debugf("Slack Import: converting user mentions for channel %s. %v of %v", channelName, convertCount, len(posts))
 		for postIdx, post := range channelPosts {
 			for mention, r := range regexes {
 				post.Text = r.ReplaceAllString(post.Text, mention)
@@ -202,6 +205,7 @@ func (t *Transformer) SlackConvertUserMentions(users []SlackUser, posts map[stri
 		}
 	}
 
+	t.Logger.Infof("Slack Import: Converted user mentions")
 	return posts
 }
 
@@ -216,7 +220,10 @@ func (t *Transformer) SlackConvertChannelMentions(channels []SlackChannel, posts
 		regexes["~"+channel.Name] = r
 	}
 
+	convertCount := 0
 	for channelName, channelPosts := range posts {
+		convertCount++
+		t.Logger.Debugf("Slack Import: converting channel mentions for channel %s. %v of %v", channelName, convertCount, len(posts))
 		for postIdx, post := range channelPosts {
 			for channelReplace, r := range regexes {
 				post.Text = r.ReplaceAllString(post.Text, channelReplace)
@@ -224,6 +231,8 @@ func (t *Transformer) SlackConvertChannelMentions(channels []SlackChannel, posts
 			}
 		}
 	}
+
+	t.Logger.Infof("Slack Import: Converted channel mentions")
 
 	return posts
 }
@@ -274,7 +283,11 @@ func (t *Transformer) SlackConvertPostsMarkup(posts map[string][]SlackPost) map[
 		},
 	}
 
+	convertCount := 0
 	for channelName, channelPosts := range posts {
+		convertCount++
+		t.Logger.Debugf("Slack Import: converting markdown for channel %s. %v of %v", channelName, convertCount, len(posts))
+
 		for postIdx, post := range channelPosts {
 			result := post.Text
 
@@ -288,6 +301,8 @@ func (t *Transformer) SlackConvertPostsMarkup(posts map[string][]SlackPost) map[
 			posts[channelName][postIdx].Text = result
 		}
 	}
+
+	t.Logger.Infof("Slack Import: Converted markdown")
 
 	return posts
 }
