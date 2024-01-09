@@ -84,7 +84,7 @@ func gridTransformCmdF(cmd *cobra.Command, args []string) error {
 	}
 
 	// we do not need a team name here.
-	slackTransformer := slack_grid.NewBulkTransformer(logger)
+	slackTransformer := slack_grid.NewGridTransformer(logger)
 	teamMapFile, err := os.Open(teamMap)
 	if err != nil {
 		logger.Error("error parsing teams.json: %w", err)

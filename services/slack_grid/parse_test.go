@@ -21,13 +21,8 @@ type TestStruct struct {
 	result string
 }
 
-type TestChannel struct {
-	*slack.SlackChannel
-	Team string
-}
-
 func setupBulkTransformer(t *testing.T) *BulkTransformer {
-	bulkTransformer := NewBulkTransformer(logrus.New())
+	bulkTransformer := NewGridTransformer(logrus.New())
 	testDir := createTestDir(t)
 	defer os.RemoveAll(testDir)
 	bulkTransformer.dirPath = testDir
@@ -142,7 +137,7 @@ func TestFindTeamIDFromPostArray(t *testing.T) {
 	})
 }
 
-func TestFindTeamIdFromPostDir(t *testing.T) {
+func TestfindTeamIdFromChannelDir(t *testing.T) {
 	bt := setupBulkTransformer(t)
 
 	postsWithTwoTeams := [][]Post{
@@ -162,14 +157,14 @@ func TestFindTeamIdFromPostDir(t *testing.T) {
 		dir := createDirAndWriteFiles(postsWithTwoTeams, t)
 		defer os.RemoveAll(dir)
 		bt.dirPath = dir
-		teamID, err := bt.findTeamIdFromPostDir("")
+		teamID, err := bt.findTeamIdFromChannelDir("")
 		assert.NoError(t, err)
 		assert.Equal(t, "team1", teamID)
 	})
 
 	t.Run("directory does not exist", func(t *testing.T) {
 
-		teamID, err := bt.findTeamIdFromPostDir("badPath")
+		teamID, err := bt.findTeamIdFromChannelDir("badPath")
 		assert.ErrorContains(t, err, "error reading directory")
 		assert.Equal(t, "", teamID)
 	})
@@ -185,7 +180,7 @@ func TestFindTeamIdFromPostDir(t *testing.T) {
 	// 	os.WriteFile(filepath.Join(dir, "/unreadable.json"), marshalJson(postsWithTwoTeams[2], t), 0644)
 	// 	os.WriteFile(filepath.Join(dir, "/posts.json"), marshalJson(postsWithTwoTeams[1], t), 0644)
 
-	// 	teamID, err := bulkTransformer.findTeamIdFromPostDir("")
+	// 	teamID, err := bulkTransformer.findTeamIdFromChannelDir("")
 	// 	assert.ErrorContains(t, err, "Error reading file")
 	// 	assert.Equal(t, "", teamID)
 	// })
@@ -195,7 +190,7 @@ func TestFindTeamIdFromPostDir(t *testing.T) {
 		defer os.RemoveAll(dir)
 		bt.dirPath = dir
 
-		teamID, err := bt.findTeamIdFromPostDir("")
+		teamID, err := bt.findTeamIdFromChannelDir("")
 		assert.ErrorContains(t, err, "No team ID found")
 		assert.Equal(t, "", teamID)
 	})
@@ -227,26 +222,6 @@ func TestAppendChannelToChannelsToMove(t *testing.T) {
 			t.Fatalf("channel id %v does not match expected value %v", channel.Id, i)
 		}
 	}
-}
-
-func TestGetChannelPath(t *testing.T) {
-	t.Run("Returns correct path for gm / public / private", func(t *testing.T) {
-		channelName := "channelName"
-		channelID := "channelID"
-		path := getChannelPath(ChannelFileGM, channelName, channelID)
-		if path != channelName {
-			t.Fatal("channel path for DMs does not return channel name")
-		}
-	})
-
-	t.Run("Returns correct path for dm", func(t *testing.T) {
-		channelName := "channelName"
-		channelID := "channelID"
-		path := getChannelPath(ChannelFileDM, channelName, channelID)
-		if path != channelID {
-			t.Fatal("channel path for DMs does not return channel ID")
-		}
-	})
 }
 
 func TestHandleMovingChannels(t *testing.T) {

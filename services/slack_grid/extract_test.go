@@ -14,7 +14,7 @@ func TestExtractDirectory(t *testing.T) {
 
 	defer os.RemoveAll(dir)
 	// Create a new BulkTransformer
-	tf := NewBulkTransformer(
+	tf := NewGridTransformer(
 		logrus.New(),
 	)
 
