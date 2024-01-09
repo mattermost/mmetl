@@ -66,7 +66,6 @@ func (t *BulkTransformer) ParseBulkSlackExportFile(zipReader *zip.Reader) (*Bulk
 			continue
 		}
 		err := func(i int, file *zip.File) error {
-
 			t.Logger.Infof("Processing file %d of %d: %s", i+1, numFiles, file.Name)
 			reader, err := file.Open()
 			if err != nil {

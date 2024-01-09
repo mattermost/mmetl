@@ -21,6 +21,11 @@ type TestStruct struct {
 	result string
 }
 
+type TestChannel struct {
+	*slack.SlackChannel
+	Team string
+}
+
 func setupBulkTransformer(t *testing.T) *BulkTransformer {
 	bulkTransformer := NewBulkTransformer(logrus.New())
 	testDir := createTestDir(t)
@@ -244,9 +249,13 @@ func TestGetChannelPath(t *testing.T) {
 	})
 }
 
-func TestPerformChannelMove(t *testing.T) {
+func TestHandleMovingChannels(t *testing.T) {
 
 	bt := setupBulkTransformer(t)
+
+	bt.Teams = map[string]string{
+		"team1": "team1",
+	}
 
 	teamPath := filepath.Join(bt.dirPath, "teams", "team1")
 	channelPath := filepath.Join(bt.dirPath, "channel1")
@@ -263,16 +272,10 @@ func TestPerformChannelMove(t *testing.T) {
 		t,
 	)
 
-	channelsToMove := []ChannelsToMove{
-		{SlackChannel: slack.SlackChannel{Id: "channel1"}, TeamName: "team1", Moved: false, Path: "channel1"},
+	slackChannel := []slack.SlackChannel{
+		{Id: "channel1", Name: "channel1"},
 	}
-
-	err := bt.performChannelMove(
-		ChannelFilePublic,
-		channelsToMove[0],
-		channelsToMove,
-		0,
-	)
+	err := bt.HandleMovingChannels(slackChannel, ChannelFilePublic)
 
 	if err != nil {
 		t.Fatalf("error moving channel %v", err)
@@ -280,7 +283,7 @@ func TestPerformChannelMove(t *testing.T) {
 
 	channels := readChannelsFile(teamPath+"/channels.json", t)
 
-	if len(channels) != 1 {
+	if len(channels) != len(slackChannel) {
 		t.Fatal("channel was not moved. Channel IDs in team path are: ", channels)
 	}
 }
