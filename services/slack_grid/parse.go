@@ -24,8 +24,6 @@ const (
 	ChannelFileGM      ChannelFiles = "mpims"
 )
 
-const DefaultDirPath = "./tmp/slack_grid"
-
 const ErrFindingTeamID = "Could not find team ID for channel %v, ID: %v"
 const ErrFindingTeamName = "Could not find team name for channel %v"
 
@@ -55,6 +53,7 @@ type BulkTransformer struct {
 	// the root path to export slack to for parsing.
 	// defaults to ./tmp/slack_grid
 	dirPath string
+	pwd     string
 }
 
 type ChannelsToMove struct {
@@ -73,7 +72,6 @@ func NewGridTransformer(logger log.FieldLogger) *BulkTransformer {
 			Intermediate: &slack.Intermediate{},
 			Logger:       logger,
 		},
-		dirPath: DefaultDirPath,
 	}
 }
 
@@ -125,17 +123,17 @@ Any channels that do not have a valid mapping in the teams.json file or no team 
 *
 */
 func (t *BulkTransformer) HandleMovingChannels(slackChannels []slack.SlackChannel, channelType ChannelFiles) error {
-	t.Logger.Info("Unzipped slack export path being used: ", t.dirPath)
+	t.Logger.Infof("Unzipped slack export path being used: %v", t.dirPath)
 
 	itemsInDir, err := t.readDir(t.dirPath)
-	t.Logger.Debug("Found %v items in directory.", len(itemsInDir))
+	t.Logger.Debugf("Found %v items in directory.", len(itemsInDir))
 
 	if err != nil {
 		return errors.Wrap(err, "error reading directory")
 	}
 
 	totalChannels := len(slackChannels)
-	t.Logger.Debug("Found %v %v. Looking for team IDs. \n", totalChannels, channelType)
+	t.Logger.Debugf("Found %v %v. Looking for team IDs. \n", totalChannels, channelType)
 
 	channelsToMove, err := t.getChannelsToMove(slackChannels, itemsInDir, channelType)
 	if err != nil {
@@ -157,7 +155,7 @@ func (t *BulkTransformer) getChannelsToMove(slackChannels []slack.SlackChannel, 
 
 		teamID, err := t.findTeamIDForChannel(channel, itemsInDir, channelType)
 		if err != nil {
-			t.Logger.Error("error finding team ID for channel: %w", err)
+			t.Logger.Errorf("error finding team ID for channel: %w", err)
 			continue
 		}
 
@@ -168,11 +166,11 @@ func (t *BulkTransformer) getChannelsToMove(slackChannels []slack.SlackChannel, 
 
 		moveChannel, err := t.createMoveChannel(channel, teamID, channelType)
 		if err != nil {
-			t.Logger.Error("error creating move channel: %w", err)
+			t.Logger.Errorf("error creating move channel: %w", err)
 			continue
 		}
 
-		t.Logger.Debug("Found channel to move.  %v", moveChannel)
+		t.Logger.Debugf("Found channel to move.  %v", moveChannel)
 		channelsToMove = append(channelsToMove, moveChannel)
 	}
 
@@ -227,7 +225,7 @@ func (t *BulkTransformer) moveChannels(channelsToMove []ChannelsToMove, channelT
 
 	for i, channel := range channelsToMove {
 		if totalChannels > 100 && i%100 == 0 {
-			t.Logger.Debug("Performing %v of %v %v moves \n", i+100, totalChannels, channelType)
+			t.Logger.Infof("Performing %v of %v %v moves \n", i+100, totalChannels, channelType)
 		}
 
 		err := t.performChannelMove(channelType, channel, channelsToMove, i)
@@ -236,7 +234,7 @@ func (t *BulkTransformer) moveChannels(channelsToMove []ChannelsToMove, channelT
 		}
 	}
 
-	t.Logger.Info("Moved %v %v \n", totalChannels, channelType)
+	t.Logger.Infof("Moved %v %v \n", totalChannels, channelType)
 	return nil
 }
 

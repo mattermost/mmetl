@@ -11,6 +11,8 @@ import (
 	"github.com/pkg/errors"
 )
 
+const DefaultDirPath = "tmp/slack_grid"
+
 func (t *BulkTransformer) GetWorkingDir() (string, error) {
 	dir, err := os.Getwd()
 	if err != nil {
@@ -47,13 +49,14 @@ func (t *BulkTransformer) dirHasContent(dest string) (bool, error) {
 }
 
 func (t *BulkTransformer) ExtractDirectory(zipReader *zip.Reader) error {
-	fmt.Println("Extracting files...")
+	t.Logger.Info("Extracting files...")
 	pwd, err := t.GetWorkingDir()
 
 	if err != nil {
 		return errors.Errorf("error getting current working directory: %v", err)
 	}
-	t.dirPath = filepath.Join(pwd, "tmp", "slack_export")
+	t.pwd = pwd
+	t.dirPath = filepath.Join(pwd, DefaultDirPath)
 	t.Logger.Infof("Extracting to %s", t.dirPath)
 
 	yes, err := t.dirHasContent(t.dirPath)
@@ -102,13 +105,92 @@ func (t *BulkTransformer) ExtractDirectory(zipReader *zip.Reader) error {
 		outFile.Close()
 		rc.Close()
 		if i%1000 == 0 || i == totalFiles-1 {
-			fmt.Printf("Extracting file %d of %d \n", i+1, totalFiles)
+			t.Logger.Infof("Extracting file %d of %d", i, totalFiles)
 		}
 		if err != nil {
 			return errors.Wrap(err, "error copying files")
 		}
 	}
-	fmt.Print("Finished extracting files \n")
+	t.Logger.Info("Finished extracting files")
 
 	return nil
+}
+
+func (t *BulkTransformer) ZipTeamDirectories() error {
+
+	// zip the directories under /teams
+
+	teams, err := t.readDir(filepath.Join(t.dirPath, "teams"))
+
+	t.Logger.Infof("Zipping %v team directories...", len(teams))
+
+	if err != nil {
+		return errors.Wrap(err, "error reading teams directory")
+	}
+	// provide each as a root level export
+
+	for _, team := range teams {
+		teamPath := filepath.Join(t.dirPath, "teams", team.Name())
+		teamZipPath := filepath.Join(t.pwd, team.Name()+".zip")
+
+		t.Logger.Infof("Zipping %s to %s", teamPath, teamZipPath)
+
+		err := ZipDir(teamPath, teamZipPath)
+		if err != nil {
+			return errors.Wrap(err, "error zipping team directory")
+		}
+	}
+	// zip the remaining files up and provide a "leftovers" zip file.
+
+	return nil
+}
+
+func ZipDir(source, target string) error {
+	zipfile, err := os.Create(target)
+	if err != nil {
+		return err
+	}
+	defer zipfile.Close()
+
+	archive := zip.NewWriter(zipfile)
+	defer archive.Close()
+
+	err = filepath.Walk(source, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		header, err := zip.FileInfoHeader(info)
+		if err != nil {
+			return err
+		}
+
+		header.Name = filepath.Join(".", path[len(source):])
+
+		if info.IsDir() {
+			header.Name += "/"
+		} else {
+			header.Method = zip.Deflate
+		}
+
+		writer, err := archive.CreateHeader(header)
+		if err != nil {
+			return err
+		}
+
+		if !info.IsDir() {
+			file, err := os.Open(path)
+			if err != nil {
+				return err
+			}
+			defer file.Close()
+			_, err = io.Copy(writer, file)
+			if err != nil {
+				return err
+			}
+		}
+		return err
+	})
+
+	return err
 }

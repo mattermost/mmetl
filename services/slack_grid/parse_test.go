@@ -137,7 +137,7 @@ func TestFindTeamIDFromPostArray(t *testing.T) {
 	})
 }
 
-func TestfindTeamIdFromChannelDir(t *testing.T) {
+func TestFindTeamIdFromChannelDir(t *testing.T) {
 	bt := setupBulkTransformer(t)
 
 	postsWithTwoTeams := [][]Post{

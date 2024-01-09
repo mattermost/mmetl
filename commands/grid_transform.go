@@ -132,5 +132,11 @@ func gridTransformCmdF(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	err = slackTransformer.ZipTeamDirectories()
+	if err != nil {
+		logger.Error("error zipping team directories", err)
+		return err
+	}
+
 	return nil
 }
