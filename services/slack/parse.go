@@ -189,7 +189,7 @@ func (t *Transformer) SlackConvertUserMentions(users []SlackUser, posts map[stri
 	}
 
 	// Special cases.
-	regexes["@here"], _ = regexp.Compile(`<!here\|@here>`)
+	regexes["@here"], _ = regexp.Compile("<(!|@)here>")
 	regexes["@channel"], _ = regexp.Compile("<!channel>")
 	regexes["@all"], _ = regexp.Compile("<!everyone>")
 
