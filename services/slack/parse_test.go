@@ -7,29 +7,24 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-var posts = map[string][]SlackPost{
-	"channel1": {
-		{
-			Text: "Hello, world",
-		},
-		{
-			Text: model.NewRandomString(model.PostMessageMaxRunesV2 * 2),
-		},
-	},
-}
-
 func TestSlackConvertPostsMarkup(t *testing.T) {
+	var posts = map[string][]SlackPost{
+		"channelName": {
+			{
+				Text: model.NewRandomString(model.PostMessageMaxRunesV2 * 2),
+			},
+		},
+	}
+
 	t.Run("Test post length", func(t *testing.T) {
 		transformer := NewTransformer("test", logrus.New())
 
 		parsedPosts := transformer.SlackConvertPostsMarkup(posts)
+		post := parsedPosts["channelName"][0]
 
-		for _, postArray := range parsedPosts {
-			for _, post := range postArray {
-				if len(post.Text) > model.PostMessageMaxRunesV2 {
-					t.Errorf("Expected post length to be less than %d, got %d", model.PostMessageMaxRunesV2, len(post.Text))
-				}
-			}
+		if len(post.Text) > model.PostMessageMaxRunesV2 {
+			t.Errorf("Expected post length to be less than %d, got %d", model.PostMessageMaxRunesV2, len(post.Text))
 		}
+
 	})
 }
