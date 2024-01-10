@@ -198,6 +198,12 @@ func (t *Transformer) SlackConvertUserMentions(users []SlackUser, posts map[stri
 			for mention, r := range regexes {
 				post.Text = r.ReplaceAllString(post.Text, mention)
 				posts[channelName][postIdx] = post
+
+				if post.Attachments != nil {
+					for _, attachment := range post.Attachments {
+						attachment.Fallback = r.ReplaceAllString(attachment.Fallback, mention)
+					}
+				}
 			}
 		}
 	}
@@ -221,6 +227,12 @@ func (t *Transformer) SlackConvertChannelMentions(channels []SlackChannel, posts
 			for channelReplace, r := range regexes {
 				post.Text = r.ReplaceAllString(post.Text, channelReplace)
 				posts[channelName][postIdx] = post
+
+				if post.Attachments != nil {
+					for _, attachment := range post.Attachments {
+						attachment.Fallback = r.ReplaceAllString(attachment.Fallback, channelReplace)
+					}
+				}
 			}
 		}
 	}
