@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/pkg/errors"
 )
@@ -72,7 +73,11 @@ func (t *BulkTransformer) ExtractDirectory(zipReader *zip.Reader) error {
 	totalFiles := len(zipReader.File)
 
 	for i, f := range zipReader.File {
-		fpath := filepath.Join(t.dirPath, f.Name)
+
+		// slack file conversations have a : in the name. So, "FC:123:123" would be valid. This simply removes the : from the name.
+		// currently, these imports are not supported by the slack grid importer so the files are not referenced later.
+		sanitizedFileName := strings.ReplaceAll(f.Name, ":", "")
+		fpath := filepath.Join(t.dirPath, sanitizedFileName)
 
 		if f.FileInfo().IsDir() {
 			// Make Folder
