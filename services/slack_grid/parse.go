@@ -155,18 +155,18 @@ func (t *BulkTransformer) getChannelsToMove(slackChannels []slack.SlackChannel, 
 
 		teamID, err := t.findTeamIDForChannel(channel, itemsInDir, channelType)
 		if err != nil {
-			t.Logger.Errorf("error finding team ID for channel: %w", err)
+			t.Logger.Errorf("error finding team ID for channel: %w", err.Error())
 			continue
 		}
 
-		if len(teamID) == 0 {
+		if teamID == "" {
 			t.Logger.Errorf(ErrFindingTeamID, channel.Name, channel.Id)
 			continue
 		}
 
 		moveChannel, err := t.createMoveChannel(channel, teamID, channelType)
 		if err != nil {
-			t.Logger.Errorf("error creating move channel: %w", err)
+			t.Logger.Errorf("error creating move channel: %w", err.Error())
 			continue
 		}
 

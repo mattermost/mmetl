@@ -86,7 +86,6 @@ func gridTransformCmdF(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		logger.Error("error parsing teams.json: %w", err)
 		return err
-
 	}
 	defer teamMapFile.Close()
 
@@ -110,7 +109,7 @@ func gridTransformCmdF(cmd *cobra.Command, args []string) error {
 
 	slackExport, err := slackTransformer.ParseBulkSlackExportFile(zipReader)
 	if err != nil {
-		logger.Error("error parsing teams.json: %w", err)
+		logger.Error("error parsing slack export: %w", err)
 		return err
 	}
 
