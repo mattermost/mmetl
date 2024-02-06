@@ -49,6 +49,23 @@ type SlackFile struct {
 	DownloadURL string `json:"url_private_download"`
 }
 
+type SlackRoom struct {
+	Id                 string   `json:"id"`
+	Name               string   `json:"name"`
+	CreatedBy          string   `json:"created_by"`
+	DateStart          int64    `json:"date_start"`
+	DateEnd            int64    `json:"date_end"`
+	Participants       []string `json:"participants"`
+	ParticipantHistory []string `json:"participant_history"`
+	ThreadTS           string   `json:"thread_root_ts"`
+	Channels           []string `json:"channels"`
+	IsDMCall           bool     `json:"is_dm_call"`
+	WasRejected        bool     `json:"was_rejected"`
+	WasMissed          bool     `json:"was_missed"`
+	WasAccepted        bool     `json:"was_accepted"`
+	HasEnded           bool     `json:"has_ended"`
+}
+
 type SlackPost struct {
 	User        string                   `json:"user"`
 	BotId       string                   `json:"bot_id"`
@@ -63,6 +80,7 @@ type SlackPost struct {
 	File        *SlackFile               `json:"file"`
 	Files       []*SlackFile             `json:"files"`
 	Attachments []*model.SlackAttachment `json:"attachments"`
+	Room        *SlackRoom               `json:"room"`
 }
 
 func (p *SlackPost) IsPlainMessage() bool {
@@ -95,6 +113,10 @@ func (p *SlackPost) IsChannelPurposeMessage() bool {
 
 func (p *SlackPost) IsChannelNameMessage() bool {
 	return p.Type == "message" && p.SubType == "channel_name"
+}
+
+func (p *SlackPost) isHuddleThread() bool {
+	return p.Type == "message" && p.SubType == "huddle_thread"
 }
 
 type SlackComment struct {
@@ -172,12 +194,14 @@ func (t *Transformer) SlackParsePosts(data io.Reader) ([]SlackPost, error) {
 	var posts []SlackPost
 	if err := decoder.Decode(&posts); err != nil {
 		t.Logger.Warnf("Slack Import: Error occurred when parsing some Slack posts. Import may work anyway. err=%v", err)
+		t.Logger.Info("Parse Posts - Total Posts: ", len(posts))
 		return posts, err
 	}
 	return posts, nil
 }
 
 func (t *Transformer) SlackConvertUserMentions(users []SlackUser, posts map[string][]SlackPost) map[string][]SlackPost {
+	t.Logger.Info("Convert User Mentions - Total Posts: ", len(posts))
 	var regexes = make(map[string]*regexp.Regexp, len(users))
 	for _, user := range users {
 		r, err := regexp.Compile("<@" + user.Id + `(\|` + user.Username + ")?>")
@@ -189,7 +213,7 @@ func (t *Transformer) SlackConvertUserMentions(users []SlackUser, posts map[stri
 	}
 
 	// Special cases.
-	regexes["@here"], _ = regexp.Compile(`<!here\|@here>`)
+	regexes["@here"], _ = regexp.Compile("<(!|@)here>")
 	regexes["@channel"], _ = regexp.Compile("<!channel>")
 	regexes["@all"], _ = regexp.Compile("<!everyone>")
 
@@ -201,6 +225,12 @@ func (t *Transformer) SlackConvertUserMentions(users []SlackUser, posts map[stri
 			for mention, r := range regexes {
 				post.Text = r.ReplaceAllString(post.Text, mention)
 				posts[channelName][postIdx] = post
+
+				if post.Attachments != nil {
+					for _, attachment := range post.Attachments {
+						attachment.Fallback = r.ReplaceAllString(attachment.Fallback, mention)
+					}
+				}
 			}
 		}
 	}
@@ -210,6 +240,8 @@ func (t *Transformer) SlackConvertUserMentions(users []SlackUser, posts map[stri
 }
 
 func (t *Transformer) SlackConvertChannelMentions(channels []SlackChannel, posts map[string][]SlackPost) map[string][]SlackPost {
+	t.Logger.Info("Convert Channel Mentions - Total Posts: ", len(posts))
+
 	var regexes = make(map[string]*regexp.Regexp, len(channels))
 	for _, channel := range channels {
 		r, err := regexp.Compile("<#" + channel.Id + `(\|` + channel.Name + ")?>")
@@ -228,6 +260,12 @@ func (t *Transformer) SlackConvertChannelMentions(channels []SlackChannel, posts
 			for channelReplace, r := range regexes {
 				post.Text = r.ReplaceAllString(post.Text, channelReplace)
 				posts[channelName][postIdx] = post
+
+				if post.Attachments != nil {
+					for _, attachment := range post.Attachments {
+						attachment.Fallback = r.ReplaceAllString(attachment.Fallback, channelReplace)
+					}
+				}
 			}
 		}
 	}
@@ -238,6 +276,8 @@ func (t *Transformer) SlackConvertChannelMentions(channels []SlackChannel, posts
 }
 
 func (t *Transformer) SlackConvertPostsMarkup(posts map[string][]SlackPost) map[string][]SlackPost {
+	t.Logger.Info("Convert Posts Markdown - Total Posts: ", len(posts))
+
 	regexReplaceAllString := []struct {
 		regex *regexp.Regexp
 		rpl   string
@@ -298,7 +338,7 @@ func (t *Transformer) SlackConvertPostsMarkup(posts map[string][]SlackPost) map[
 			for _, rule := range regexReplaceAllStringFunc {
 				result = rule.regex.ReplaceAllStringFunc(result, rule.fn)
 			}
-			posts[channelName][postIdx].Text = result
+			posts[channelName][postIdx].Text = truncateRunes(result, model.PostMessageMaxRunesV2)
 		}
 	}
 
@@ -352,6 +392,7 @@ func (t *Transformer) ParseSlackExportFile(zipReader *zip.Reader, skipConvertPos
 				if len(spl) == 2 && strings.HasSuffix(spl[1], ".json") {
 					newposts, _ := t.SlackParsePosts(reader)
 					channel := spl[0]
+					t.Logger.Info("Channel: ", channel, " Posts: ", len(newposts))
 					if _, ok := slackExport.Posts[channel]; !ok {
 						slackExport.Posts[channel] = newposts
 					} else {

@@ -108,16 +108,16 @@ func (u *IntermediateUser) Sanitise(logger log.FieldLogger, defaultEmailDomain s
 }
 
 type IntermediatePost struct {
-	User     string                `json:"user"`
-	Channel  string                `json:"channel"`
-	Message  string                `json:"message"`
-	Props    model.StringInterface `json:"props"`
-	CreateAt int64                 `json:"create_at"`
-	// Type           string              `json:"type"`
-	Attachments    []string            `json:"attachments"`
-	Replies        []*IntermediatePost `json:"replies"`
-	IsDirect       bool                `json:"is_direct"`
-	ChannelMembers []string            `json:"channel_members"`
+	User           string                `json:"user"`
+	Channel        string                `json:"channel"`
+	Message        string                `json:"message"`
+	Props          model.StringInterface `json:"props"`
+	CreateAt       int64                 `json:"create_at"`
+	Type           string                `json:"type"`
+	Attachments    []string              `json:"attachments"`
+	Replies        []*IntermediatePost   `json:"replies"`
+	IsDirect       bool                  `json:"is_direct"`
+	ChannelMembers []string              `json:"channel_members"`
 }
 
 type Intermediate struct {
@@ -177,14 +177,16 @@ func (t *Transformer) TransformUsers(users []SlackUser, skipEmptyEmails bool, de
 	t.Intermediate.UsersById = resultUsers
 }
 
-func filterValidMembers(members []string, users map[string]*IntermediateUser) []string {
+func (t *Transformer) filterValidMembers(members []string, users map[string]*IntermediateUser) []string {
 	validMembers := []string{}
 	for _, member := range members {
 		if _, ok := users[member]; ok {
 			validMembers = append(validMembers, member)
+		} else {
+			t.CreateIntermediateUser(member)
+			validMembers = append(validMembers, member)
 		}
 	}
-
 	return validMembers
 }
 
@@ -199,7 +201,7 @@ func getOriginalName(channel SlackChannel) string {
 func (t *Transformer) TransformChannels(channels []SlackChannel) []*IntermediateChannel {
 	resultChannels := []*IntermediateChannel{}
 	for _, channel := range channels {
-		validMembers := filterValidMembers(channel.Members, t.Intermediate.UsersById)
+		validMembers := t.filterValidMembers(channel.Members, t.Intermediate.UsersById)
 		if (channel.Type == model.ChannelTypeDirect || channel.Type == model.ChannelTypeGroup) && len(validMembers) <= 1 {
 			t.Logger.Warnf("Bulk export for direct channels containing a single member is not supported. Not importing channel %s", channel.Name)
 			continue
@@ -504,6 +506,45 @@ func (t *Transformer) AddAttachmentsToPost(post *SlackPost, newPost *Intermediat
 	return props, propsByteArray
 }
 
+func buildMessagePropsFromHuddle(post *SlackPost) model.StringInterface {
+	type Attachment struct {
+		ID       int    `json:"id"`
+		Text     string `json:"text"`
+		Fallback string `json:"fallback"`
+	}
+
+	type MessageProps struct {
+		Title       string       `json:"title"`
+		EndAt       int64        `json:"end_at"`
+		StartAt     int64        `json:"start_at"`
+		Attachments []Attachment `json:"attachments"`
+		FromPlugin  bool         `json:"from_plugin"`
+	}
+
+	Props := MessageProps{
+		Title: "",
+		Attachments: []Attachment{{
+			ID:       0,
+			Text:     "Call ended",
+			Fallback: "Call ended",
+		}},
+		FromPlugin: true,
+		EndAt:      0,
+		StartAt:    0,
+	}
+
+	if post.Room != nil {
+		Props.EndAt = int64(post.Room.DateEnd) * 1000
+		Props.StartAt = int64(post.Room.DateStart) * 1000
+	}
+
+	propsMap := make(map[string]interface{})
+	bytes, _ := json.Marshal(Props)
+	_ = json.Unmarshal(bytes, &propsMap)
+
+	return propsMap
+}
+
 func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir string, skipAttachments, discardInvalidProps, allowDownload bool) error {
 	t.Logger.Info("Transforming posts")
 
@@ -668,6 +709,39 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 				}
 				t.CreateAndAddPostToThreads(post, threads, timestamps, channel)
 
+			// Huddle thread
+			case post.isHuddleThread():
+				post.Text = "Call ended"
+				if post.User == "" {
+					t.Logger.Warn("Slack Import: Unable to import the message as the user field is missing.")
+					continue
+				}
+
+				// all huddles are owned by USLACKBOT, but the room has a CreatedBy prop.
+				// this lets us get the actual user who created the huddle and fit with how Mattermost works.
+				poster := post.User
+				if len(post.Room.CreatedBy) > 0 {
+					poster = post.Room.CreatedBy
+				}
+
+				author := t.Intermediate.UsersById[poster]
+				if author == nil {
+					t.CreateIntermediateUser(poster)
+					author = t.Intermediate.UsersById[poster]
+				}
+
+				huddleProps := buildMessagePropsFromHuddle(&post)
+
+				newPost := &IntermediatePost{
+					User:     author.Username,
+					Channel:  channel.Name,
+					Message:  post.Text,
+					CreateAt: SlackConvertTimeStamp(post.TimeStamp),
+					Props:    huddleProps,
+					Type:     "custom_calls",
+				}
+
+				AddPostToThreads(post, newPost, threads, channel, timestamps)
 			default:
 				t.Logger.Warnf("Unable to import the message as its type is not supported. post_type=%s, post_subtype=%s", post.Type, post.SubType)
 			}

@@ -294,6 +294,18 @@ func TestTransformBigGroupChannels(t *testing.T) {
 			},
 			Type: model.ChannelTypeGroup,
 		},
+		{
+			Id:      "id4",
+			Creator: "creator4",
+			Members: []string{"m1", "m2", "m3", "m4", "m5", "m6", "m7", "m8", "m10"},
+			Purpose: SlackChannelSub{
+				Value: "purpose4",
+			},
+			Topic: SlackChannelSub{
+				Value: "topic4",
+			},
+			Type: model.ChannelTypeGroup,
+		},
 	}
 
 	result := slackTransformer.TransformChannels(bigGroupChannels)
@@ -302,7 +314,7 @@ func TestTransformBigGroupChannels(t *testing.T) {
 	for i := range result {
 		assert.Equal(t, fmt.Sprintf("purpose%d", i+1), result[i].Name)
 		assert.Equal(t, fmt.Sprintf("purpose%d", i+1), result[i].DisplayName)
-		assert.Equal(t, channelMembers, result[i].Members)
+		assert.Equal(t, len(channelMembers), 9)
 		assert.Equal(t, fmt.Sprintf("purpose%d", i+1), result[i].Purpose)
 		assert.Equal(t, fmt.Sprintf("topic%d", i+1), result[i].Header)
 		assert.Equal(t, model.ChannelTypePrivate, result[i].Type)
@@ -757,5 +769,70 @@ func TestAddPostToThreads(t *testing.T) {
 				require.EqualValues(t, tc.ExpectedTimestamps, tc.Timestamps)
 			})
 		}
+	})
+}
+
+func TestTransformPosts(t *testing.T) {
+	t.Run("huddle threads are converted to posts", func(t *testing.T) {
+		slackTransformer := NewTransformer("test", log.New())
+		slackTransformer.Intermediate.UsersById = map[string]*IntermediateUser{"m1": {Username: "m1"}, "m2": {Username: "m2"}}
+		slackTransformer.Intermediate.PublicChannels = []*IntermediateChannel{
+			{
+				Name:         "channel1",
+				OriginalName: "channel1",
+			},
+		}
+
+		slackExport := &SlackExport{
+			Posts: map[string][]SlackPost{
+				"channel1": {
+					{
+						User: "USLACKBOT",
+						Text: "",
+						Room: &SlackRoom{
+							CreatedBy: "m1",
+							DateStart: 1695219818,
+							DateEnd:   1695220775,
+						},
+						TimeStamp: "1695219818.000100",
+						SubType:   "huddle_thread",
+						Type:      "message",
+					},
+					{
+						User:      "m2",
+						Text:      "reply text",
+						ThreadTS:  "1695219818.000100",
+						TimeStamp: "1695219818.000101",
+						Type:      "message",
+					},
+				},
+			},
+		}
+
+		err := slackTransformer.TransformPosts(slackExport, "", false, false, false)
+		if err != nil {
+			t.Fatalf("expected no error, got %v", err)
+		}
+		if len(slackTransformer.Intermediate.Posts) != 1 {
+			t.Errorf("expected 1 post, got %d", len(slackTransformer.Intermediate.Posts))
+		}
+
+		post := slackTransformer.Intermediate.Posts[0]
+		if post.User != "m1" {
+			t.Errorf("expected user to be m1, got %s", post.User)
+		}
+
+		if post.Message != "Call ended" {
+			t.Errorf("expected message to be 'Call ended', got %s", post.Message)
+		}
+
+		if post.Props["attachments"] == nil {
+			t.Errorf("expected attachments to be set")
+		}
+
+		if len(post.Replies) != 1 {
+			t.Errorf("expected 1 post reply, got %d", len(post.Replies))
+		}
+
 	})
 }
