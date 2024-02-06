@@ -392,6 +392,7 @@ func (t *Transformer) ParseSlackExportFile(zipReader *zip.Reader, skipConvertPos
 				if len(spl) == 2 && strings.HasSuffix(spl[1], ".json") {
 					newposts, _ := t.SlackParsePosts(reader)
 					channel := spl[0]
+					t.Logger.Info("Channel: ", channel, " Posts: ", len(newposts))
 					if _, ok := slackExport.Posts[channel]; !ok {
 						slackExport.Posts[channel] = newposts
 					} else {
