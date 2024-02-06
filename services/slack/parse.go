@@ -194,12 +194,14 @@ func (t *Transformer) SlackParsePosts(data io.Reader) ([]SlackPost, error) {
 	var posts []SlackPost
 	if err := decoder.Decode(&posts); err != nil {
 		t.Logger.Warnf("Slack Import: Error occurred when parsing some Slack posts. Import may work anyway. err=%v", err)
+		t.Logger.Info("Parse Posts - Total Posts: ", len(posts))
 		return posts, err
 	}
 	return posts, nil
 }
 
 func (t *Transformer) SlackConvertUserMentions(users []SlackUser, posts map[string][]SlackPost) map[string][]SlackPost {
+	t.Logger.Info("Convert User Mentions - Total Posts: ", len(posts))
 	var regexes = make(map[string]*regexp.Regexp, len(users))
 	for _, user := range users {
 		r, err := regexp.Compile("<@" + user.Id + `(\|` + user.Username + ")?>")
@@ -238,6 +240,8 @@ func (t *Transformer) SlackConvertUserMentions(users []SlackUser, posts map[stri
 }
 
 func (t *Transformer) SlackConvertChannelMentions(channels []SlackChannel, posts map[string][]SlackPost) map[string][]SlackPost {
+	t.Logger.Info("Convert Channel Mentions - Total Posts: ", len(posts))
+
 	var regexes = make(map[string]*regexp.Regexp, len(channels))
 	for _, channel := range channels {
 		r, err := regexp.Compile("<#" + channel.Id + `(\|` + channel.Name + ")?>")
@@ -272,6 +276,8 @@ func (t *Transformer) SlackConvertChannelMentions(channels []SlackChannel, posts
 }
 
 func (t *Transformer) SlackConvertPostsMarkup(posts map[string][]SlackPost) map[string][]SlackPost {
+	t.Logger.Info("Convert Posts Markdown - Total Posts: ", len(posts))
+
 	regexReplaceAllString := []struct {
 		regex *regexp.Regexp
 		rpl   string
