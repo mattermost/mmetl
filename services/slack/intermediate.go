@@ -519,7 +519,7 @@ func buildMessagePropsFromHuddle(post *SlackPost) model.StringInterface {
 		FromPlugin  bool         `json:"from_plugin"`
 	}
 
-	Props := MessageProps{
+	props := MessageProps{
 		Title: "",
 		Attachments: []Attachment{{
 			ID:       0,
