@@ -117,7 +117,7 @@ func (t *BulkTransformer) ParseBulkSlackExportFile(zipReader *zip.Reader) (*Bulk
 
 /*
 *
-The primary function here that is responsible for transforming the data. It accepts a slack channel, which can
+HandleMovingChannels is the primary function in this package that is responsible for transforming the data. It accepts a slack channel, which can
 be of GM / DM / Private / Public. It then finds the team ID for that channel and moves it to the correct team directory.
 Any channels that do not have a valid mapping in the teams.json file or no team ID found are skipped.
 *
