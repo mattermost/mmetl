@@ -43,7 +43,7 @@ func (t *GridTransformer) dirHasContent(dest string) (bool, error) {
 	}
 
 	if len(entries) > 0 {
-		t.Logger.Errorf("directory %s is not empty. Using existing data.", dest)
+		fmt.Printf("directory %s is not empty. Using existing data. \n", dest)
 		return true, nil
 	}
 	return false, nil
