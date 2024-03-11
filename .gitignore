@@ -1,2 +1,11 @@
 mmetl
 build/
+slackData
+mmetl.md5.txt
+tmp
+.DS_Store
+
+*.log
+*.zip
+*.jsonl
+.idea
