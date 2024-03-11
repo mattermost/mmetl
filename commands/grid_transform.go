@@ -107,7 +107,7 @@ func gridTransformCmdF(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	slackExport, err := slackTransformer.ParseBulkSlackExportFile(zipReader)
+	slackExport, err := slackTransformer.ParseGridSlackExportFile(zipReader)
 	if err != nil {
 		logger.Error("error parsing slack export: %w", err)
 		return err

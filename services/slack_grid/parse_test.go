@@ -21,18 +21,18 @@ type TestStruct struct {
 	result string
 }
 
-func setupBulkTransformer(t *testing.T) *BulkTransformer {
-	bulkTransformer := NewGridTransformer(logrus.New())
+func setupGridTransformer(t *testing.T) *GridTransformer {
+	gridTransformer := NewGridTransformer(logrus.New())
 	testDir := createTestDir(t)
 	defer os.RemoveAll(testDir)
-	bulkTransformer.dirPath = testDir
+	gridTransformer.dirPath = testDir
 
-	return bulkTransformer
+	return gridTransformer
 }
 
-func TestParseBulkSlackExportFile(t *testing.T) {
+func TestParseGridSlackExportFile(t *testing.T) {
 	// Create a new logger for testing
-	bt := setupBulkTransformer(t)
+	bt := setupGridTransformer(t)
 
 	// Create a new zip file for testing
 	zipData := new(bytes.Buffer)
@@ -77,18 +77,22 @@ func TestParseBulkSlackExportFile(t *testing.T) {
 
 	// we do not need a team name here.
 
-	valid := bt.GridPreCheck(zipReader)
-	if !valid {
-		t.Fatal(err)
+	bt.Teams = map[string]string{
+		"team1": "team1",
 	}
 
-	// Call the ParseBulkSlackExportFile function
-	slackExport, err := bt.ParseBulkSlackExportFile(zipReader)
+	valid := bt.GridPreCheck(zipReader)
+	if !valid {
+		t.Fatal("file is not valid")
+	}
+
+	// Call the ParseGridSlackExportFile function
+	slackExport, err := bt.ParseGridSlackExportFile(zipReader)
 
 	// Check the returned error
 	assert.NoError(t, err)
 
-	// Check the returned BulkSlackExport
+	// Check the returned GridSlackExport
 	// For example, you can check if the number of channels matches the expected number
 	assert.Equal(t, 5, len(slackExport.Private))
 	assert.Equal(t, 5, len(slackExport.DMs))
@@ -119,7 +123,7 @@ func TestChannelHasBeenMoved(t *testing.T) {
 }
 
 func TestFindTeamIDFromPostArray(t *testing.T) {
-	bt := setupBulkTransformer(t)
+	bt := setupGridTransformer(t)
 	tests := []TestStruct{
 		{posts: []Post{{Team: "team1"}, {}}, result: "team1"},
 		{posts: []Post{{}, {}, {Team: "team1"}}, result: "team1"},
@@ -138,7 +142,7 @@ func TestFindTeamIDFromPostArray(t *testing.T) {
 }
 
 func TestFindTeamIdFromChannelDir(t *testing.T) {
-	bt := setupBulkTransformer(t)
+	bt := setupGridTransformer(t)
 
 	postsWithTwoTeams := [][]Post{
 		{{}, {}, {Team: ""}},
@@ -197,7 +201,7 @@ func TestFindTeamIdFromChannelDir(t *testing.T) {
 }
 
 func TestAppendChannelToChannelsToMove(t *testing.T) {
-	bt := setupBulkTransformer(t)
+	bt := setupGridTransformer(t)
 
 	teamName := "team1"
 
@@ -226,7 +230,7 @@ func TestAppendChannelToChannelsToMove(t *testing.T) {
 
 func TestHandleMovingChannels(t *testing.T) {
 
-	bt := setupBulkTransformer(t)
+	bt := setupGridTransformer(t)
 
 	bt.Teams = map[string]string{
 		"team1": "team1",

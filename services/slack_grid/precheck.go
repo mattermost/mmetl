@@ -4,10 +4,9 @@ import (
 	"archive/zip"
 )
 
-func (t *BulkTransformer) GridPreCheck(zipReader *zip.Reader) bool {
+func (t *GridTransformer) GridPreCheck(zipReader *zip.Reader) bool {
 
 	requiredFiles := []string{
-		// "org_users.json",
 		"channels.json",
 		"dms.json",
 		"groups.json",

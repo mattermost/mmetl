@@ -14,7 +14,7 @@ import (
 
 const DefaultDirPath = "tmp/slack_grid"
 
-func (t *BulkTransformer) GetWorkingDir() (string, error) {
+func (t *GridTransformer) GetWorkingDir() (string, error) {
 	dir, err := os.Getwd()
 	if err != nil {
 		return "", errors.Wrap(err, "error getting current working directory")
@@ -22,7 +22,7 @@ func (t *BulkTransformer) GetWorkingDir() (string, error) {
 	return dir, nil
 }
 
-func (t *BulkTransformer) readDir(dest string) ([]fs.DirEntry, error) {
+func (t *GridTransformer) readDir(dest string) ([]fs.DirEntry, error) {
 	files, err := os.ReadDir(dest)
 	if err != nil {
 		return nil, errors.Wrap(err, fmt.Sprintf("error reading directory %v", dest))
@@ -30,7 +30,7 @@ func (t *BulkTransformer) readDir(dest string) ([]fs.DirEntry, error) {
 	return files, nil
 }
 
-func (t *BulkTransformer) dirHasContent(dest string) (bool, error) {
+func (t *GridTransformer) dirHasContent(dest string) (bool, error) {
 
 	err := os.MkdirAll(t.dirPath, os.ModePerm)
 	if err != nil {
@@ -49,7 +49,7 @@ func (t *BulkTransformer) dirHasContent(dest string) (bool, error) {
 	return false, nil
 }
 
-func (t *BulkTransformer) ExtractDirectory(zipReader *zip.Reader) error {
+func (t *GridTransformer) ExtractDirectory(zipReader *zip.Reader) error {
 	t.Logger.Info("Extracting files...")
 	pwd, err := t.GetWorkingDir()
 
@@ -74,7 +74,7 @@ func (t *BulkTransformer) ExtractDirectory(zipReader *zip.Reader) error {
 
 	for i, f := range zipReader.File {
 
-		// slack file conversations have a : in the name. So, "FC:123:123" would be valid. This simply removes the : from the name.
+		// Slack file conversations have a : in the name. So, "FC:123:123" would be valid. This simply removes the : from the name.
 		// currently, these imports are not supported by the slack grid importer so the files are not referenced later.
 		sanitizedFileName := strings.ReplaceAll(f.Name, ":", "")
 		fpath := filepath.Join(t.dirPath, sanitizedFileName)
@@ -121,7 +121,7 @@ func (t *BulkTransformer) ExtractDirectory(zipReader *zip.Reader) error {
 	return nil
 }
 
-func (t *BulkTransformer) ZipTeamDirectories() error {
+func (t *GridTransformer) ZipTeamDirectories() error {
 
 	// zip the directories under /teams
 

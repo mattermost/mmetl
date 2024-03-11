@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"github.com/mattermost/mattermost-server/v6/model"
-	slack "github.com/mattermost/mmetl/services/slack"
+	"github.com/mattermost/mmetl/services/slack"
 	"github.com/pkg/errors"
 
 	log "github.com/sirupsen/logrus"
@@ -24,10 +24,17 @@ const (
 	ChannelFileGM      ChannelFiles = "mpims"
 )
 
+const (
+	ChannelFilePublicWithExt  = string(ChannelFilePublic) + ".json"
+	ChannelFilePrivateWithExt = string(ChannelFilePrivate) + ".json"
+	ChannelFileDMWithExt      = string(ChannelFileDM) + ".json"
+	ChannelFileGMWithExt      = string(ChannelFileGM) + ".json"
+)
+
 const ErrFindingTeamID = "Could not find team ID for channel %v, ID: %v"
 const ErrFindingTeamName = "Could not find team name for channel %v"
 
-type BulkSlackExport struct {
+type GridSlackExport struct {
 	Public  []slack.SlackChannel
 	Private []slack.SlackChannel
 	GMs     []slack.SlackChannel
@@ -46,7 +53,7 @@ type Channel struct {
 	Team string `json:"team"`
 }
 
-type BulkTransformer struct {
+type GridTransformer struct {
 	slack.Transformer
 	Teams map[string]string
 
@@ -66,8 +73,8 @@ type ChannelsToMove struct {
 	Path string
 }
 
-func NewGridTransformer(logger log.FieldLogger) *BulkTransformer {
-	return &BulkTransformer{
+func NewGridTransformer(logger log.FieldLogger) *GridTransformer {
+	return &GridTransformer{
 		Transformer: slack.Transformer{
 			Intermediate: &slack.Intermediate{},
 			Logger:       logger,
@@ -75,8 +82,8 @@ func NewGridTransformer(logger log.FieldLogger) *BulkTransformer {
 	}
 }
 
-func (t *BulkTransformer) ParseBulkSlackExportFile(zipReader *zip.Reader) (*BulkSlackExport, error) {
-	slackExport := BulkSlackExport{}
+func (t *GridTransformer) ParseGridSlackExportFile(zipReader *zip.Reader) (*GridSlackExport, error) {
+	slackExport := GridSlackExport{}
 
 	// only finding the root information here and storing it.
 	for i, file := range zipReader.File {
@@ -91,13 +98,13 @@ func (t *BulkTransformer) ParseBulkSlackExportFile(zipReader *zip.Reader) (*Bulk
 			defer reader.Close()
 
 			switch file.Name {
-			case string(ChannelFilePublic) + ".json":
+			case ChannelFilePublicWithExt:
 				slackExport.Public, err = t.parseChannel(file, model.ChannelTypeOpen, "error parsing channels.json")
-			case string(ChannelFilePrivate) + ".json":
+			case ChannelFilePrivateWithExt:
 				slackExport.Private, err = t.parseChannel(file, model.ChannelTypePrivate, "error parsing groups.json")
-			case string(ChannelFileDM) + ".json":
+			case ChannelFileDMWithExt:
 				slackExport.DMs, err = t.parseChannel(file, model.ChannelTypeDirect, "error parsing dms.json")
-			case string(ChannelFileGM) + ".json":
+			case ChannelFileGMWithExt:
 				slackExport.GMs, err = t.parseChannel(file, model.ChannelTypeGroup, "error parsing mpims.json")
 			default:
 			}
@@ -115,14 +122,11 @@ func (t *BulkTransformer) ParseBulkSlackExportFile(zipReader *zip.Reader) (*Bulk
 	return &slackExport, nil
 }
 
-/*
-*
-HandleMovingChannels is the primary function in this package that is responsible for transforming the data. It accepts a slack channel, which can
-be of GM / DM / Private / Public. It then finds the team ID for that channel and moves it to the correct team directory.
-Any channels that do not have a valid mapping in the teams.json file or no team ID found are skipped.
-*
-*/
-func (t *BulkTransformer) HandleMovingChannels(slackChannels []slack.SlackChannel, channelType ChannelFiles) error {
+// The primary function here that is responsible for transforming the data. It accepts a Slack channel, which can
+// be of GM / DM / Private / Public. It then finds the team ID for that channel and moves it to the correct team directory.
+// Any channels that do not have a valid mapping in the teams.json file or no team ID found are skipped.
+
+func (t *GridTransformer) HandleMovingChannels(slackChannels []slack.SlackChannel, channelType ChannelFiles) error {
 	t.Logger.Infof("Unzipped slack export path being used: %v", t.dirPath)
 
 	itemsInDir, err := t.readDir(t.dirPath)
@@ -145,8 +149,8 @@ func (t *BulkTransformer) HandleMovingChannels(slackChannels []slack.SlackChanne
 
 // getChannelsToMove returns a slice of ChannelsToMove for the given slackChannels and itemsInDir.
 // It uses the channelType to determine the path name for each channel.
-func (t *BulkTransformer) getChannelsToMove(slackChannels []slack.SlackChannel, itemsInDir []fs.DirEntry, channelType ChannelFiles) ([]ChannelsToMove, error) {
-	channelsToMove := []ChannelsToMove{}
+func (t *GridTransformer) getChannelsToMove(slackChannels []slack.SlackChannel, itemsInDir []fs.DirEntry, channelType ChannelFiles) ([]ChannelsToMove, error) {
+	var channelsToMove []ChannelsToMove
 
 	for _, channel := range slackChannels {
 		if channelHasBeenMoved(channel, channelsToMove) {
@@ -155,7 +159,7 @@ func (t *BulkTransformer) getChannelsToMove(slackChannels []slack.SlackChannel, 
 
 		teamID, err := t.findTeamIDForChannel(channel, itemsInDir, channelType)
 		if err != nil {
-			t.Logger.Errorf("error finding team ID for channel: %w", err.Error())
+			t.Logger.Errorf("error finding team ID for channel: %v", err.Error())
 			continue
 		}
 
@@ -166,7 +170,7 @@ func (t *BulkTransformer) getChannelsToMove(slackChannels []slack.SlackChannel, 
 
 		moveChannel, err := t.createMoveChannel(channel, teamID, channelType)
 		if err != nil {
-			t.Logger.Errorf("error creating move channel: %w", err.Error())
+			t.Logger.Errorf("error creating move channel: %v", err.Error())
 			continue
 		}
 
@@ -179,7 +183,7 @@ func (t *BulkTransformer) getChannelsToMove(slackChannels []slack.SlackChannel, 
 
 // Looks in the root directory for the channel directory name.
 // If it finds it, calls findTeamIDFromChannelDir to get the team ID.
-func (t *BulkTransformer) findTeamIDForChannel(channel slack.SlackChannel, itemsInDir []fs.DirEntry, channelType ChannelFiles) (string, error) {
+func (t *GridTransformer) findTeamIDForChannel(channel slack.SlackChannel, itemsInDir []fs.DirEntry, channelType ChannelFiles) (string, error) {
 	channelDirName := getChannelDirName(channel, channelType)
 	for _, item := range itemsInDir {
 		if strings.HasPrefix(item.Name(), channelDirName) && item.Type().IsDir() {
@@ -189,7 +193,7 @@ func (t *BulkTransformer) findTeamIDForChannel(channel slack.SlackChannel, items
 	return "", errors.Errorf(ErrFindingTeamID, channel.Name, channel.Id)
 }
 
-func (t *BulkTransformer) createMoveChannel(channel slack.SlackChannel, teamID string, channelType ChannelFiles) (ChannelsToMove, error) {
+func (t *GridTransformer) createMoveChannel(channel slack.SlackChannel, teamID string, channelType ChannelFiles) (ChannelsToMove, error) {
 	teamName := t.Teams[teamID]
 	if len(teamName) == 0 {
 		return ChannelsToMove{}, errors.Errorf(ErrFindingTeamName, channel.Name)
@@ -205,7 +209,7 @@ func (t *BulkTransformer) createMoveChannel(channel slack.SlackChannel, teamID s
 	}, nil
 }
 
-func (t *BulkTransformer) parseChannel(file *zip.File, channelType model.ChannelType, errorMessage string) ([]slack.SlackChannel, error) {
+func (t *GridTransformer) parseChannel(file *zip.File, channelType model.ChannelType, errorMessage string) ([]slack.SlackChannel, error) {
 	reader, err := file.Open()
 	if err != nil {
 		return nil, errors.Wrap(err, "Error opening file for parsing.")
@@ -219,7 +223,7 @@ func (t *BulkTransformer) parseChannel(file *zip.File, channelType model.Channel
 	return channels, nil
 }
 
-func (t *BulkTransformer) moveChannels(channelsToMove []ChannelsToMove, channelType ChannelFiles) error {
+func (t *GridTransformer) moveChannels(channelsToMove []ChannelsToMove, channelType ChannelFiles) error {
 	totalChannels := len(channelsToMove)
 	t.Logger.Infof("Moving %v channels. \n", totalChannels)
 
@@ -247,7 +251,7 @@ func getChannelDirName(channel slack.SlackChannel, channelType ChannelFiles) str
 	return channel.Name
 }
 
-func (t *BulkTransformer) performChannelMove(channelType ChannelFiles, channel ChannelsToMove, channelsToMove []ChannelsToMove, channelIndex int) error {
+func (t *GridTransformer) performChannelMove(channelType ChannelFiles, channel ChannelsToMove, channelsToMove []ChannelsToMove, channelIndex int) error {
 
 	if len(channel.TeamName) == 0 {
 		return errors.Errorf(ErrFindingTeamName, channel.Path)
@@ -281,7 +285,7 @@ func (t *BulkTransformer) performChannelMove(channelType ChannelFiles, channel C
 }
 
 // this finds the correct json file in the directory and appends the channel information to it.
-func (t *BulkTransformer) appendChannelToTeamChannelsFile(channelType ChannelFiles, channel ChannelsToMove) error {
+func (t *GridTransformer) appendChannelToTeamChannelsFile(channelType ChannelFiles, channel ChannelsToMove) error {
 
 	path := filepath.Join(t.dirPath, "teams", channel.TeamName, string(channelType)+".json")
 
@@ -318,7 +322,7 @@ func (t *BulkTransformer) appendChannelToTeamChannelsFile(channelType ChannelFil
 
 // Loops over the entire directory provided to find the post[number].Team value.
 // This returns the FIRST value it finds.
-func (t *BulkTransformer) findTeamIdFromChannelDir(channelDirName string) (string, error) {
+func (t *GridTransformer) findTeamIdFromChannelDir(channelDirName string) (string, error) {
 	// these should be post files
 	postFiles, err := os.ReadDir(filepath.Join(t.dirPath, channelDirName))
 	if err != nil {
@@ -346,7 +350,7 @@ func (t *BulkTransformer) findTeamIdFromChannelDir(channelDirName string) (strin
 }
 
 // Simply looks through the post file and finds a Post[number].Team value. If it exists, it returns it.
-func (t *BulkTransformer) findTeamIDFromPostArray(content []byte) (string, error) {
+func (t *GridTransformer) findTeamIDFromPostArray(content []byte) (string, error) {
 	var posts []Post
 	err := json.Unmarshal(content, &posts)
 	if err != nil {
@@ -364,7 +368,7 @@ func (t *BulkTransformer) findTeamIDFromPostArray(content []byte) (string, error
 	return teamID, nil
 }
 
-// Simple check to see if the channel has alreaedy been moved based on it's channelID and moved status.
+// Simple check to see if the channel has already been moved based on it's channelID and moved status.
 func channelHasBeenMoved(channel slack.SlackChannel, channelsToMove []ChannelsToMove) bool {
 	for _, ch := range channelsToMove {
 		if ch.SlackChannel.Id == channel.Id && ch.Moved {

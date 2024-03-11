@@ -13,7 +13,7 @@ func TestExtractDirectory(t *testing.T) {
 	dir := createTestDir(t)
 
 	defer os.RemoveAll(dir)
-	// Create a new BulkTransformer
+	// Create a new GridTransformer
 	tf := NewGridTransformer(
 		logrus.New(),
 	)
