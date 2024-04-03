@@ -2,6 +2,7 @@ package commands
 
 import (
 	"archive/zip"
+	"fmt"
 	"os"
 
 	"github.com/mattermost/mmetl/services/slack"
@@ -46,6 +47,12 @@ func checkSlackCmdF(cmd *cobra.Command, args []string) error {
 	debug, _ := cmd.Flags().GetBool("debug")
 	skipEmptyEmails, _ := cmd.Flags().GetBool("skip-empty-emails")
 	defaultEmailDomain, _ := cmd.Flags().GetString("default-email-domain")
+	authService, _ := cmd.Flags().GetString("auth-service")
+
+	if !(authService == "" || authService == "gitlab" || authService == "ldap" ||
+		authService == "saml" || authService == "google" || authService == "office365") {
+		return fmt.Errorf("Auth serivece must be one of gitlab, ldap, saml, google, office365")
+	}
 
 	// input file
 	fileReader, err := os.Open(inputFilePath)
@@ -90,7 +97,7 @@ func checkSlackCmdF(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	err = slackTransformer.Transform(slackExport, "", true, true, false, skipEmptyEmails, defaultEmailDomain)
+	err = slackTransformer.Transform(slackExport, "", true, true, false, skipEmptyEmails, defaultEmailDomain, authService)
 	if err != nil {
 		return err
 	}

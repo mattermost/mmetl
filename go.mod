@@ -4,6 +4,7 @@ go 1.19
 
 require (
 	github.com/mattermost/mattermost-server/v6 v6.0.0-20221117092354-5be85572475c
+	github.com/n-marshall/go-cp v0.0.0-20180115193924-61436d3b7cfa
 	github.com/pkg/errors v0.9.1
 	github.com/sirupsen/logrus v1.9.0
 	github.com/spf13/cobra v1.6.1

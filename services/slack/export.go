@@ -2,6 +2,7 @@ package slack
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"math"
@@ -18,6 +19,13 @@ import (
 const (
 	POST_MAX_ATTACHMENTS = 5
 )
+
+type ChunkInfo struct {
+	Id          uint     `json:"id"`
+	File        string   `json:"file"`
+	Attachments []string `json:"attachments"`
+	Zip         string   `json:"zip,omitempty"`
+}
 
 var isValidChannelNameCharacters = regexp.MustCompile(`^[a-zA-Z0-9\-_]+$`).MatchString
 
@@ -107,24 +115,36 @@ func GetImportLineFromUser(user *IntermediateUser, team string) *imports.LineImp
 		})
 	}
 
-	return &imports.LineImportData{
-		Type: "user",
-		User: &imports.UserImportData{
-			Username:  model.NewString(user.Username),
-			Email:     model.NewString(user.Email),
-			Nickname:  model.NewString(""),
-			FirstName: model.NewString(user.FirstName),
-			LastName:  model.NewString(user.LastName),
-			Position:  model.NewString(user.Position),
-			Roles:     model.NewString(model.SystemUserRoleId),
-			Teams: &[]imports.UserTeamImportData{
-				{
-					Name:     model.NewString(team),
-					Channels: &channelMemberships,
-					Roles:    model.NewString(model.TeamUserRoleId),
-				},
+	importUser := &imports.UserImportData{
+		Username:    model.NewString(user.Username),
+		Email:       model.NewString(user.Email),
+		Nickname:    model.NewString(""),
+		FirstName:   model.NewString(user.FirstName),
+		LastName:    model.NewString(user.LastName),
+		Position:    model.NewString(user.Position),
+		Roles:       model.NewString(model.SystemUserRoleId),
+		AuthService: model.NewString(user.AuthService),
+		Teams: &[]imports.UserTeamImportData{
+			{
+				Name:     model.NewString(team),
+				Channels: &channelMemberships,
+				Roles:    model.NewString(model.TeamUserRoleId),
 			},
 		},
+	}
+	if user.AuthService != "" {
+		importUser.AuthData = model.NewString(user.AuthData)
+	} else {
+		importUser.Password = model.NewString(user.Password)
+	}
+
+	if user.IsAdmin {
+		importUser.Roles = model.NewString(model.SystemUserRoleId + " " + model.SystemAdminRoleId)
+	}
+
+	return &imports.LineImportData{
+		Type: "user",
+		User: importUser,
 	}
 }
 
@@ -169,7 +189,8 @@ func createRepliesForAttachments(attachments []imports.AttachmentImportData, use
 	return replies
 }
 
-func GetImportLineFromPost(post *IntermediatePost, team string) *imports.LineImportData {
+func GetImportLineFromPost(post *IntermediatePost, team string) (*imports.LineImportData, []string) {
+	requiredAttachemnts := post.Attachments
 	replies := []imports.ReplyImportData{}
 	postAttachments := GetAttachmentImportDataFromPaths(post.Attachments)
 
@@ -182,6 +203,7 @@ func GetImportLineFromPost(post *IntermediatePost, team string) *imports.LineImp
 
 	for _, reply := range post.Replies {
 		replyAttachments := GetAttachmentImportDataFromPaths(reply.Attachments)
+		requiredAttachemnts = append(requiredAttachemnts, reply.Attachments...)
 
 		// If a reply has more attachments than the maximum, create
 		// more replies to contain the extra attachments
@@ -229,7 +251,7 @@ func GetImportLineFromPost(post *IntermediatePost, team string) *imports.LineImp
 		}
 	}
 
-	return newPost
+	return newPost, requiredAttachemnts
 }
 
 func ExportWriteLine(writer io.Writer, line *imports.LineImportData) error {
@@ -290,57 +312,97 @@ func (t *Transformer) ExportUsers(writer io.Writer) error {
 	return nil
 }
 
-func (t *Transformer) ExportPosts(writer io.Writer) error {
-	for _, post := range t.Intermediate.Posts {
-		line := GetImportLineFromPost(post, t.TeamName)
+func (t *Transformer) ExportPosts(writer io.Writer, from uint64, to uint64) (error, []string) {
+	var attachments []string
+	for _, post := range t.Intermediate.Posts[from:to] {
+		line, postAttachments := GetImportLineFromPost(post, t.TeamName)
 		if err := ExportWriteLine(writer, line); err != nil {
-			return err
+			return err, attachments
 		}
+		attachments = append(attachments, postAttachments...)
 	}
-	return nil
+	return nil, attachments
 }
 
-func (t *Transformer) Export(outputFilePath string) error {
-	outputFile, err := os.Create(outputFilePath)
-	if err != nil {
-		return err
-	}
-	defer outputFile.Close()
+func (t *Transformer) Export(outputFilePath string, maxChunkSize uint) (error, []ChunkInfo) {
+	chunks := uint(1)
+	posts := uint(len(t.Intermediate.Posts))
 
-	t.Logger.Info("Exporting version")
-	if err := t.ExportVersion(outputFile); err != nil {
-		return err
+	if maxChunkSize == 0 {
+		maxChunkSize = posts
+	} else if posts > maxChunkSize {
+		chunks = ((posts - 1) / maxChunkSize) + 1
 	}
 
-	t.Logger.Info("Exporting public channels")
-	if err := t.ExportChannels(t.Intermediate.PublicChannels, outputFile); err != nil {
-		return err
+	var chunksInfo []ChunkInfo
+
+	for chunkN := uint(0); chunkN < chunks; chunkN++ {
+		filePath := outputFilePath
+		if chunks > 1 {
+			if strings.HasSuffix(outputFilePath, ".jsonl") {
+				filePathPrefix := outputFilePath[:(len(outputFilePath) - 6)]
+				filePath = fmt.Sprintf("%s.%d.jsonl", filePathPrefix, chunkN)
+			} else {
+				filePath = fmt.Sprintf("%s.%d.jsonl", outputFilePath, chunkN)
+			}
+		}
+		outputFile, err := os.Create(filePath)
+		if err != nil {
+			return err, chunksInfo
+		}
+		defer outputFile.Close()
+
+		chunkInfo := &ChunkInfo{
+			Id:   chunkN,
+			File: filePath,
+		}
+
+		t.Logger.Info("Exporting version")
+		if err := t.ExportVersion(outputFile); err != nil {
+			return err, chunksInfo
+		}
+
+		if chunkN == 0 {
+			t.Logger.Info("Exporting public channels")
+			if err := t.ExportChannels(t.Intermediate.PublicChannels, outputFile); err != nil {
+				return err, chunksInfo
+			}
+
+			t.Logger.Info("Exporting private channels")
+			if err := t.ExportChannels(t.Intermediate.PrivateChannels, outputFile); err != nil {
+				return err, chunksInfo
+			}
+
+			t.Logger.Info("Exporting users")
+			if err := t.ExportUsers(outputFile); err != nil {
+				return err, chunksInfo
+			}
+
+			t.Logger.Info("Exporting group channels")
+			if err := t.ExportDirectChannels(t.Intermediate.GroupChannels, outputFile); err != nil {
+				return err, chunksInfo
+			}
+
+			t.Logger.Info("Exporting direct channels")
+			if err := t.ExportDirectChannels(t.Intermediate.DirectChannels, outputFile); err != nil {
+				return err, chunksInfo
+			}
+		}
+
+		t.Logger.Info("Exporting posts")
+		chunkStart := (uint64)(chunkN * maxChunkSize)
+		maxEnd := (uint64)(posts - 1)
+		chunkEnd := (uint64)(((chunkN + 1) * maxChunkSize) - 1)
+		if maxEnd < chunkEnd {
+			chunkEnd = maxEnd
+		}
+
+		t.Logger.Infof("Export chunk %d - %d", chunkStart, chunkEnd)
+		if err, chunkInfo.Attachments = t.ExportPosts(outputFile, chunkStart, chunkEnd); err != nil {
+			return err, chunksInfo
+		}
+		chunksInfo = append(chunksInfo, *chunkInfo)
 	}
 
-	t.Logger.Info("Exporting private channels")
-	if err := t.ExportChannels(t.Intermediate.PrivateChannels, outputFile); err != nil {
-		return err
-	}
-
-	t.Logger.Info("Exporting users")
-	if err := t.ExportUsers(outputFile); err != nil {
-		return err
-	}
-
-	t.Logger.Info("Exporting group channels")
-	if err := t.ExportDirectChannels(t.Intermediate.GroupChannels, outputFile); err != nil {
-		return err
-	}
-
-	t.Logger.Info("Exporting direct channels")
-	if err := t.ExportDirectChannels(t.Intermediate.DirectChannels, outputFile); err != nil {
-		return err
-	}
-
-	t.Logger.Info("Exporting posts")
-	if err := t.ExportPosts(outputFile); err != nil {
-		return err
-	}
-
-	return nil
+	return nil, chunksInfo
 }
