@@ -410,7 +410,12 @@ func (t *Transformer) Export(outputFilePath string, maxChunkSize uint) (error, [
 		chunksInfo = append(chunksInfo, *chunkInfo)
 	}
 
-	for _, channels := range [][]*IntermediateChannel{t.Intermediate.PublicChannels, t.Intermediate.PrivateChannels, t.Intermediate.GroupChannels, t.Intermediate.DirectChannels} {
+	for _, channels := range [][]*IntermediateChannel{
+		t.Intermediate.PublicChannels,
+		t.Intermediate.PrivateChannels,
+		t.Intermediate.GroupChannels,
+		t.Intermediate.DirectChannels,
+	} {
 		for _, channel := range channels {
 			exportedChannels = append(exportedChannels, channel.Id)
 		}
