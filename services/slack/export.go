@@ -324,7 +324,7 @@ func (t *Transformer) ExportPosts(writer io.Writer, from uint64, to uint64) (err
 	return nil, attachments
 }
 
-func (t *Transformer) Export(outputFilePath string, maxChunkSize uint) (error, []ChunkInfo) {
+func (t *Transformer) Export(outputFilePath string, maxChunkSize uint) (error, []ChunkInfo, []string) {
 	chunks := uint(1)
 	posts := uint(len(t.Intermediate.Posts))
 
@@ -335,6 +335,7 @@ func (t *Transformer) Export(outputFilePath string, maxChunkSize uint) (error, [
 	}
 
 	var chunksInfo []ChunkInfo
+	var exportedChannels []string
 
 	for chunkN := uint(0); chunkN < chunks; chunkN++ {
 		filePath := outputFilePath
@@ -348,7 +349,7 @@ func (t *Transformer) Export(outputFilePath string, maxChunkSize uint) (error, [
 		}
 		outputFile, err := os.Create(filePath)
 		if err != nil {
-			return err, chunksInfo
+			return err, chunksInfo, exportedChannels
 		}
 		defer outputFile.Close()
 
@@ -359,33 +360,33 @@ func (t *Transformer) Export(outputFilePath string, maxChunkSize uint) (error, [
 
 		t.Logger.Info("Exporting version")
 		if err := t.ExportVersion(outputFile); err != nil {
-			return err, chunksInfo
+			return err, chunksInfo, exportedChannels
 		}
 
 		if chunkN == 0 {
 			t.Logger.Info("Exporting public channels")
 			if err := t.ExportChannels(t.Intermediate.PublicChannels, outputFile); err != nil {
-				return err, chunksInfo
+				return err, chunksInfo, exportedChannels
 			}
 
 			t.Logger.Info("Exporting private channels")
 			if err := t.ExportChannels(t.Intermediate.PrivateChannels, outputFile); err != nil {
-				return err, chunksInfo
+				return err, chunksInfo, exportedChannels
 			}
 
 			t.Logger.Info("Exporting users")
 			if err := t.ExportUsers(outputFile); err != nil {
-				return err, chunksInfo
+				return err, chunksInfo, exportedChannels
 			}
 
 			t.Logger.Info("Exporting group channels")
 			if err := t.ExportDirectChannels(t.Intermediate.GroupChannels, outputFile); err != nil {
-				return err, chunksInfo
+				return err, chunksInfo, exportedChannels
 			}
 
 			t.Logger.Info("Exporting direct channels")
 			if err := t.ExportDirectChannels(t.Intermediate.DirectChannels, outputFile); err != nil {
-				return err, chunksInfo
+				return err, chunksInfo, exportedChannels
 			}
 		}
 
@@ -399,10 +400,16 @@ func (t *Transformer) Export(outputFilePath string, maxChunkSize uint) (error, [
 
 		t.Logger.Infof("Export chunk %d - %d", chunkStart, chunkEnd)
 		if err, chunkInfo.Attachments = t.ExportPosts(outputFile, chunkStart, chunkEnd); err != nil {
-			return err, chunksInfo
+			return err, chunksInfo, exportedChannels
 		}
 		chunksInfo = append(chunksInfo, *chunkInfo)
 	}
 
-	return nil, chunksInfo
+	for _, channels := range [][]*IntermediateChannel{t.Intermediate.PublicChannels, t.Intermediate.PrivateChannels, t.Intermediate.GroupChannels, t.Intermediate.DirectChannels} {
+		for _, channel := range channels {
+			exportedChannels = append(exportedChannels, channel.Id)
+		}
+	}
+
+	return nil, chunksInfo, exportedChannels
 }

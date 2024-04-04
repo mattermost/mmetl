@@ -151,7 +151,7 @@ func transformSlackCmdF(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	err, chunks := slackTransformer.Export(outputFilePath, maxChunkSize)
+	err, chunks, channels := slackTransformer.Export(outputFilePath, maxChunkSize)
 	if err != nil {
 		return err
 	}
@@ -170,7 +170,13 @@ func transformSlackCmdF(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	result, err := json.Marshal(chunks)
+	result, err := json.Marshal(struct {
+		Chunks   []slack.ChunkInfo `json:"chunks"`
+		Channels []string          `json:"channels"`
+	}{
+		Chunks:   chunks,
+		Channels: channels,
+	})
 	if err != nil {
 		return err
 	}

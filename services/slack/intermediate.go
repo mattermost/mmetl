@@ -257,6 +257,7 @@ func (t *Transformer) TransformChannels(channels []SlackChannel) []*Intermediate
 
 		name := SlackConvertChannelName(channel.Name, channel.Id)
 		newChannel := &IntermediateChannel{
+			Id:           channel.Id,
 			OriginalName: getOriginalName(channel),
 			Name:         name,
 			DisplayName:  name,
