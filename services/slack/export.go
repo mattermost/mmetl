@@ -8,6 +8,7 @@ import (
 	"math"
 	"os"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -106,12 +107,16 @@ func GetImportLineFromDirectChannel(team string, channel *IntermediateChannel) *
 	}
 }
 
-func GetImportLineFromUser(user *IntermediateUser, team string) *imports.LineImportData {
+func GetImportLineFromUser(user *IntermediateUser, team string, channelsOwner []string) *imports.LineImportData {
 	channelMemberships := []imports.UserChannelImportData{}
 	for _, channelName := range user.Memberships {
+		channelRole := model.ChannelUserRoleId
+		if slices.Contains(channelsOwner, channelName) {
+			channelRole = model.ChannelAdminRoleId
+		}
 		channelMemberships = append(channelMemberships, imports.UserChannelImportData{
 			Name:  model.NewString(channelName),
-			Roles: model.NewString(model.ChannelUserRoleId),
+			Roles: model.NewString(channelRole),
 		})
 	}
 
@@ -303,7 +308,7 @@ func (t *Transformer) ExportDirectChannels(channels []*IntermediateChannel, writ
 
 func (t *Transformer) ExportUsers(writer io.Writer) error {
 	for _, user := range t.Intermediate.UsersById {
-		line := GetImportLineFromUser(user, t.TeamName)
+		line := GetImportLineFromUser(user, t.TeamName, t.Intermediate.ChannelOwners[user.Id])
 		if err := ExportWriteLine(writer, line); err != nil {
 			return err
 		}

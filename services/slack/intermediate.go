@@ -131,6 +131,7 @@ type Intermediate struct {
 	DirectChannels  []*IntermediateChannel       `json:"direct_channels"`
 	UsersById       map[string]*IntermediateUser `json:"users"`
 	Posts           []*IntermediatePost          `json:"posts"`
+	ChannelOwners   map[string][]string
 }
 
 func (t *Transformer) TransformUsers(users []SlackUser, skipEmptyEmails bool, defaultEmailDomain string, authSerivce string) {
@@ -272,6 +273,11 @@ func (t *Transformer) TransformChannels(channels []SlackChannel) []*Intermediate
 		}
 
 		newChannel.Sanitise(t.Logger)
+
+		if channel.Creator != "" {
+			t.Intermediate.ChannelOwners[channel.Creator] = append(t.Intermediate.ChannelOwners[channel.Creator], newChannel.Name)
+		}
+
 		resultChannels = append(resultChannels, newChannel)
 	}
 
@@ -756,6 +762,8 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 }
 
 func (t *Transformer) Transform(slackExport *SlackExport, attachmentsDir string, skipAttachments, discardInvalidProps, allowDownload, skipEmptyEmails bool, defaultEmailDomain string, authSerivce string) error {
+
+	t.Intermediate.ChannelOwners = make(map[string][]string)
 	t.TransformUsers(slackExport.Users, skipEmptyEmails, defaultEmailDomain, authSerivce)
 
 	if err := t.TransformAllChannels(slackExport); err != nil {
