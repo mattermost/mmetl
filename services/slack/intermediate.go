@@ -255,6 +255,10 @@ func (t *Transformer) TransformChannels(channels []SlackChannel) []*Intermediate
 			channel.Type = model.ChannelTypePrivate
 		}
 
+		if channel.Type == model.ChannelTypeOpen && channel.IsPrivate {
+			channel.Type = model.ChannelTypePrivate
+		}
+
 		name := SlackConvertChannelName(channel.Name, channel.Id)
 		newChannel := &IntermediateChannel{
 			Id:           channel.Id,

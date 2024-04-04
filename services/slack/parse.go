@@ -14,13 +14,16 @@ import (
 )
 
 type SlackChannel struct {
-	Id      string          `json:"id"`
-	Name    string          `json:"name"`
-	Creator string          `json:"creator"`
-	Members []string        `json:"members"`
-	Purpose SlackChannelSub `json:"purpose"`
-	Topic   SlackChannelSub `json:"topic"`
-	Type    model.ChannelType
+	Id        string          `json:"id"`
+	Name      string          `json:"name"`
+	Creator   string          `json:"creator"`
+	Members   []string        `json:"members"`
+	Purpose   SlackChannelSub `json:"purpose"`
+	Topic     SlackChannelSub `json:"topic"`
+	IsPrivate bool            `json:"is_private"`
+	IsGroup   bool            `json:"is_group"`
+	IsChannel bool            `json:"is_channel"`
+	Type      model.ChannelType
 }
 
 type SlackChannelSub struct {
