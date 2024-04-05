@@ -396,16 +396,17 @@ func (t *Transformer) Export(outputFilePath string, maxChunkSize uint) (error, [
 		}
 
 		t.Logger.Info("Exporting posts")
-		chunkStart := (uint64)(chunkN * maxChunkSize)
-		maxEnd := (uint64)(posts - 1)
-		chunkEnd := (uint64)(((chunkN + 1) * maxChunkSize) - 1)
-		if maxEnd < chunkEnd {
-			chunkEnd = maxEnd
-		}
+		if posts > 0 {
+			chunkStart := uint64(chunkN * maxChunkSize)
+			chunkEnd := uint64((chunkN + 1) * maxChunkSize)
+			if uint64(posts) < chunkEnd {
+				chunkEnd = uint64(posts)
+			}
 
-		t.Logger.Infof("Export chunk %d - %d", chunkStart, chunkEnd)
-		if err, chunkInfo.Attachments = t.ExportPosts(outputFile, chunkStart, chunkEnd); err != nil {
-			return err, chunksInfo, exportedChannels
+			t.Logger.Infof("Export chunk %d - %d", (chunkStart + 1), chunkEnd)
+			if err, chunkInfo.Attachments = t.ExportPosts(outputFile, chunkStart, chunkEnd); err != nil {
+				return err, chunksInfo, exportedChannels
+			}
 		}
 		chunksInfo = append(chunksInfo, *chunkInfo)
 	}

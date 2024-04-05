@@ -132,6 +132,7 @@ type Intermediate struct {
 	UsersById       map[string]*IntermediateUser `json:"users"`
 	Posts           []*IntermediatePost          `json:"posts"`
 	ChannelOwners   map[string][]string
+	BotsById        map[string]string
 }
 
 func (t *Transformer) TransformUsers(users []SlackUser, skipEmptyEmails bool, defaultEmailDomain string, authSerivce string) {
@@ -207,12 +208,13 @@ func (t *Transformer) TransformUsers(users []SlackUser, skipEmptyEmails bool, de
 		t.Logger.Debugf("TransformUsers: newUser IntermediateUser struct: %+v", newUser)
 
 		if user.IsBot {
-			newUser.Id = user.Profile.BotID
-			newUser.Email = fmt.Sprintf("%s@bot", strings.ToLower(user.Profile.BotID))
+			newUser.Email = fmt.Sprintf("%s@bot", user.Username)
+			t.Intermediate.BotsById[user.Profile.BotID] = newUser.Id
 		}
 
 		newUser.Sanitise(t.Logger, defaultEmailDomain, skipEmptyEmails)
 		resultUsers[newUser.Id] = newUser
+
 		if isAuthService {
 			t.Logger.Debugf("Slack user with email %s and auth service %s has been imported.", newUser.Email, newUser.AuthService)
 		} else {
@@ -525,6 +527,7 @@ func (t *Transformer) CreateIntermediateBot(profile SlackBotProfile) {
 		Password:  model.NewId(),
 	}
 	t.Intermediate.UsersById[profile.Id] = newUser
+	t.Intermediate.BotsById[profile.Id] = profile.Id
 	t.Logger.Warnf("Bot user added %s", profile.Username)
 }
 
@@ -580,6 +583,7 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 	channelsByOriginalName := buildChannelsByOriginalNameMap(t.Intermediate)
 
 	resultPosts := []*IntermediatePost{}
+
 	for originalChannelName, channelPosts := range slackExport.Posts {
 		channel, ok := channelsByOriginalName[originalChannelName]
 		if !ok {
@@ -656,22 +660,23 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 
 			// bot message
 			case post.IsBotMessage():
-				if post.BotId == "" {
-					if post.User == "" {
-						t.Logger.Warn("Unable to import the message as the user field is missing.")
-						continue
-					}
-					post.BotId = post.User
+				if post.BotId == "" && post.User == "" {
+					t.Logger.Warn("Unable to import the message as the user field is missing.")
+					continue
 				}
 
-				author := t.Intermediate.UsersById[post.BotId]
+				author := t.Intermediate.UsersById[post.User]
+				if author == nil {
+					if userId, ok := t.Intermediate.BotsById[post.BotId]; ok {
+						author = t.Intermediate.UsersById[userId]
+					}
+				}
 				if author == nil {
 					botProfile := post.BotProfile
 					if botProfile.Id == "" {
 						botProfile.Id = post.BotId
 						botProfile.Username = post.BotUsername
 					}
-
 					t.CreateIntermediateBot(botProfile)
 					author = t.Intermediate.UsersById[post.BotId]
 				}
@@ -764,6 +769,7 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 func (t *Transformer) Transform(slackExport *SlackExport, attachmentsDir string, skipAttachments, discardInvalidProps, allowDownload, skipEmptyEmails bool, defaultEmailDomain string, authSerivce string) error {
 
 	t.Intermediate.ChannelOwners = make(map[string][]string)
+	t.Intermediate.BotsById = make(map[string]string)
 	t.TransformUsers(slackExport.Users, skipEmptyEmails, defaultEmailDomain, authSerivce)
 
 	if err := t.TransformAllChannels(slackExport); err != nil {
