@@ -211,6 +211,7 @@ func GetImportLineFromPost(post *IntermediatePost, team string) *imports.LineImp
 				CreateAt:       &post.CreateAt,
 				Replies:        &replies,
 				Attachments:    &postAttachments,
+				Type:           &post.Type,
 			},
 		}
 	} else {
@@ -225,6 +226,7 @@ func GetImportLineFromPost(post *IntermediatePost, team string) *imports.LineImp
 				CreateAt:    &post.CreateAt,
 				Replies:     &replies,
 				Attachments: &postAttachments,
+				Type:        &post.Type,
 			},
 		}
 	}
