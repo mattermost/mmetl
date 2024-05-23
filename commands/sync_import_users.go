@@ -13,12 +13,12 @@ import (
 var SyncImportUsersCmd = &cobra.Command{
 	Use:   "sync-import-users",
 	Short: "Checks if any users in the export file already exist in the Mattermost instance, and makes sure both username and email are the same in both cases.",
-	Long:  "Checks if any users in the export file already exist in the Mattermost instance, and makes sure both username and email are the same in both cases. This requires credentials or to have local mode enabled/available.",
+	Long:  "The command uses the Mattermost database as the source of truth, and edits the import file accordingly to match the database's state. In the case of there being two matches found (one for username and one for email), this command gives precedence to users that are active, and then gives precedence to the matching username. This command requires credentials or to have local mode enabled/available.",
 	RunE:  syncImportUsersCmdF,
 }
 
 func init() {
-	SyncImportUsersCmd.Flags().StringP("file", "f", "", "the mmetl file to check")
+	SyncImportUsersCmd.Flags().StringP("file", "f", "", "the bulk import jsonl file to check")
 	SyncImportUsersCmd.Flags().StringP("output", "o", "", "the output file name")
 	SyncImportUsersCmd.Flags().Bool("dry-run", false, "When true, the tool avoids updating user records in the import file.")
 
@@ -40,6 +40,10 @@ func syncImportUsersCmdF(cmd *cobra.Command, args []string) error {
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 	debug, _ := cmd.Flags().GetBool("debug")
 	localMode, _ := cmd.Flags().GetBool("local")
+
+	if !dryRun && outputFilePath == "" {
+		return errors.New("output file is required when not in dry-run mode")
+	}
 
 	fileReader, err := os.Open(importFilePath)
 	if err != nil {
