@@ -19,10 +19,14 @@ type SyncImportUsersFlags struct {
 	OutputFile string
 }
 
+// Take into account long lines in the jsonl file, for posts that may have many large replies
+const bufferSize = 1024 * 1024
+const scannerSize = 5 * 1024 * 1024
+
 func SyncImportUsers(reader io.Reader, flags SyncImportUsersFlags, client *model.Client4, logger *logrus.Logger) error {
 	scanner := bufio.NewScanner(reader)
-	buf := make([]byte, 0, 1024*1024)
-	scanner.Buffer(buf, 5*1024*1024)
+	buf := make([]byte, 0, bufferSize)
+	scanner.Buffer(buf, scannerSize)
 
 	var out *os.File
 	var err error
