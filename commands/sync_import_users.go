@@ -4,7 +4,7 @@ import (
 	"errors"
 	"os"
 
-	"github.com/mattermost/mattermost-server/v6/model"
+	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mmetl/services/data_integrity"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
@@ -73,7 +73,7 @@ func syncImportUsersCmdF(cmd *cobra.Command, args []string) error {
 		siteURL := os.Getenv("MM_SITE_URL")
 		adminToken := os.Getenv("MM_ADMIN_TOKEN")
 		if siteURL == "" || adminToken == "" {
-			return errors.New("Please use the --local flag, or provide the Mattermost site URL and admin token via environment variables MM_SITE_URL and MM_ADMIN_TOKEN")
+			return errors.New("please use the --local flag, or provide the Mattermost site URL and admin token via environment variables MM_SITE_URL and MM_ADMIN_TOKEN")
 		}
 
 		client = model.NewAPIv4Client(siteURL)

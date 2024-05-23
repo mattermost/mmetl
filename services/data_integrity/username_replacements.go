@@ -1,7 +1,7 @@
 package data_integrity
 
 import (
-	"github.com/mattermost/mattermost-server/v6/app/imports"
+	"github.com/mattermost/mattermost/server/v8/channels/app/imports"
 )
 
 func processPost(post *imports.PostImportData, usernameMappings map[string]string) *imports.PostImportData {

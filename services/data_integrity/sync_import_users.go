@@ -2,6 +2,7 @@ package data_integrity
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"io"
 	"os"
@@ -10,8 +11,8 @@ import (
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 
-	"github.com/mattermost/mattermost-server/v6/app/imports"
-	"github.com/mattermost/mattermost-server/v6/model"
+	"github.com/mattermost/mattermost/server/public/model"
+	"github.com/mattermost/mattermost/server/v8/channels/app/imports"
 )
 
 type SyncImportUsersFlags struct {
@@ -52,6 +53,8 @@ func SyncImportUsers(reader io.Reader, flags SyncImportUsersFlags, client *model
 	usersChanged := []string{}
 	usernameMappings := map[string]string{}
 
+	ctx := context.Background()
+
 	logger.Info("Starting sync process")
 	for scanner.Scan() {
 		var lineData imports.LineImportData
@@ -71,7 +74,7 @@ func SyncImportUsers(reader io.Reader, flags SyncImportUsersFlags, client *model
 			oldUsername := *user.Username
 			logger.Debugf("Processing user %s", oldUsername)
 
-			usernameChanged, emailChanged, err := mergeImportFileUser(user, flags, client, logger)
+			usernameChanged, emailChanged, err := mergeImportFileUser(ctx, user, flags, client, logger)
 			if err != nil {
 				logger.Errorf("Error checking user %s, keeping import record as-is. %v", *user.Username, err)
 				break
@@ -146,14 +149,14 @@ func removeDuplicateChannelMemberships(user *imports.UserImportData, flags SyncI
 	teams[0].Channels = &chansOut
 }
 
-func mergeImportFileUser(user *imports.UserImportData, flags SyncImportUsersFlags, client *model.Client4, logger *logrus.Logger) (usernameChanged, emailChanged bool, err error) {
+func mergeImportFileUser(ctx context.Context, user *imports.UserImportData, flags SyncImportUsersFlags, client *model.Client4, logger *logrus.Logger) (usernameChanged, emailChanged bool, err error) {
 	usernameExists := false
 	emailExists := false
 
 	emailFromImport := strings.ToLower(*user.Email)
 	usernameFromImport := strings.ToLower(*user.Username)
 
-	existingUserByUsername, resp, err := client.GetUserByUsername(usernameFromImport, "")
+	existingUserByUsername, resp, err := client.GetUserByUsername(ctx, usernameFromImport, "")
 	if err != nil {
 		if resp == nil {
 			return false, false, errors.Wrap(err, "error fetching user by username")
@@ -169,7 +172,7 @@ func mergeImportFileUser(user *imports.UserImportData, flags SyncImportUsersFlag
 		logger.Debugf("Username %s exists in database", usernameFromImport)
 	}
 
-	existingUserByEmail, resp, err := client.GetUserByEmail(emailFromImport, "")
+	existingUserByEmail, resp, err := client.GetUserByEmail(ctx, emailFromImport, "")
 	if err != nil {
 		if resp == nil {
 			return false, false, errors.Wrap(err, "error fetching user by email")
