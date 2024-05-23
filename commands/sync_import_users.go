@@ -20,16 +20,12 @@ var SyncImportUsersCmd = &cobra.Command{
 func init() {
 	SyncImportUsersCmd.Flags().StringP("file", "f", "", "the mmetl file to check")
 	SyncImportUsersCmd.Flags().StringP("output", "o", "", "the output file name")
-	SyncImportUsersCmd.Flags().Bool("update-users", false, "Whether to update user records in the import file. When this flag is not provided, the tool runs a dry run to note which users would be updated.")
+	SyncImportUsersCmd.Flags().Bool("dry-run", false, "When true, the tool avoids updating user records in the import file.")
 
 	SyncImportUsersCmd.Flags().Bool("debug", false, "Whether to show debug logs or not")
 	SyncImportUsersCmd.Flags().Bool("local", false, "Whether to use local mode to check for existing users")
 
 	if err := SyncImportUsersCmd.MarkFlagRequired("file"); err != nil {
-		panic(err)
-	}
-
-	if err := SyncImportUsersCmd.MarkFlagRequired("output"); err != nil {
 		panic(err)
 	}
 
@@ -41,7 +37,7 @@ func init() {
 func syncImportUsersCmdF(cmd *cobra.Command, args []string) error {
 	importFilePath, _ := cmd.Flags().GetString("file")
 	outputFilePath, _ := cmd.Flags().GetString("output")
-	updateUsers, _ := cmd.Flags().GetBool("update-users")
+	dryRun, _ := cmd.Flags().GetBool("dry-run")
 	debug, _ := cmd.Flags().GetBool("debug")
 	localMode, _ := cmd.Flags().GetBool("local")
 
@@ -81,8 +77,8 @@ func syncImportUsersCmdF(cmd *cobra.Command, args []string) error {
 	}
 
 	flags := data_integrity.SyncImportUsersFlags{
-		UpdateUsers: updateUsers,
-		OutputFile:  outputFilePath,
+		DryRun:     dryRun,
+		OutputFile: outputFilePath,
 	}
 
 	err = data_integrity.SyncImportUsers(fileReader, flags, client, logger)

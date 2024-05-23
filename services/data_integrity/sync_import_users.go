@@ -15,8 +15,8 @@ import (
 )
 
 type SyncImportUsersFlags struct {
-	UpdateUsers bool
-	OutputFile  string
+	DryRun     bool
+	OutputFile string
 }
 
 func SyncImportUsers(reader io.Reader, flags SyncImportUsersFlags, client *model.Client4, logger *logrus.Logger) error {
@@ -37,7 +37,7 @@ func SyncImportUsers(reader io.Reader, flags SyncImportUsersFlags, client *model
 		return nil
 	}
 
-	if flags.UpdateUsers {
+	if !flags.DryRun {
 		out, err = os.OpenFile(flags.OutputFile, os.O_CREATE|os.O_WRONLY, 0666)
 		if err != nil {
 			return errors.Wrap(err, "Error opening output file")
@@ -106,7 +106,7 @@ func SyncImportUsers(reader io.Reader, flags SyncImportUsersFlags, client *model
 		return err
 	}
 
-	if !flags.UpdateUsers {
+	if flags.DryRun {
 		logger.Info("Exited after reading users from import file, due to not providing --update-users flag")
 	}
 
@@ -220,7 +220,7 @@ func mergeImportFileUser(user *imports.UserImportData, flags SyncImportUsersFlag
 	if !avoidUpdatingEmail && usernameExists && existingUserByUsername.Email != emailFromImport {
 		emailChanged = true
 		user.Email = &existingUserByUsername.Email
-		if flags.UpdateUsers {
+		if !flags.DryRun {
 			logger.Infof("Updating email for user %s from %s to %s", usernameFromImport, emailFromImport, existingUserByUsername.Email)
 		} else {
 			logger.Infof("Use the `--update-users` flag to update the import file's user record for user %s", usernameFromImport)
@@ -231,7 +231,7 @@ func mergeImportFileUser(user *imports.UserImportData, flags SyncImportUsersFlag
 	if !avoidUpdatingUsername && emailExists && existingUserByEmail.Username != usernameFromImport {
 		usernameChanged = true
 		user.Username = &existingUserByEmail.Username
-		if flags.UpdateUsers {
+		if !flags.DryRun {
 			logger.Infof("Updating username for user %s from %s to %s", emailFromImport, usernameFromImport, existingUserByEmail.Username)
 		} else {
 			logger.Infof("Use the `--update-users` flag to update the import file's user record for user %s", usernameFromImport)
