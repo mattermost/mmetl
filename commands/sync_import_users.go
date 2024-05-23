@@ -23,7 +23,7 @@ func init() {
 	SyncImportUsersCmd.Flags().Bool("dry-run", false, "When true, the tool avoids updating user records in the import file.")
 
 	SyncImportUsersCmd.Flags().Bool("debug", false, "Whether to show debug logs or not")
-	SyncImportUsersCmd.Flags().Bool("local", false, "Whether to use local mode to check for existing users")
+	SyncImportUsersCmd.Flags().Bool("local", false, "Whether to use local mode to check for existing users.")
 
 	if err := SyncImportUsersCmd.MarkFlagRequired("file"); err != nil {
 		panic(err)
