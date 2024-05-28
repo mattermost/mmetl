@@ -96,12 +96,13 @@ func TestYourCommandFunction(t *testing.T) {
 			expectedOutput: `{"type":"version","version":1}
 {"type":"channel","channel":{"team":"myteam","name":"general","display_name":"general","type":"O","header":"Work matters","purpose":"Company wide announcements and work-based matters"}}
 {"type":"channel","channel":{"team":"myteam","name":"random","display_name":"random","type":"O","header":"Anything goes!","purpose":"Non-work related chit-chat"}}
-{"type":"user","user":{"username":"JohnDoe","email":"john.doe@example.com","auth_service":null,"nickname":"","first_name":"John","last_name":"Doe","position":"Software Engineer","roles":"system_user","locale":null,"teams":[{"name":"myteam","roles":"team_user","channels":[{"name":"general","roles":"channel_user"},{"name":"random","roles":"channel_user"}]}]}}
-{"type":"user","user":{"username":"JaneSmith","email":"jane.smith@example.com","auth_service":null,"nickname":"","first_name":"Jane","last_name":"Smith","position":"Product Manager","roles":"system_user","locale":null,"teams":[{"name":"myteam","roles":"team_user","channels":[{"name":"general","roles":"channel_user"},{"name":"random","roles":"channel_user"}]}]}}
+{"type":"user","user":{"username":"JohnDoe","email":"john.doe@example.com","auth_service":"","password":"testpassword","nickname":"","first_name":"John","last_name":"Doe","position":"Software Engineer","roles":"system_user","locale":null,"teams":[{"name":"myteam","roles":"team_user","channels":[{"name":"general","roles":"channel_admin"},{"name":"random","roles":"channel_user"}]}]}}
+{"type":"user","user":{"username":"JaneSmith","email":"jane.smith@example.com","auth_service":"","password":"testpassword","nickname":"","first_name":"Jane","last_name":"Smith","position":"Product Manager","roles":"system_user","locale":null,"teams":[{"name":"myteam","roles":"team_user","channels":[{"name":"general","roles":"channel_user"},{"name":"random","roles":"channel_admin"}]}]}}
 `,
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
+			os.Setenv("ENV", "testing")
 			team := "myteam"
 			inputFilePath := "test_input.zip"
 			outputFilePath := "test_output.txt"

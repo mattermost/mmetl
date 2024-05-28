@@ -12,8 +12,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mattermost/mattermost-server/v6/app/imports"
-	"github.com/mattermost/mattermost-server/v6/model"
+	"github.com/mattermost/mattermost/server/public/model"
+	"github.com/mattermost/mattermost/server/v8/channels/app/imports"
 	"github.com/pkg/errors"
 )
 
@@ -238,6 +238,7 @@ func GetImportLineFromPost(post *IntermediatePost, team string) (*imports.LineIm
 				CreateAt:       &post.CreateAt,
 				Replies:        &replies,
 				Attachments:    &postAttachments,
+				Type:           &post.Type,
 			},
 		}
 	} else {
@@ -252,6 +253,7 @@ func GetImportLineFromPost(post *IntermediatePost, team string) (*imports.LineIm
 				CreateAt:    &post.CreateAt,
 				Replies:     &replies,
 				Attachments: &postAttachments,
+				Type:        &post.Type,
 			},
 		}
 	}

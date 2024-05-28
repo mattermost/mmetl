@@ -1,5 +1,3 @@
-.PHONY: vendor
-
 GO_PACKAGES=$(shell go list ./...)
 GO ?= $(shell command -v go 2> /dev/null)
 BUILD_HASH ?= $(shell git rev-parse HEAD)
@@ -7,17 +5,17 @@ BUILD_VERSION ?= $(shell git ls-remote --tags --refs https://github.com/mattermo
 
 LDFLAGS += -X "github.com/mattermost/mmetl/commands.BuildHash=$(BUILD_HASH)"
 LDFLAGS += -X "github.com/mattermost/mmetl/commands.Version=$(BUILD_VERSION)"
-BUILD_COMMAND ?= go build -ldflags '$(LDFLAGS)' -mod=vendor
+BUILD_COMMAND ?= go build -ldflags '$(LDFLAGS)'
 all: build
 
-build: vendor check-style
+build: check-style
 	$(BUILD_COMMAND)
 	md5sum < mmetl | cut -d ' ' -f 1 > mmetl.md5.txt
 
-install: vendor check-style
-	go install -ldflags '$(LDFLAGS)' -mod=vendor
+install: check-style
+	go install -ldflags '$(LDFLAGS)'
 
-package: vendor check-style
+package: check-style
 	mkdir -p build
 
 	@echo Build Linux amd64
@@ -81,6 +79,5 @@ verify-gomod:
 	$(GO) mod download
 	$(GO) mod verify
 
-vendor:
-	go mod vendor
+tidy:
 	go mod tidy

@@ -1,7 +1,7 @@
 package slack
 
 import (
-	"math/rand"
+	"crypto/rand"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -171,7 +171,7 @@ func mockDefaultHTTPClient() (newServer *httptest.Server, oldClient *http.Client
 
 	mux.HandleFunc("/wrong_resume", func(w http.ResponseWriter, r *http.Request) {
 		wrongData := make([]byte, 1024*1024)
-		rand.Read(wrongData) // read different "random" data
+		_, _ = rand.Read(wrongData) // read different "random" data
 
 		rangeHeader := r.Header.Get("Range")
 		if rangeHeader == "" {
@@ -194,5 +194,5 @@ func mockDefaultHTTPClient() (newServer *httptest.Server, oldClient *http.Client
 
 func initializeMockData() {
 	mockData = make([]byte, 1024*1024) // 1 MiB of "random" data
-	rand.Read(mockData)
+	_, _ = rand.Read(mockData)
 }

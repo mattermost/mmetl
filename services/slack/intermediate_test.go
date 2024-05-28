@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mattermost/mattermost-server/v6/model"
+	"github.com/mattermost/mattermost/server/public/model"
 )
 
 func TestIntermediateChannelSanitise(t *testing.T) {
@@ -77,6 +77,7 @@ func TestIntermediateChannelSanitise(t *testing.T) {
 func TestTransformPublicChannels(t *testing.T) {
 	slackTransformer := NewTransformer("test", log.New())
 	slackTransformer.Intermediate.UsersById = map[string]*IntermediateUser{"m1": {}, "m2": {}, "m3": {}}
+	slackTransformer.Intermediate.ChannelOwners = make(map[string][]string)
 
 	publicChannels := []SlackChannel{
 		{
@@ -136,6 +137,7 @@ func TestTransformPublicChannels(t *testing.T) {
 func TestTransformPublicChannelsWithAnInvalidMember(t *testing.T) {
 	slackTransformer := NewTransformer("test", log.New())
 	slackTransformer.Intermediate.UsersById = map[string]*IntermediateUser{"m1": {}, "m2": {}}
+	slackTransformer.Intermediate.ChannelOwners = make(map[string][]string)
 
 	publicChannels := []SlackChannel{
 		{
@@ -195,6 +197,7 @@ func TestTransformPublicChannelsWithAnInvalidMember(t *testing.T) {
 func TestTransformPrivateChannels(t *testing.T) {
 	slackTransformer := NewTransformer("test", log.New())
 	slackTransformer.Intermediate.UsersById = map[string]*IntermediateUser{"m1": {}, "m2": {}, "m3": {}}
+	slackTransformer.Intermediate.ChannelOwners = make(map[string][]string)
 
 	privateChannels := []SlackChannel{
 		{
@@ -254,6 +257,7 @@ func TestTransformPrivateChannels(t *testing.T) {
 func TestTransformBigGroupChannels(t *testing.T) {
 	slackTransformer := NewTransformer("test", log.New())
 	slackTransformer.Intermediate.UsersById = map[string]*IntermediateUser{"m1": {}, "m2": {}, "m3": {}, "m4": {}, "m5": {}, "m6": {}, "m7": {}, "m8": {}, "m9": {}}
+	slackTransformer.Intermediate.ChannelOwners = make(map[string][]string)
 	channelMembers := []string{"m1", "m2", "m3", "m4", "m5", "m6", "m7", "m8", "m9"}
 
 	bigGroupChannels := []SlackChannel{
@@ -312,6 +316,7 @@ func TestTransformBigGroupChannels(t *testing.T) {
 func TestTransformRegularGroupChannels(t *testing.T) {
 	slackTransformer := NewTransformer("test", log.New())
 	slackTransformer.Intermediate.UsersById = map[string]*IntermediateUser{"m1": {}, "m2": {}, "m3": {}}
+	slackTransformer.Intermediate.ChannelOwners = make(map[string][]string)
 
 	regularGroupChannels := []SlackChannel{
 		{
@@ -370,6 +375,7 @@ func TestTransformRegularGroupChannels(t *testing.T) {
 func TestTransformDirectChannels(t *testing.T) {
 	slackTransformer := NewTransformer("test", log.New())
 	slackTransformer.Intermediate.UsersById = map[string]*IntermediateUser{"m1": {}, "m2": {}, "m3": {}}
+	slackTransformer.Intermediate.ChannelOwners = make(map[string][]string)
 
 	directChannels := []SlackChannel{
 		{
@@ -404,6 +410,7 @@ func TestTransformDirectChannels(t *testing.T) {
 func TestTransformChannelWithOneValidMember(t *testing.T) {
 	slackTransformer := NewTransformer("test", log.New())
 	slackTransformer.Intermediate.UsersById = map[string]*IntermediateUser{"m1": {}}
+	slackTransformer.Intermediate.ChannelOwners = make(map[string][]string)
 
 	t.Run("A direct channel with only one valid member should not be transformed", func(t *testing.T) {
 		directChannels := []SlackChannel{
@@ -571,7 +578,7 @@ func TestTransformUsers(t *testing.T) {
 
 	defaultEmailDomain := ""
 	skipEmptyEmails := false
-	slackTransformer.TransformUsers(users, skipEmptyEmails, defaultEmailDomain, "gitlab")
+	slackTransformer.TransformUsers(users, skipEmptyEmails, defaultEmailDomain, "")
 	require.Len(t, slackTransformer.Intermediate.UsersById, len(users))
 
 	for i, id := range []string{id1, id2, id3} {
@@ -581,7 +588,7 @@ func TestTransformUsers(t *testing.T) {
 		assert.Equal(t, fmt.Sprintf("lastname%d", i+1), slackTransformer.Intermediate.UsersById[id].LastName)
 		assert.Equal(t, fmt.Sprintf("position%d", i+1), slackTransformer.Intermediate.UsersById[id].Position)
 		assert.Equal(t, fmt.Sprintf("email%d@example.com", i+1), slackTransformer.Intermediate.UsersById[id].Email)
-		assert.Equal(t, "gitlab", slackTransformer.Intermediate.UsersById[id].AuthService)
+		assert.Equal(t, "", slackTransformer.Intermediate.UsersById[id].AuthService)
 		assert.Zero(t, slackTransformer.Intermediate.UsersById[id].DeleteAt)
 	}
 }
@@ -758,5 +765,70 @@ func TestAddPostToThreads(t *testing.T) {
 				require.EqualValues(t, tc.ExpectedTimestamps, tc.Timestamps)
 			})
 		}
+	})
+}
+
+func TestTransformPosts(t *testing.T) {
+	t.Run("huddle threads are converted to posts", func(t *testing.T) {
+		slackTransformer := NewTransformer("test", log.New())
+		slackTransformer.Intermediate.UsersById = map[string]*IntermediateUser{"m1": {Username: "m1"}, "m2": {Username: "m2"}}
+		slackTransformer.Intermediate.PublicChannels = []*IntermediateChannel{
+			{
+				Name:         "channel1",
+				OriginalName: "channel1",
+			},
+		}
+
+		slackExport := &SlackExport{
+			Posts: map[string][]SlackPost{
+				"channel1": {
+					{
+						User: "USLACKBOT",
+						Text: "",
+						Room: &SlackRoom{
+							CreatedBy: "m1",
+							DateStart: 1695219818,
+							DateEnd:   1695220775,
+						},
+						TimeStamp: "1695219818.000100",
+						SubType:   "huddle_thread",
+						Type:      "message",
+					},
+					{
+						User:      "m2",
+						Text:      "reply text",
+						ThreadTS:  "1695219818.000100",
+						TimeStamp: "1695219818.000101",
+						Type:      "message",
+					},
+				},
+			},
+		}
+
+		err := slackTransformer.TransformPosts(slackExport, "", false, false, false)
+		if err != nil {
+			t.Fatalf("expected no error, got %v", err)
+		}
+		if len(slackTransformer.Intermediate.Posts) != 1 {
+			t.Errorf("expected 1 post, got %d", len(slackTransformer.Intermediate.Posts))
+		}
+
+		post := slackTransformer.Intermediate.Posts[0]
+		if post.User != "m1" {
+			t.Errorf("expected user to be m1, got %s", post.User)
+		}
+
+		if post.Message != "Call ended" {
+			t.Errorf("expected message to be 'Call ended', got %s", post.Message)
+		}
+
+		if post.Props["attachments"] == nil {
+			t.Errorf("expected attachments to be set")
+		}
+
+		if len(post.Replies) != 1 {
+			t.Errorf("expected 1 post reply, got %d", len(post.Replies))
+		}
+
 	})
 }

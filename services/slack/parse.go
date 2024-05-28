@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mattermost/mattermost-server/v6/model"
+	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/pkg/errors"
 )
 
@@ -63,6 +63,23 @@ type SlackFile struct {
 	DownloadURL string `json:"url_private_download"`
 }
 
+type SlackRoom struct {
+	Id                 string   `json:"id"`
+	Name               string   `json:"name"`
+	CreatedBy          string   `json:"created_by"`
+	DateStart          int64    `json:"date_start"`
+	DateEnd            int64    `json:"date_end"`
+	Participants       []string `json:"participants"`
+	ParticipantHistory []string `json:"participant_history"`
+	ThreadTS           string   `json:"thread_root_ts"`
+	Channels           []string `json:"channels"`
+	IsDMCall           bool     `json:"is_dm_call"`
+	WasRejected        bool     `json:"was_rejected"`
+	WasMissed          bool     `json:"was_missed"`
+	WasAccepted        bool     `json:"was_accepted"`
+	HasEnded           bool     `json:"has_ended"`
+}
+
 type SlackPost struct {
 	User        string                   `json:"user"`
 	BotId       string                   `json:"bot_id"`
@@ -78,6 +95,7 @@ type SlackPost struct {
 	File        *SlackFile               `json:"file"`
 	Files       []*SlackFile             `json:"files"`
 	Attachments []*model.SlackAttachment `json:"attachments"`
+	Room        *SlackRoom               `json:"room"`
 }
 
 func (p *SlackPost) IsPlainMessage() bool {
@@ -110,6 +128,10 @@ func (p *SlackPost) IsChannelPurposeMessage() bool {
 
 func (p *SlackPost) IsChannelNameMessage() bool {
 	return p.Type == "message" && p.SubType == "channel_name"
+}
+
+func (p *SlackPost) isHuddleThread() bool {
+	return p.Type == "message" && p.SubType == "huddle_thread"
 }
 
 type SlackComment struct {
@@ -204,7 +226,7 @@ func (t *Transformer) SlackConvertUserMentions(users []SlackUser, posts map[stri
 	}
 
 	// Special cases.
-	regexes["@here"], _ = regexp.Compile(`<!here\|@here>`)
+	regexes["@here"], _ = regexp.Compile("<(!|@)here>")
 	regexes["@channel"], _ = regexp.Compile("<!channel>")
 	regexes["@all"], _ = regexp.Compile("<!everyone>")
 
@@ -216,6 +238,12 @@ func (t *Transformer) SlackConvertUserMentions(users []SlackUser, posts map[stri
 			for mention, r := range regexes {
 				post.Text = r.ReplaceAllString(post.Text, mention)
 				posts[channelName][postIdx] = post
+
+				if post.Attachments != nil {
+					for _, attachment := range post.Attachments {
+						attachment.Fallback = r.ReplaceAllString(attachment.Fallback, mention)
+					}
+				}
 			}
 		}
 	}
@@ -243,6 +271,12 @@ func (t *Transformer) SlackConvertChannelMentions(channels []SlackChannel, posts
 			for channelReplace, r := range regexes {
 				post.Text = r.ReplaceAllString(post.Text, channelReplace)
 				posts[channelName][postIdx] = post
+
+				if post.Attachments != nil {
+					for _, attachment := range post.Attachments {
+						attachment.Fallback = r.ReplaceAllString(attachment.Fallback, channelReplace)
+					}
+				}
 			}
 		}
 	}
