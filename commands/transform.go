@@ -82,9 +82,9 @@ func transformSlackCmdF(cmd *cobra.Command, args []string) error {
 	resultFilePath, _ := cmd.Flags().GetString("result-file")
 	buildArchive, _ := cmd.Flags().GetString("build-archive")
 
-	if !(authService == "" || authService == "gitlab" || authService == "ldap" ||
-		authService == "saml" || authService == "google" || authService == "office365") {
-		return fmt.Errorf("Auth serivece must be one of gitlab, ldap, saml, google, office365")
+	err := slack.CheckAuthService(authService)
+	if err != nil {
+		return err
 	}
 
 	// output file

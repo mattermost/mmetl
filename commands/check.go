@@ -2,7 +2,6 @@ package commands
 
 import (
 	"archive/zip"
-	"fmt"
 	"os"
 
 	"github.com/mattermost/mmetl/services/slack"
@@ -49,9 +48,9 @@ func checkSlackCmdF(cmd *cobra.Command, args []string) error {
 	defaultEmailDomain, _ := cmd.Flags().GetString("default-email-domain")
 	authService, _ := cmd.Flags().GetString("auth-service")
 
-	if !(authService == "" || authService == "gitlab" || authService == "ldap" ||
-		authService == "saml" || authService == "google" || authService == "office365") {
-		return fmt.Errorf("Auth serivece must be one of gitlab, ldap, saml, google, office365")
+	err := slack.CheckAuthService(authService)
+	if err != nil {
+		return err
 	}
 
 	// input file

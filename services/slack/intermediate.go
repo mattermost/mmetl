@@ -799,8 +799,10 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 				// all huddles are owned by USLACKBOT, but the room has a CreatedBy prop.
 				// this lets us get the actual user who created the huddle and fit with how Mattermost works.
 				poster := post.User
-				if len(post.Room.CreatedBy) > 0 {
-					poster = post.Room.CreatedBy
+				if post.Room != nil {
+					if len(post.Room.CreatedBy) > 0 {
+						poster = post.Room.CreatedBy
+					}
 				}
 
 				author := t.Intermediate.UsersById[poster]

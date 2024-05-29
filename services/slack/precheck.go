@@ -2,6 +2,7 @@ package slack
 
 import (
 	"archive/zip"
+	"fmt"
 	"strings"
 )
 
@@ -45,4 +46,12 @@ func (t *Transformer) Precheck(zipReader *zip.Reader) bool {
 	}
 
 	return valid
+}
+
+func CheckAuthService(authService string) error {
+	if !(authService == "" || authService == "gitlab" || authService == "ldap" ||
+		authService == "saml" || authService == "google" || authService == "office365") {
+		return fmt.Errorf("Auth serivece must be one of gitlab, ldap, saml, google, office365")
+	}
+	return nil
 }
