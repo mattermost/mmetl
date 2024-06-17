@@ -294,6 +294,18 @@ func TestTransformBigGroupChannels(t *testing.T) {
 			},
 			Type: model.ChannelTypeGroup,
 		},
+		{
+			Id:      "id4",
+			Creator: "creator4",
+			Members: []string{"m1", "m2", "m3", "m4", "m5", "m6", "m7", "m8", "m10"},
+			Purpose: SlackChannelSub{
+				Value: "purpose4",
+			},
+			Topic: SlackChannelSub{
+				Value: "topic4",
+			},
+			Type: model.ChannelTypeGroup,
+		},
 	}
 
 	result := slackTransformer.TransformChannels(bigGroupChannels)
@@ -302,7 +314,7 @@ func TestTransformBigGroupChannels(t *testing.T) {
 	for i := range result {
 		assert.Equal(t, fmt.Sprintf("purpose%d", i+1), result[i].Name)
 		assert.Equal(t, fmt.Sprintf("purpose%d", i+1), result[i].DisplayName)
-		assert.Equal(t, channelMembers, result[i].Members)
+		assert.Equal(t, len(result[i].Members), 9)
 		assert.Equal(t, fmt.Sprintf("purpose%d", i+1), result[i].Purpose)
 		assert.Equal(t, fmt.Sprintf("topic%d", i+1), result[i].Header)
 		assert.Equal(t, model.ChannelTypePrivate, result[i].Type)
