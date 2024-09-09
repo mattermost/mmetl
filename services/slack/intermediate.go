@@ -105,6 +105,21 @@ func (u *IntermediateUser) Sanitise(logger log.FieldLogger, defaultEmailDomain s
 			exitFunc(1)
 		}
 	}
+
+	if utf8.RuneCountInString(u.FirstName) > model.UserFirstNameMaxRunes {
+		logger.Warnf("User %s first name exceeds the maximum length. It will be truncated when imported.", u.Username)
+		u.FirstName = truncateRunes(u.FirstName, model.UserFirstNameMaxRunes)
+	}
+
+	if utf8.RuneCountInString(u.LastName) > model.UserLastNameMaxRunes {
+		logger.Warnf("User %s last name exceeds the maximum length. It will be truncated when imported.", u.Username)
+		u.LastName = truncateRunes(u.LastName, model.UserLastNameMaxRunes)
+	}
+
+	if utf8.RuneCountInString(u.Position) > model.UserPositionMaxRunes {
+		logger.Warnf("User %s position exceeds the maximum length. It will be truncated when imported.", u.Username)
+		u.Position = truncateRunes(u.Position, model.UserPositionMaxRunes)
+	}
 }
 
 type IntermediatePost struct {
