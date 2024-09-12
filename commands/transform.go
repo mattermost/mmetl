@@ -93,6 +93,19 @@ func transformSlackCmdF(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	profilePicturesDir := path.Join(attachmentsDir, "profile_pictures")
+	if !skipAttachments {
+		if fileInfo, err := os.Stat(profilePicturesDir); os.IsNotExist(err) {
+			if createErr := os.MkdirAll(profilePicturesDir, 0755); createErr != nil {
+				return createErr
+			}
+		} else if err != nil {
+			return err
+		} else if !fileInfo.IsDir() {
+			return fmt.Errorf("File \"%s\" is not a directory", attachmentsDir)
+		}
+	}
+
 	// input file
 	fileReader, err := os.Open(inputFilePath)
 	if err != nil {
