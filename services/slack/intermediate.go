@@ -107,17 +107,24 @@ func (u *IntermediateUser) Sanitise(logger log.FieldLogger, defaultEmailDomain s
 	}
 }
 
+type IntermediateReaction struct {
+	User      string `json:"user"`
+	EmojiName string `json:"emoji_name"`
+	CreateAt  int64  `json:"create_at"`
+}
+
 type IntermediatePost struct {
-	User           string                `json:"user"`
-	Channel        string                `json:"channel"`
-	Message        string                `json:"message"`
-	Props          model.StringInterface `json:"props"`
-	CreateAt       int64                 `json:"create_at"`
-	Type           string                `json:"type"`
-	Attachments    []string              `json:"attachments"`
-	Replies        []*IntermediatePost   `json:"replies"`
-	IsDirect       bool                  `json:"is_direct"`
-	ChannelMembers []string              `json:"channel_members"`
+	User           string                  `json:"user"`
+	Channel        string                  `json:"channel"`
+	Message        string                  `json:"message"`
+	Props          model.StringInterface   `json:"props"`
+	CreateAt       int64                   `json:"create_at"`
+	Type           string                  `json:"type"`
+	Attachments    []string                `json:"attachments"`
+	Replies        []*IntermediatePost     `json:"replies"`
+	Reactions      []*IntermediateReaction `json:"reactions"`
+	IsDirect       bool                    `json:"is_direct"`
+	ChannelMembers []string                `json:"channel_members"`
 }
 
 type Intermediate struct {
@@ -468,10 +475,11 @@ func (t *Transformer) CreateAndAddPostToThreads(post SlackPost, threads map[stri
 	}
 
 	newPost := &IntermediatePost{
-		User:     author.Username,
-		Channel:  channel.Name,
-		Message:  post.Text,
-		CreateAt: SlackConvertTimeStamp(post.TimeStamp),
+		User:      author.Username,
+		Channel:   channel.Name,
+		Message:   post.Text,
+		Reactions: t.getReactionsFromPost(post),
+		CreateAt:  SlackConvertTimeStamp(post.TimeStamp),
 	}
 
 	AddPostToThreads(post, newPost, threads, channel, timestamps)
@@ -543,6 +551,27 @@ func buildMessagePropsFromHuddle(post *SlackPost) model.StringInterface {
 	return propsMap
 }
 
+func (t *Transformer) getReactionsFromPost(post SlackPost) []*IntermediateReaction {
+	reactions := []*IntermediateReaction{}
+	for _, reaction := range post.Reactions {
+		for _, reactionUser := range reaction.Users {
+			reactionAuthor := t.Intermediate.UsersById[reactionUser]
+			if reactionAuthor == nil {
+				t.CreateIntermediateUser(reactionUser)
+				reactionAuthor = t.Intermediate.UsersById[reactionUser]
+			}
+			newReaction := &IntermediateReaction{
+				User:      reactionAuthor.Username,
+				EmojiName: reaction.Name,
+				CreateAt:  SlackConvertTimeStamp(post.TimeStamp),
+				// we don't have the real createAt available, so we pretend that reactions were created together with the post
+			}
+			reactions = append(reactions, newReaction)
+		}
+	}
+	return reactions
+}
+
 func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir string, skipAttachments, discardInvalidProps, allowDownload bool) error {
 	t.Logger.Info("Transforming posts")
 
@@ -578,10 +607,11 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 					author = t.Intermediate.UsersById[post.User]
 				}
 				newPost := &IntermediatePost{
-					User:     author.Username,
-					Channel:  channel.Name,
-					Message:  post.Text,
-					CreateAt: SlackConvertTimeStamp(post.TimeStamp),
+					User:      author.Username,
+					Channel:   channel.Name,
+					Message:   post.Text,
+					Reactions: t.getReactionsFromPost(post),
+					CreateAt:  SlackConvertTimeStamp(post.TimeStamp),
 				}
 				t.AddFilesToPost(&post, skipAttachments, slackExport, attachmentsDir, newPost, allowDownload)
 
@@ -617,10 +647,11 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 					author = t.Intermediate.UsersById[post.User]
 				}
 				newPost := &IntermediatePost{
-					User:     author.Username,
-					Channel:  channel.Name,
-					Message:  post.Comment.Comment,
-					CreateAt: SlackConvertTimeStamp(post.TimeStamp),
+					User:      author.Username,
+					Channel:   channel.Name,
+					Message:   post.Comment.Comment,
+					Reactions: t.getReactionsFromPost(post),
+					CreateAt:  SlackConvertTimeStamp(post.TimeStamp),
 				}
 
 				AddPostToThreads(post, newPost, threads, channel, timestamps)
@@ -642,10 +673,11 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 				}
 
 				newPost := &IntermediatePost{
-					User:     author.Username,
-					Channel:  channel.Name,
-					Message:  post.Text,
-					CreateAt: SlackConvertTimeStamp(post.TimeStamp),
+					User:      author.Username,
+					Channel:   channel.Name,
+					Message:   post.Text,
+					Reactions: t.getReactionsFromPost(post),
+					CreateAt:  SlackConvertTimeStamp(post.TimeStamp),
 				}
 
 				t.AddFilesToPost(&post, skipAttachments, slackExport, attachmentsDir, newPost, allowDownload)
@@ -731,12 +763,13 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 				huddleProps := buildMessagePropsFromHuddle(&post)
 
 				newPost := &IntermediatePost{
-					User:     author.Username,
-					Channel:  channel.Name,
-					Message:  post.Text,
-					CreateAt: SlackConvertTimeStamp(post.TimeStamp),
-					Props:    huddleProps,
-					Type:     "custom_calls",
+					User:      author.Username,
+					Channel:   channel.Name,
+					Message:   post.Text,
+					Reactions: t.getReactionsFromPost(post),
+					CreateAt:  SlackConvertTimeStamp(post.TimeStamp),
+					Props:     huddleProps,
+					Type:      "custom_calls",
 				}
 
 				AddPostToThreads(post, newPost, threads, channel, timestamps)

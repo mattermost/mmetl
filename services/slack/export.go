@@ -190,13 +190,34 @@ func GetImportLineFromPost(post *IntermediatePost, team string) *imports.LineImp
 			replyAttachments = replyAttachments[0:POST_MAX_ATTACHMENTS]
 		}
 
+		reactions := []imports.ReactionImportData{}
+		for _, reaction := range reply.Reactions {
+			newReaction := imports.ReactionImportData{
+				User:      &reaction.User,
+				EmojiName: &reaction.EmojiName,
+				CreateAt:  &reaction.CreateAt,
+			}
+			reactions = append(reactions, newReaction)
+		}
+
 		newReply := imports.ReplyImportData{
 			User:        &reply.User,
 			Message:     &reply.Message,
 			CreateAt:    &reply.CreateAt,
 			Attachments: &replyAttachments,
+			Reactions:   &reactions,
 		}
 		replies = append(replies, newReply)
+	}
+
+	reactions := []imports.ReactionImportData{}
+	for _, reaction := range post.Reactions {
+		newReaction := imports.ReactionImportData{
+			User:      &reaction.User,
+			EmojiName: &reaction.EmojiName,
+			CreateAt:  &reaction.CreateAt,
+		}
+		reactions = append(reactions, newReaction)
 	}
 
 	var newPost *imports.LineImportData
@@ -210,6 +231,7 @@ func GetImportLineFromPost(post *IntermediatePost, team string) *imports.LineImp
 				Props:          &post.Props,
 				CreateAt:       &post.CreateAt,
 				Replies:        &replies,
+				Reactions:      &reactions,
 				Attachments:    &postAttachments,
 				Type:           &post.Type,
 			},
@@ -225,6 +247,7 @@ func GetImportLineFromPost(post *IntermediatePost, team string) *imports.LineImp
 				Props:       &post.Props,
 				CreateAt:    &post.CreateAt,
 				Replies:     &replies,
+				Reactions:   &reactions,
 				Attachments: &postAttachments,
 				Type:        &post.Type,
 			},
