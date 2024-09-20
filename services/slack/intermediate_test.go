@@ -823,4 +823,85 @@ func TestTransformPosts(t *testing.T) {
 		}
 
 	})
+
+	t.Run("reactions are imported", func(t *testing.T) {
+		slackTransformer := NewTransformer("test", log.New())
+		slackTransformer.Intermediate.UsersById = map[string]*IntermediateUser{"m1": {Username: "m1"}, "m2": {Username: "m2"}}
+		slackTransformer.Intermediate.PublicChannels = []*IntermediateChannel{
+			{
+				Name:         "channel1",
+				OriginalName: "channel1",
+			},
+		}
+
+		reactions1 := []*SlackReaction{{
+			Name:  "+1",
+			Count: 2,
+			Users: []string{"m1", "m2"},
+		}}
+		reactions2 := []*SlackReaction{{
+			Name:  "+1::skin-tone-3",
+			Count: 1,
+			Users: []string{"m1"},
+		}}
+		slackExport := &SlackExport{
+			Posts: map[string][]SlackPost{
+				"channel1": {
+					{
+						User:      "m1",
+						Text:      "hi everyone let's talk about this",
+						TimeStamp: "1695219818.000100",
+						Type:      "message",
+						Reactions: reactions1,
+					},
+					{
+						User:      "m2",
+						Text:      "reply text",
+						ThreadTS:  "1695219818.000100",
+						TimeStamp: "1695219818.000101",
+						Type:      "message",
+						Reactions: reactions2,
+					},
+				},
+			},
+		}
+
+		err := slackTransformer.TransformPosts(slackExport, "", false, false, false)
+		if err != nil {
+			t.Fatalf("expected no error, got %v", err)
+		}
+		if len(slackTransformer.Intermediate.Posts) != 1 {
+			t.Errorf("expected 1 post, got %d", len(slackTransformer.Intermediate.Posts))
+		}
+
+		post := slackTransformer.Intermediate.Posts[0]
+		if post.User != "m1" {
+			t.Errorf("expected user to be m1, got %s", post.User)
+		}
+
+		if post.Message != "hi everyone let's talk about this" {
+			t.Errorf("expected message to be 'hi everyone let's talk about this', got %s", post.Message)
+		}
+
+		if len(post.Reactions) != 2 {
+			t.Errorf("expected 2 post reactions, got %d", len(post.Reactions))
+		}
+
+		if post.Reactions[0].EmojiName != "+1" {
+			t.Errorf("expected '+1' as EmojiName, got %s", post.Reactions[0].EmojiName)
+		}
+
+		if post.Reactions[0].User != "m1" {
+			t.Errorf("expected 'm1' as reaction user, got %s", post.Reactions[0].User)
+		}
+
+		if len(post.Replies) != 1 {
+			t.Errorf("expected 1 post replies, got %d", len(post.Replies))
+		}
+
+		if len(post.Replies[0].Reactions) != 1 {
+			t.Errorf("expected 1 reaction on the post reply, got %d", len(post.Replies[0].Reactions))
+		}
+
+	})
 }
