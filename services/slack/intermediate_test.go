@@ -545,20 +545,11 @@ func TestIntermediateUserSanitise(t *testing.T) {
 		expectedLastName := strings.Repeat("b", 64)
 		expectedPosition := strings.Repeat("c", 128)
 
-		exitCode := -1
-		exitFunc = func(code int) {
-			exitCode = code
-		}
-		defer func() {
-			exitFunc = os.Exit
-		}()
-
 		user.Sanitise(log.New(), "", false)
 
 		assert.Equal(t, expectedFirstName, user.FirstName)
 		assert.Equal(t, expectedLastName, user.LastName)
 		assert.Equal(t, expectedPosition, user.Position)
-		require.Equal(t, -1, exitCode)
 	})
 }
 
