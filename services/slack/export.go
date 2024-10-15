@@ -107,24 +107,35 @@ func GetImportLineFromUser(user *IntermediateUser, team string) *imports.LineImp
 		})
 	}
 
-	return &imports.LineImportData{
-		Type: "user",
-		User: &imports.UserImportData{
-			Username:  model.NewString(user.Username),
-			Email:     model.NewString(user.Email),
-			Nickname:  model.NewString(""),
-			FirstName: model.NewString(user.FirstName),
-			LastName:  model.NewString(user.LastName),
-			Position:  model.NewString(user.Position),
-			Roles:     model.NewString(model.SystemUserRoleId),
-			Teams: &[]imports.UserTeamImportData{
-				{
-					Name:     model.NewString(team),
-					Channels: &channelMemberships,
-					Roles:    model.NewString(model.TeamUserRoleId),
+	switch {
+	case user.IsBot:
+		return &imports.LineImportData{
+			Type: "bot",
+			Bot: &imports.BotImportData{
+				Username:    model.NewString(user.Username),
+				DisplayName: model.NewString(user.FirstName),
+			},
+		}
+	default:
+		return &imports.LineImportData{
+			Type: "user",
+			User: &imports.UserImportData{
+				Username:  model.NewString(user.Username),
+				Email:     model.NewString(user.Email),
+				Nickname:  model.NewString(""),
+				FirstName: model.NewString(user.FirstName),
+				LastName:  model.NewString(user.LastName),
+				Position:  model.NewString(user.Position),
+				Roles:     model.NewString(model.SystemUserRoleId),
+				Teams: &[]imports.UserTeamImportData{
+					{
+						Name:     model.NewString(team),
+						Channels: &channelMemberships,
+						Roles:    model.NewString(model.TeamUserRoleId),
+					},
 				},
 			},
-		},
+		}
 	}
 }
 

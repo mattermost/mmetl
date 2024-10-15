@@ -84,6 +84,7 @@ type IntermediateUser struct {
 	Password    string   `json:"password"`
 	Memberships []string `json:"memberships"`
 	DeleteAt    int64    `json:"delete_at"`
+	IsBot       bool     `json:"is_bot"`
 }
 
 func (u *IntermediateUser) Sanitise(logger log.FieldLogger, defaultEmailDomain string, skipEmptyEmails bool) {
@@ -161,6 +162,7 @@ func (t *Transformer) TransformUsers(users []SlackUser, skipEmptyEmails bool, de
 			Email:     user.Profile.Email,
 			Password:  model.NewId(),
 			DeleteAt:  deleteAt,
+			IsBot:     user.IsBot,
 		}
 
 		t.Logger.Debugf("TransformUsers: newUser IntermediateUser struct: %+v", newUser)
