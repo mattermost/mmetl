@@ -531,6 +531,26 @@ func TestIntermediateUserSanitise(t *testing.T) {
 		require.Equal(t, expectedEmail, user.Email)
 		require.Equal(t, -1, exitCode)
 	})
+
+	t.Run("Properties should respect the max length", func(t *testing.T) {
+		user := &IntermediateUser{
+			Username:  "test-username",
+			Email:     "test-email@otherdomain.com",
+			FirstName: strings.Repeat("a", model.UserFirstNameMaxRunes+4),
+			LastName:  strings.Repeat("b", model.UserLastNameMaxRunes+4),
+			Position:  strings.Repeat("c", model.UserPositionMaxRunes+4),
+		}
+
+		expectedFirstName := strings.Repeat("a", model.UserFirstNameMaxRunes)
+		expectedLastName := strings.Repeat("b", model.UserLastNameMaxRunes)
+		expectedPosition := strings.Repeat("c", model.UserPositionMaxRunes)
+
+		user.Sanitise(log.New(), "", false)
+
+		assert.Equal(t, expectedFirstName, user.FirstName)
+		assert.Equal(t, expectedLastName, user.LastName)
+		assert.Equal(t, expectedPosition, user.Position)
+	})
 }
 
 func TestTransformUsers(t *testing.T) {
