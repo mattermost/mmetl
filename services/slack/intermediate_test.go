@@ -536,14 +536,14 @@ func TestIntermediateUserSanitise(t *testing.T) {
 		user := &IntermediateUser{
 			Username:  "test-username",
 			Email:     "test-email@otherdomain.com",
-			FirstName: strings.Repeat("a", 70),
-			LastName:  strings.Repeat("b", 70),
-			Position:  strings.Repeat("c", 400),
+			FirstName: strings.Repeat("a", model.UserFirstNameMaxRunes+4),
+			LastName:  strings.Repeat("b", model.UserLastNameMaxRunes+4),
+			Position:  strings.Repeat("c", model.UserPositionMaxRunes+4),
 		}
 
-		expectedFirstName := strings.Repeat("a", 64)
-		expectedLastName := strings.Repeat("b", 64)
-		expectedPosition := strings.Repeat("c", 128)
+		expectedFirstName := strings.Repeat("a", model.UserFirstNameMaxRunes)
+		expectedLastName := strings.Repeat("b", model.UserLastNameMaxRunes)
+		expectedPosition := strings.Repeat("c", model.UserPositionMaxRunes)
 
 		user.Sanitise(log.New(), "", false)
 
