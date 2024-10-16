@@ -1,6 +1,7 @@
 package slack
 
 import (
+	"archive/zip"
 	"bytes"
 	"fmt"
 	"os"
@@ -591,7 +592,8 @@ func TestTransformUsers(t *testing.T) {
 
 	defaultEmailDomain := ""
 	skipEmptyEmails := false
-	slackTransformer.TransformUsers(users, skipEmptyEmails, defaultEmailDomain)
+	pictures := make(map[string]*zip.File)
+	slackTransformer.TransformUsers(users, skipEmptyEmails, defaultEmailDomain, "data/", pictures)
 	require.Len(t, slackTransformer.Intermediate.UsersById, len(users))
 
 	for i, id := range []string{id1, id2, id3} {
@@ -661,7 +663,8 @@ func TestDeleteAt(t *testing.T) {
 
 	defaultEmailDomain := ""
 	skipEmptyEmails := false
-	slackTransformer.TransformUsers(users, skipEmptyEmails, defaultEmailDomain)
+	pictures := make(map[string]*zip.File)
+	slackTransformer.TransformUsers(users, skipEmptyEmails, defaultEmailDomain, "data/", pictures)
 	require.Zero(t, slackTransformer.Intermediate.UsersById[activeUsers[0].Id].DeleteAt)
 	require.Zero(t, slackTransformer.Intermediate.UsersById[activeUsers[1].Id].DeleteAt)
 	require.NotZero(t, slackTransformer.Intermediate.UsersById[inactiveUsers[0].Id].DeleteAt)

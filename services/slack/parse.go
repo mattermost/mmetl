@@ -28,10 +28,11 @@ type SlackChannelSub struct {
 }
 
 type SlackProfile struct {
-	BotID    string `json:"bot_id"`
-	RealName string `json:"real_name"`
-	Email    string `json:"email"`
-	Title    string `json:"title"`
+	BotID     string `json:"bot_id"`
+	RealName  string `json:"real_name"`
+	Email     string `json:"email"`
+	Title     string `json:"title"`
+	ImagePath string `json:"image_path"`
 }
 
 type SlackUser struct {
@@ -134,6 +135,7 @@ type SlackExport struct {
 	Users           []SlackUser
 	Posts           map[string][]SlackPost
 	Uploads         map[string]*zip.File
+	ProfilePictures map[string]*zip.File
 }
 
 func (t *Transformer) SlackParseUsers(data io.Reader) ([]SlackUser, error) {
@@ -345,6 +347,7 @@ func (t *Transformer) ParseSlackExportFile(zipReader *zip.Reader, skipConvertPos
 	slackExport := SlackExport{TeamName: t.TeamName}
 	slackExport.Posts = make(map[string][]SlackPost)
 	slackExport.Uploads = make(map[string]*zip.File)
+	slackExport.ProfilePictures = make(map[string]*zip.File)
 	numFiles := len(zipReader.File)
 
 	for i, file := range zipReader.File {
@@ -393,6 +396,8 @@ func (t *Transformer) ParseSlackExportFile(zipReader *zip.Reader, skipConvertPos
 					}
 				} else if len(spl) == 3 && spl[0] == "__uploads" {
 					slackExport.Uploads[spl[1]] = file
+				} else if len(spl) == 2 && spl[0] == "profile_pictures" {
+					slackExport.ProfilePictures[file.Name] = file
 				}
 			}
 

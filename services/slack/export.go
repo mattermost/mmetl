@@ -107,7 +107,7 @@ func GetImportLineFromUser(user *IntermediateUser, team string) *imports.LineImp
 		})
 	}
 
-	return &imports.LineImportData{
+	result := imports.LineImportData{
 		Type: "user",
 		User: &imports.UserImportData{
 			Username:  model.NewString(user.Username),
@@ -126,6 +126,10 @@ func GetImportLineFromUser(user *IntermediateUser, team string) *imports.LineImp
 			},
 		},
 	}
+	if len(user.ProfilePicture) > 0 {
+		result.User.ProfileImage = model.NewString(user.ProfilePicture)
+	}
+	return &result
 }
 
 func GetAttachmentImportDataFromPaths(paths []string) []imports.AttachmentImportData {
