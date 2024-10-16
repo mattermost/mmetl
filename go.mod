@@ -4,7 +4,8 @@ go 1.21
 
 require (
 	github.com/mattermost/mattermost/server/public v0.1.0
-	github.com/mattermost/mattermost/server/v8 v8.0.0-20240520151130-4bdd8bb18e47
+	github.com/mattermost/mattermost/server/v8 v8.0.0-20240528084106-54019e40138f
+	github.com/n-marshall/go-cp v0.0.0-20180115193924-61436d3b7cfa
 	github.com/pkg/errors v0.9.1
 	github.com/sirupsen/logrus v1.9.3
 	github.com/spf13/cobra v1.8.0
