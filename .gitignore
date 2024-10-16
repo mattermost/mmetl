@@ -1,2 +1,4 @@
 mmetl
 build/
+.DS_STORE
+*.log

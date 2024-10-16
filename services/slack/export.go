@@ -7,6 +7,7 @@ import (
 	"math"
 	"os"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -117,6 +118,7 @@ func GetImportLineFromUser(user *IntermediateUser, team string) *imports.LineImp
 			LastName:  model.NewString(user.LastName),
 			Position:  model.NewString(user.Position),
 			Roles:     model.NewString(model.SystemUserRoleId),
+			DeleteAt:  model.NewInt64(user.DeleteAt),
 			Teams: &[]imports.UserTeamImportData{
 				{
 					Name:     model.NewString(team),
@@ -282,8 +284,18 @@ func (t *Transformer) ExportDirectChannels(channels []*IntermediateChannel, writ
 }
 
 func (t *Transformer) ExportUsers(writer io.Writer) error {
-	for _, user := range t.Intermediate.UsersById {
-		line := GetImportLineFromUser(user, t.TeamName)
+	users := t.Intermediate.UsersById
+	userIds := make([]string, len(users))
+	i := 0
+	for k := range users {
+		userIds[i] = k
+		i++
+	}
+
+	sort.Strings(userIds)
+
+	for _, userId := range userIds {
+		line := GetImportLineFromUser(users[userId], t.TeamName)
 		if err := ExportWriteLine(writer, line); err != nil {
 			return err
 		}
