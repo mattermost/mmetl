@@ -10,7 +10,7 @@ func getDirectChannelNameFromMembers(members []string) string {
 	return strings.Join(members, "_")
 }
 
-func (t *Transformer) CheckIntermediate() {
+func (t *Transformer) CheckIntermediate(maxMessageLength int) {
 	t.Logger.Info("Checking intermediate resources")
 
 	// create channels index
@@ -54,10 +54,26 @@ func (t *Transformer) CheckIntermediate() {
 	postsByChannelName := map[string][]*IntermediatePost{}
 	for _, post := range t.Intermediate.Posts {
 		channelName := post.Channel
+
+		t.Logger.Debugf("Post: %+v Post.Channel: %+v", post, post.Channel)
 		if post.IsDirect && len(post.ChannelMembers) != 0 {
 			channelName = getDirectChannelNameFromMembers(post.ChannelMembers)
 		}
 		postsByChannelName[channelName] = append(postsByChannelName[channelName], post)
+
+		if maxMessageLength > 0 && len(post.Message) > maxMessageLength {
+			t.Logger.Warnf("\n-- Post.Message in %s has a text length of %d (max: %d)",
+				post.Channel, len(post.Message), maxMessageLength)
+		}
+
+		// loop through replies to check max length
+		for i, reply := range post.Replies {
+			if maxMessageLength > 0 && len(reply.Message) > maxMessageLength {
+				t.Logger.Warnf("\n-- Post.Reply %d in %s has a text length of %d (max: %d)",
+					i, post.Channel, len(reply.Message), maxMessageLength)
+			}
+		}
+
 	}
 
 	visitedChannels := map[string]bool{}

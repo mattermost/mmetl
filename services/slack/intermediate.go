@@ -214,6 +214,11 @@ func getOriginalName(channel SlackChannel) string {
 func (t *Transformer) TransformChannels(channels []SlackChannel) []*IntermediateChannel {
 	resultChannels := []*IntermediateChannel{}
 	for _, channel := range channels {
+		if t.ChannelOnly != "" && channel.Name != t.ChannelOnly {
+			t.Logger.Infof("--channel-only %s active - skipping channel %s", t.ChannelOnly, channel.Name)
+			continue
+		}
+
 		validMembers := filterValidMembers(channel.Members, t.Intermediate.UsersById)
 		if (channel.Type == model.ChannelTypeDirect || channel.Type == model.ChannelTypeGroup) && len(validMembers) <= 1 {
 			t.Logger.Warnf("Bulk export for direct channels containing a single member is not supported. Not importing channel %s", channel.Name)
@@ -249,6 +254,10 @@ func (t *Transformer) PopulateUserMemberships() {
 	for userId, user := range t.Intermediate.UsersById {
 		memberships := []string{}
 		for _, channel := range t.Intermediate.PublicChannels {
+			if t.ChannelOnly != "" && channel.Name != t.ChannelOnly {
+				t.Logger.Infof("--channel-only %s active - skipping channel %s", t.ChannelOnly, channel.Name)
+				continue
+			}
 			for _, memberId := range channel.Members {
 				if userId == memberId {
 					memberships = append(memberships, channel.Name)
@@ -258,6 +267,10 @@ func (t *Transformer) PopulateUserMemberships() {
 		}
 		for _, channel := range t.Intermediate.PrivateChannels {
 			for _, memberId := range channel.Members {
+				if t.ChannelOnly != "" && channel.Name != t.ChannelOnly {
+					t.Logger.Infof("--channel-only %s active - skipping channel %s", t.ChannelOnly, channel.Name)
+					continue
+				}
 				if userId == memberId {
 					memberships = append(memberships, channel.Name)
 					break
@@ -272,6 +285,10 @@ func (t *Transformer) PopulateChannelMemberships() {
 	t.Logger.Info("Populating channel memberships")
 
 	for _, channel := range t.Intermediate.GroupChannels {
+		if t.ChannelOnly != "" && channel.Name != t.ChannelOnly {
+			t.Logger.Infof("--channel-only %s active - skipping channel %s", t.ChannelOnly, channel.Name)
+			continue
+		}
 		members := []string{}
 		for _, memberId := range channel.Members {
 			if user, ok := t.Intermediate.UsersById[memberId]; ok {
@@ -282,6 +299,10 @@ func (t *Transformer) PopulateChannelMemberships() {
 		channel.MembersUsernames = members
 	}
 	for _, channel := range t.Intermediate.DirectChannels {
+		if t.ChannelOnly != "" && channel.Name != t.ChannelOnly {
+			t.Logger.Infof("--channel-only %s active - skipping channel %s", t.ChannelOnly, channel.Name)
+			continue
+		}
 		members := []string{}
 		for _, memberId := range channel.Members {
 			if user, ok := t.Intermediate.UsersById[memberId]; ok {
@@ -295,6 +316,10 @@ func (t *Transformer) PopulateChannelMemberships() {
 
 func (t *Transformer) TransformAllChannels(slackExport *SlackExport) error {
 	t.Logger.Info("Transforming channels")
+
+	if t.ChannelOnly != "" {
+		t.Logger.Infof("Only transforming channel: %s", t.ChannelOnly)
+	}
 
 	// transform public
 	t.Intermediate.PublicChannels = t.TransformChannels(slackExport.PublicChannels)
@@ -558,7 +583,7 @@ func buildMessagePropsFromHuddle(post *SlackPost) model.StringInterface {
 	return propsMap
 }
 
-func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir string, skipAttachments, discardInvalidProps, allowDownload bool) error {
+func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir string, skipAttachments, discardInvalidProps, allowDownload bool, maxMessageLength int, channelOnly string) error {
 	t.Logger.Info("Transforming posts")
 
 	newGroupChannels := []*IntermediateChannel{}
@@ -572,6 +597,13 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 			t.Logger.Warnf("--- Couldn't find channel %s referenced by posts", originalChannelName)
 			continue
 		}
+
+		if channel.Name != channelOnly {
+			t.Logger.Infof("--channel-only %s active - skipping channel %s", channelOnly, channel.Name)
+			continue
+		}
+
+		t.Logger.Infof("Transforming channel %s", channel.Name)
 
 		timestamps := make(map[int64]bool)
 		sort.Slice(channelPosts, func(i, j int) bool {
@@ -592,18 +624,25 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 					t.CreateIntermediateUser(post.User)
 					author = t.Intermediate.UsersById[post.User]
 				}
-				newPost := &IntermediatePost{
+
+				// Split message if needed
+				messageParts := splitMessage(post.Text, t.MaxMessageLength)
+
+				// Create the main post with first part
+				mainPost := &IntermediatePost{
 					User:     author.Username,
 					Channel:  channel.Name,
-					Message:  post.Text,
+					Message:  messageParts[0],
 					CreateAt: SlackConvertTimeStamp(post.TimeStamp),
 				}
-				t.AddFilesToPost(&post, skipAttachments, slackExport, attachmentsDir, newPost, allowDownload)
+
+				// Add files and attachments only to main post
+				t.AddFilesToPost(&post, skipAttachments, slackExport, attachmentsDir, mainPost, allowDownload)
 
 				if len(post.Attachments) > 0 {
-					props, propsB := t.AddAttachmentsToPost(&post, newPost)
+					props, propsB := t.AddAttachmentsToPost(&post, mainPost)
 					if utf8.RuneCount(propsB) <= model.PostPropsMaxRunes {
-						newPost.Props = props
+						mainPost.Props = props
 					} else {
 						if discardInvalidProps {
 							t.Logger.Warn("Unable import post as props exceed the maximum character count. Skipping as --discard-invalid-props is enabled.")
@@ -614,7 +653,18 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 					}
 				}
 
-				AddPostToThreads(post, newPost, threads, channel, timestamps)
+				// Add subsequent parts as replies
+				for i := 1; i < len(messageParts); i++ {
+					reply := &IntermediatePost{
+						User:     author.Username,
+						Channel:  channel.Name,
+						Message:  messageParts[i],
+						CreateAt: SlackConvertTimeStamp(post.TimeStamp) + int64(i), // Increment timestamp for order
+					}
+					mainPost.Replies = append(mainPost.Replies, reply)
+				}
+
+				AddPostToThreads(post, mainPost, threads, channel, timestamps)
 
 			// file comment
 			case post.IsFileComment():
@@ -774,7 +824,8 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 	return nil
 }
 
-func (t *Transformer) Transform(slackExport *SlackExport, attachmentsDir string, skipAttachments, discardInvalidProps, allowDownload, skipEmptyEmails bool, defaultEmailDomain string) error {
+func (t *Transformer) Transform(slackExport *SlackExport, attachmentsDir string, skipAttachments, discardInvalidProps, allowDownload, skipEmptyEmails bool, defaultEmailDomain string, maxMessageLength int, channelOnly string) error {
+	t.MaxMessageLength = maxMessageLength
 	t.TransformUsers(slackExport.Users, skipEmptyEmails, defaultEmailDomain)
 
 	if err := t.TransformAllChannels(slackExport); err != nil {
@@ -784,7 +835,7 @@ func (t *Transformer) Transform(slackExport *SlackExport, attachmentsDir string,
 	t.PopulateUserMemberships()
 	t.PopulateChannelMemberships()
 
-	if err := t.TransformPosts(slackExport, attachmentsDir, skipAttachments, discardInvalidProps, allowDownload); err != nil {
+	if err := t.TransformPosts(slackExport, attachmentsDir, skipAttachments, discardInvalidProps, allowDownload, maxMessageLength, channelOnly); err != nil {
 		return err
 	}
 
@@ -827,4 +878,37 @@ func makeAlphaNum(str string, allowAdditional ...rune) string {
 
 var specialReplacements = map[string]string{
 	"ß": "ss",
+}
+
+func splitMessage(message string, maxLength int) []string {
+	if message == "" {
+		return []string{""}
+	}
+
+	if maxLength <= 0 || len(message) <= maxLength {
+		return []string{message}
+	}
+
+	var parts []string
+	for len(message) > maxLength {
+		// Find last space before max length to avoid splitting words
+		splitIndex := strings.LastIndex(message[:maxLength], " ")
+		if splitIndex == -1 {
+			splitIndex = maxLength
+		}
+
+		parts = append(parts, strings.TrimSpace(message[:splitIndex]))
+		message = strings.TrimSpace(message[splitIndex:])
+	}
+
+	if len(message) > 0 {
+		parts = append(parts, message)
+	}
+
+	// Ensure we always return at least one part
+	if len(parts) == 0 {
+		return []string{""}
+	}
+
+	return parts
 }

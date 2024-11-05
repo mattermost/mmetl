@@ -47,6 +47,8 @@ func init() {
 	TransformSlackCmd.Flags().String("default-email-domain", "", "If this flag is provided: When a user's email address is empty, the output's email address will be generated from their username and the provided domain.")
 	TransformSlackCmd.Flags().BoolP("allow-download", "l", false, "Allows downloading the attachments for the import file")
 	TransformSlackCmd.Flags().BoolP("discard-invalid-props", "p", false, "Skips converting posts with invalid props instead discarding the props themselves")
+	TransformSlackCmd.Flags().IntP("max-message-length", "m", 16383, "Maximum length of a message before it needs to be split")
+	TransformSlackCmd.Flags().StringP("channel-only", "n", "", "Only convert messages from this specific channel")
 	TransformSlackCmd.Flags().Bool("debug", false, "Whether to show debug logs or not")
 
 	TransformCmd.AddCommand(
@@ -69,6 +71,8 @@ func transformSlackCmdF(cmd *cobra.Command, args []string) error {
 	defaultEmailDomain, _ := cmd.Flags().GetString("default-email-domain")
 	allowDownload, _ := cmd.Flags().GetBool("allow-download")
 	discardInvalidProps, _ := cmd.Flags().GetBool("discard-invalid-props")
+	maxMessageLength, _ := cmd.Flags().GetInt("max-message-length")
+	channelOnly, _ := cmd.Flags().GetString("channel-only")
 	debug, _ := cmd.Flags().GetBool("debug")
 
 	// output file
@@ -131,7 +135,17 @@ func transformSlackCmdF(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	err = slackTransformer.Transform(slackExport, attachmentsDir, skipAttachments, discardInvalidProps, allowDownload, skipEmptyEmails, defaultEmailDomain)
+	err = slackTransformer.Transform(
+		slackExport,
+		attachmentsDir,
+		skipAttachments,
+		discardInvalidProps,
+		allowDownload,
+		skipEmptyEmails,
+		defaultEmailDomain,
+		maxMessageLength,
+		channelOnly,
+	)
 	if err != nil {
 		return err
 	}

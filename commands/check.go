@@ -27,7 +27,8 @@ func init() {
 	CheckSlackCmd.Flags().Bool("debug", true, "Whether to show debug logs or not")
 	CheckSlackCmd.Flags().Bool("skip-empty-emails", false, "Ignore empty email addresses from the import file. Note that this results in invalid data.")
 	CheckSlackCmd.Flags().String("default-email-domain", "", "If this flag is provided: When a user's email address is empty, the output's email address will be generated from their username and the provided domain.")
-
+	CheckSlackCmd.Flags().IntP("max-message-length", "m", 16383, "Maximum length of a message before it needs to be split")
+	CheckSlackCmd.Flags().StringP("channel-only", "n", "", "Only check messages from this specific channel")
 	if err := CheckSlackCmd.MarkFlagRequired("file"); err != nil {
 		panic(err)
 	}
@@ -46,7 +47,8 @@ func checkSlackCmdF(cmd *cobra.Command, args []string) error {
 	debug, _ := cmd.Flags().GetBool("debug")
 	skipEmptyEmails, _ := cmd.Flags().GetBool("skip-empty-emails")
 	defaultEmailDomain, _ := cmd.Flags().GetString("default-email-domain")
-
+	maxMessageLength, _ := cmd.Flags().GetInt("max-message-length")
+	channelOnly, _ := cmd.Flags().GetString("channel-only")
 	// input file
 	fileReader, err := os.Open(inputFilePath)
 	if err != nil {
@@ -90,12 +92,22 @@ func checkSlackCmdF(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	err = slackTransformer.Transform(slackExport, "", true, true, false, skipEmptyEmails, defaultEmailDomain)
+	err = slackTransformer.Transform(
+		slackExport,
+		"",
+		true,
+		true,
+		false,
+		skipEmptyEmails,
+		defaultEmailDomain,
+		maxMessageLength,
+		channelOnly,
+	)
 	if err != nil {
 		return err
 	}
 
-	slackTransformer.CheckIntermediate()
+	slackTransformer.CheckIntermediate(maxMessageLength)
 
 	return nil
 }
