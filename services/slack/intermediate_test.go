@@ -817,7 +817,7 @@ func TestTransformPosts(t *testing.T) {
 			},
 		}
 
-		err := slackTransformer.TransformPosts(slackExport, "", false, false, false)
+		err := slackTransformer.TransformPosts(slackExport, "", false, false, false, 1000, "")
 		if err != nil {
 			t.Fatalf("expected no error, got %v", err)
 		}

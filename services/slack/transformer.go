@@ -3,15 +3,18 @@ package slack
 import log "github.com/sirupsen/logrus"
 
 type Transformer struct {
-	TeamName     string
-	Intermediate *Intermediate
-	Logger       log.FieldLogger
+	Logger           log.FieldLogger
+	TeamName         string
+	Intermediate     *Intermediate
+	MaxMessageLength int
+	ChannelOnly      string
 }
 
 func NewTransformer(teamName string, logger log.FieldLogger) *Transformer {
 	return &Transformer{
-		TeamName:     teamName,
-		Intermediate: &Intermediate{},
-		Logger:       logger,
+		TeamName:         teamName,
+		Intermediate:     &Intermediate{},
+		Logger:           logger,
+		MaxMessageLength: 16383,
 	}
 }

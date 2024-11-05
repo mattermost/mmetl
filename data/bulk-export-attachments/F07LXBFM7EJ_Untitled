@@ -1,0 +1,91 @@
+2/ v0.126.2 if almost 3 times slower!!
+hugo v0.126.1-3d40aba512931031921463dafc172c0d124437b8+extended linux/amd64 BuildDate=2024-05-15T10:42:34Z VendorInfo=gohugoio
+1666INFO  Translation func for language en-au not found, use default.
+1667INFO  Translation func for language en-ca not found, use default.
+1668INFO  Translation func for language en-gb not found, use default.
+1669INFO  Translation func for language en-ie not found, use default.
+1670INFO  Translation func for language en-my not found, use default.
+1671INFO  Translation func for language en-nz not found, use default.
+1672INFO  Translation func for language en-sg not found, use default.
+1673INFO  static: syncing static files to / duration 63.670525ms
+1674INFO  dynacache: adjusted partitions' max size evicted 5631 numGC 30 limit 96.00 GB alloc 0.83 GB totalAlloc 2.98 GB
+1675INFO  build:  step process substep collect files 107806 files_total 107806 pages_total 92531 resources_total 15275 duration 2.596883664s
+1676INFO  build:  step process duration 2.596922056s
+1677INFO  build:  step assemble duration 1.785355299s
+1678INFO  deprecated: .Site.Author was deprecated in Hugo v0.124.0 and will be removed in a future release. Use taxonomies instead.
+1679DEBUG Write redirect to main language en: http://stage-www3.aiprm.com/
+1680INFO  build:  step render substep pages site en outputFormat html duration 13.8144455s
+1681INFO  build:  step render substep pages site en outputFormat sitemap-news duration 8.424964ms
+1682WARN  found no layout file for "webappmanifest" for kind "home": You should create a template file which matches Hugo Layouts Lookup Rules for this combination.
+1683INFO  build:  step render substep pages site en outputFormat webappmanifest duration 4.96226ms
+1684INFO  build:  step render substep pages site en-au outputFormat html duration 11.935922282s
+1685INFO  build:  step render substep pages site en-au outputFormat sitemap-news duration 4.835874ms
+1686INFO  build:  step render substep pages site en-au outputFormat webappmanifest duration 4.127317ms
+1687INFO  build:  step render substep pages site en-ca outputFormat html duration 13.081795038s
+1688INFO  build:  step render substep pages site en-ca outputFormat sitemap-news duration 6.539553ms
+1689INFO  build:  step render substep pages site en-ca outputFormat webappmanifest duration 3.984931ms
+1690INFO  build:  step render substep pages site en-gb outputFormat html duration 11.960175838s
+1691INFO  build:  step render substep pages site en-gb outputFormat sitemap-news duration 5.999682ms
+1692INFO  build:  step render substep pages site en-gb outputFormat webappmanifest duration 4.244026ms
+1693INFO  build:  step render substep pages site en-ie outputFormat html duration 1m0.121354502s
+1694INFO  build:  step render substep pages site en-ie outputFormat sitemap-news duration 13.04321ms
+1695INFO  build:  step render substep pages site en-ie outputFormat webappmanifest duration 5.852126ms
+1696INFO  build:  step render substep pages site en-my outputFormat html duration 2m29.826259871s
+1697INFO  build:  step render substep pages site en-my outputFormat sitemap-news duration 17.74448ms
+1698INFO  build:  step render substep pages site en-my outputFormat webappmanifest duration 3.970452ms
+1699INFO  build:  step render substep pages site en-nz outputFormat html duration 2m29.725768853s
+1700INFO  build:  step render substep pages site en-nz outputFormat sitemap-news duration 15.385055ms
+1701INFO  build:  step render substep pages site en-nz outputFormat webappmanifest duration 7.229966ms
+1702INFO  build:  step render substep pages site en-sg outputFormat html duration 2m29.163787456s
+1703INFO  build:  step render substep pages site en-sg outputFormat sitemap-news duration 13.109133ms
+1704INFO  build:  step render substep pages site en-sg outputFormat webappmanifest duration 5.917679ms
+1705INFO  build:  step render substep pages site es outputFormat html duration 25.18667087s
+1706INFO  build:  step render substep pages site es outputFormat sitemap-news duration 5.329598ms
+1707INFO  build:  step render substep pages site es outputFormat webappmanifest duration 3.110283ms
+1708INFO  build:  step render substep pages site fr outputFormat html duration 26.061907096s
+1709INFO  build:  step render substep pages site fr outputFormat sitemap-news duration 5.713908ms
+1710INFO  build:  step render substep pages site fr outputFormat webappmanifest duration 6.162608ms
+1711INFO  build:  step render substep pages site fr-ca outputFormat html duration 17.267970795s
+1712INFO  build:  step render substep pages site fr-ca outputFormat sitemap-news duration 1.679575ms
+1713INFO  build:  step render substep pages site fr-ca outputFormat webappmanifest duration 422.171µs
+1714INFO  build:  step render substep pages site fr-ch outputFormat html duration 17.480281934s
+1715INFO  build:  step render substep pages site fr-ch outputFormat sitemap-news duration 904.694µs
+1716INFO  build:  step render substep pages site fr-ch outputFormat webappmanifest duration 448.58µs
+1717INFO  build:  step render substep pages site it outputFormat html duration 26.023164587s
+1718INFO  build:  step render substep pages site it outputFormat sitemap-news duration 4.628415ms
+1719INFO  build:  step render substep pages site it outputFormat webappmanifest duration 2.135579ms
+1720INFO  build:  step render substep pages site ja outputFormat html duration 25.163388762s
+1721INFO  build:  step render substep pages site ja outputFormat sitemap-news duration 5.327634ms
+1722INFO  build:  step render substep pages site ja outputFormat webappmanifest duration 2.565974ms
+1723INFO  build:  step render substep pages site ko outputFormat html duration 25.805114798s
+1724INFO  build:  step render substep pages site ko outputFormat sitemap-news duration 5.00966ms
+1725INFO  build:  step render substep pages site ko outputFormat webappmanifest duration 4.778176ms
+1726INFO  build:  step render substep pages site nl outputFormat html duration 25.864429958s
+1727INFO  build:  step render substep pages site nl outputFormat sitemap-news duration 5.141055ms
+1728INFO  build:  step render substep pages site nl outputFormat webappmanifest duration 4.472032ms
+1729INFO  build:  step render substep pages site pt-br outputFormat html duration 25.649818169s
+1730INFO  build:  step render substep pages site pt-br outputFormat sitemap-news duration 5.619941ms
+1731INFO  build:  step render substep pages site pt-br outputFormat webappmanifest duration 5.050897ms
+1732INFO  build:  step render substep pages site tr outputFormat html duration 25.976909377s
+1733INFO  build:  step render substep pages site tr outputFormat sitemap-news duration 4.249446ms
+1734INFO  build:  step render substep pages site tr outputFormat webappmanifest duration 2.041883ms
+1735INFO  build:  step render substep pages site zh outputFormat html duration 11.921467058s
+1736INFO  build:  step render substep pages site zh outputFormat sitemap-news duration 4.840172ms
+1737INFO  build:  step render substep pages site zh outputFormat webappmanifest duration 4.361536ms
+1738INFO  build:  step render substep pages site de outputFormat html duration 30.170411863s
+1739INFO  build:  step render substep pages site de outputFormat sitemap-news duration 5.244278ms
+1740INFO  build:  step render substep pages site de outputFormat webappmanifest duration 2.961253ms
+1741INFO  build:  step render pages 121354 content 92696 duration 14m5.001324565s
+1742INFO  build:  step postProcess duration 10.971µs
+1743INFO  build:  duration 14m9.383710002s
+1744                   |  EN  | EN-AU | EN-CA | EN-GB | EN-IE | EN-MY | EN-NZ | EN-SG |  ES  |  FR  | FR-CA | FR-CH |  IT  |  JA  |  KO  |  NL  | PT-BR |  TR  |  ZH  |  DE
+1745-------------------+------+-------+-------+-------+-------+-------+-------+-------+------+------+-------+-------+------+------+------+------+-------+------+------+-------
+1746  Pages            | 5331 |  4980 |  5148 |  4928 |  4951 |  5152 |  5153 |  4999 | 5193 | 5193 |   256 |   256 | 5191 | 5191 | 5191 | 5190 |  5194 | 5189 | 4896 | 5193
+1747  Paginator pages  | 1626 |  1520 |  1568 |  1496 |  1506 |  1570 |  1570 |  1524 | 1624 | 1624 |    27 |    27 | 1623 | 1623 | 1623 | 1623 |  1624 | 1623 | 1551 | 1623
+1748  Non-page files   | 1608 |  1608 |  1608 |  1608 |  1608 |  1608 |  1608 |  1608 |  268 |  268 |   268 |   268 |  268 |  268 |  268 |  268 |   268 |  268 |   38 |  311
+1749  Static files     |  315 |   315 |   315 |   315 |   315 |   315 |   315 |   315 |  315 |  315 |   315 |   315 |  315 |  315 |  315 |  315 |   315 |  315 |  315 |  315
+1750  Processed images | 7416 |  5063 |  5063 |  5063 |  5027 |  5023 |  5024 |  5022 |  767 |  791 |   790 |   790 |  787 |  779 |  787 |  787 |   779 |  787 |    1 |  959
+1751  Aliases          |   89 |    87 |    87 |    87 |    87 |    87 |    87 |    86 |   85 |   85 |    41 |    41 |   85 |   85 |   85 |   85 |    85 |   85 |   83 |   85
+1752  Cleaned          |    0 |     0 |     0 |     0 |     0 |     0 |     0 |     0 |    0 |    0 |     0 |     0 |    0 |    0 |    0 |    0 |     0 |    0 |    0 |    0
+1753Total in 849448 ms
+https://gl2.deliverwows.org:10443/AIPRM-Marketing/AIPRM-website3/-/jobs/45166
