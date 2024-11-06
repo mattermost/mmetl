@@ -6,7 +6,7 @@ BUILD_VERSION ?= $(shell git ls-remote --tags --refs https://github.com/mattermo
 LDFLAGS += -X "github.com/mattermost/mmetl/commands.BuildHash=$(BUILD_HASH)"
 LDFLAGS += -X "github.com/mattermost/mmetl/commands.Version=$(BUILD_VERSION)"
 BUILD_COMMAND ?= go build -ldflags '$(LDFLAGS)'
-all: build
+all: deploy-local
 
 build: check-style
 	$(BUILD_COMMAND)

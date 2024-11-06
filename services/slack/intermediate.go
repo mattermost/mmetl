@@ -266,11 +266,11 @@ func (t *Transformer) PopulateUserMemberships() {
 			}
 		}
 		for _, channel := range t.Intermediate.PrivateChannels {
+			if t.ChannelOnly != "" && channel.Name != t.ChannelOnly {
+				t.Logger.Infof("--channel-only %s active - skipping channel %s", t.ChannelOnly, channel.Name)
+				continue
+			}
 			for _, memberId := range channel.Members {
-				if t.ChannelOnly != "" && channel.Name != t.ChannelOnly {
-					t.Logger.Infof("--channel-only %s active - skipping channel %s", t.ChannelOnly, channel.Name)
-					continue
-				}
 				if userId == memberId {
 					memberships = append(memberships, channel.Name)
 					break
@@ -598,7 +598,7 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 			continue
 		}
 
-		if channel.Name != channelOnly {
+		if channelOnly != "" && channel.Name != channelOnly {
 			t.Logger.Infof("--channel-only %s active - skipping channel %s", channelOnly, channel.Name)
 			continue
 		}
