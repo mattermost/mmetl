@@ -891,6 +891,14 @@ func TestTransformPosts(t *testing.T) {
 			t.Errorf("expected '+1' as EmojiName, got %s", post.Reactions[0].EmojiName)
 		}
 
+		if post.Reactions[1].EmojiName != "+1" {
+			t.Errorf("expected '+1' as EmojiName for reaction with skin tone, got %s", post.Reactions[1].EmojiName)
+		}
+
+		if post.Reactions[0].CreateAt != 1695219818001 {
+			t.Errorf("expected 1695219818001 as CreateAt, got %d", post.Reactions[0].CreateAt)
+		}
+
 		if post.Reactions[0].User != "m1" {
 			t.Errorf("expected 'm1' as reaction user, got %s", post.Reactions[0].User)
 		}

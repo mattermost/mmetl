@@ -560,11 +560,17 @@ func (t *Transformer) getReactionsFromPost(post SlackPost) []*IntermediateReacti
 				t.CreateIntermediateUser(reactionUser)
 				reactionAuthor = t.Intermediate.UsersById[reactionUser]
 			}
+			var cleanedReactionName = reaction.Name
+			if strings.Contains(reaction.Name, "::") {
+				cleanedReactionName = strings.Split(reaction.Name, "::")[0]
+			}
 			newReaction := &IntermediateReaction{
 				User:      reactionAuthor.Username,
-				EmojiName: reaction.Name,
-				CreateAt:  SlackConvertTimeStamp(post.TimeStamp),
-				// we don't have the real createAt available, so we pretend that reactions were created together with the post
+				EmojiName: cleanedReactionName,
+				CreateAt:  SlackConvertTimeStamp(post.TimeStamp) + 1,
+				// we don't have the real createAt available, so we pretend that reactions were created shortly after the post,
+				// to avoid validation errors at import time:
+				// BulkImport: Reaction CreateAt property must be greater than the parent post CreateAt.
 			}
 			reactions = append(reactions, newReaction)
 		}
