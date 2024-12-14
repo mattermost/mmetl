@@ -95,8 +95,8 @@ func transformSlackCmdF(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	profilePicturesDir := path.Join(attachmentsDir, "profile_pictures")
 	if !skipProfilePictures {
+		profilePicturesDir := path.Join(attachmentsDir, "profile_pictures")
 		if fileInfo, err := os.Stat(profilePicturesDir); os.IsNotExist(err) {
 			if createErr := os.MkdirAll(profilePicturesDir, 0755); createErr != nil {
 				return createErr
