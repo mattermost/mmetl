@@ -867,49 +867,18 @@ func TestTransformPosts(t *testing.T) {
 		}
 
 		err := slackTransformer.TransformPosts(slackExport, "", false, false, false)
-		if err != nil {
-			t.Fatalf("expected no error, got %v", err)
-		}
-		if len(slackTransformer.Intermediate.Posts) != 1 {
-			t.Errorf("expected 1 post, got %d", len(slackTransformer.Intermediate.Posts))
-		}
+		require.NoError(t, err)
+		require.Equal(t, 1, len(slackTransformer.Intermediate.Posts))
 
 		post := slackTransformer.Intermediate.Posts[0]
-		if post.User != "m1" {
-			t.Errorf("expected user to be m1, got %s", post.User)
-		}
-
-		if post.Message != "hi everyone let's talk about this" {
-			t.Errorf("expected message to be 'hi everyone let's talk about this', got %s", post.Message)
-		}
-
-		if len(post.Reactions) != 2 {
-			t.Errorf("expected 2 post reactions, got %d", len(post.Reactions))
-		}
-
-		if post.Reactions[0].EmojiName != "+1" {
-			t.Errorf("expected '+1' as EmojiName, got %s", post.Reactions[0].EmojiName)
-		}
-
-		if post.Reactions[1].EmojiName != "+1" {
-			t.Errorf("expected '+1' as EmojiName for reaction with skin tone, got %s", post.Reactions[1].EmojiName)
-		}
-
-		if post.Reactions[0].CreateAt != 1695219818001 {
-			t.Errorf("expected 1695219818001 as CreateAt, got %d", post.Reactions[0].CreateAt)
-		}
-
-		if post.Reactions[0].User != "m1" {
-			t.Errorf("expected 'm1' as reaction user, got %s", post.Reactions[0].User)
-		}
-
-		if len(post.Replies) != 1 {
-			t.Errorf("expected 1 post replies, got %d", len(post.Replies))
-		}
-
-		if len(post.Replies[0].Reactions) != 1 {
-			t.Errorf("expected 1 reaction on the post reply, got %d", len(post.Replies[0].Reactions))
-		}
-
+		require.Equal(t, "m1", post.User)
+		require.Equal(t, "hi everyone let's talk about this", post.Message)
+		require.Equal(t, 2, len(post.Reactions))
+		require.Equal(t, "+1", post.Reactions[0].EmojiName)
+		require.Equal(t, "+1", post.Reactions[1].EmojiName)
+		require.Equal(t, "m1", post.Reactions[0].User)
+		require.Equal(t, int64(1695219818001), post.Reactions[0].CreateAt)
+		require.Equal(t, 1, len(post.Replies))
+		require.Equal(t, 1, len(post.Replies[0].Reactions))
 	})
 }
