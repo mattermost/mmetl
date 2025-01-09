@@ -79,12 +79,14 @@ github.com/mattermost/logr/v2 v2.0.21 h1:CMHsP+nrbRlEC4g7BwOk1GAnMtHkniFhlSQPXy5
 github.com/mattermost/logr/v2 v2.0.21/go.mod h1:kZkB/zqKL9e+RY5gB3vGpsyenC+TpuiOenjMkvJJbzc=
 github.com/mattermost/mattermost/server/public v0.1.0 h1:64o/Ie8vXVNrgmBJxh9rFXbNQ+kV7+BQo/XT9u0GX8E=
 github.com/mattermost/mattermost/server/public v0.1.0/go.mod h1:WeqCPudYLqk4HjjGvCMJwhtHMVvcNUTHIbrLmLjAD+4=
-github.com/mattermost/mattermost/server/v8 v8.0.0-20240520151130-4bdd8bb18e47 h1:HAJ7UGlEltFZOjan7hOkX1I6q+73xel64ESSIlcCMDM=
-github.com/mattermost/mattermost/server/v8 v8.0.0-20240520151130-4bdd8bb18e47/go.mod h1:qQjPPGKiugHw6Tunlmq3cVDkKFFbgtMxIvyNJoN+p3Y=
+github.com/mattermost/mattermost/server/v8 v8.0.0-20240528084106-54019e40138f h1:po6x5RDaFfpgDWVyiQJZ0gqSc3mCHzL47u4d1MR4npQ=
+github.com/mattermost/mattermost/server/v8 v8.0.0-20240528084106-54019e40138f/go.mod h1:qQjPPGKiugHw6Tunlmq3cVDkKFFbgtMxIvyNJoN+p3Y=
 github.com/matttproud/golang_protobuf_extensions v1.0.1/go.mod h1:D8He9yQNgCq6Z5Ld7szi9bcBfOoFv/3dc6xSMkL2PC0=
 github.com/microcosm-cc/bluemonday v1.0.1/go.mod h1:hsXNsILzKxV+sX77C5b8FSuKF00vh2OMYv+xgHpAMF4=
 github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd/go.mod h1:6dJC0mAP4ikYIbvyc7fijjWJddQyLn8Ig3JB5CqoB9Q=
 github.com/modern-go/reflect2 v1.0.1/go.mod h1:bx2lNnkwVCuqBIxFjflWJWanXIb3RllmbCylyMrvgv0=
+github.com/n-marshall/go-cp v0.0.0-20180115193924-61436d3b7cfa h1:cHWBhAbWYxzxHdl1kD41n4LPuydyoIHOOo82qqRsP4g=
+github.com/n-marshall/go-cp v0.0.0-20180115193924-61436d3b7cfa/go.mod h1:slbibx0cm0aSgmu1NaJdSAZiLmKMGQb2uK1hNNdTZr0=
 github.com/neelance/astrewrite v0.0.0-20160511093645-99348263ae86/go.mod h1:kHJEU3ofeGjhHklVoIGuVj85JJwZ6kWPaJwCIxgnFmo=
 github.com/neelance/sourcemap v0.0.0-20151028013722-8c68805598ab/go.mod h1:Qr6/a/Q4r9LP1IltGz7tA7iOK1WonHEYhu1HRBA7ZiM=
 github.com/openzipkin/zipkin-go v0.1.1/go.mod h1:NtoC/o8u3JlF1lSlyPNswIbeQH9bJTmOf0Erfk+hxe8=

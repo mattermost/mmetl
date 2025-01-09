@@ -77,6 +77,7 @@ func TestIntermediateChannelSanitise(t *testing.T) {
 func TestTransformPublicChannels(t *testing.T) {
 	slackTransformer := NewTransformer("test", log.New())
 	slackTransformer.Intermediate.UsersById = map[string]*IntermediateUser{"m1": {}, "m2": {}, "m3": {}}
+	slackTransformer.Intermediate.ChannelOwners = make(map[string][]string)
 
 	publicChannels := []SlackChannel{
 		{
@@ -136,6 +137,7 @@ func TestTransformPublicChannels(t *testing.T) {
 func TestTransformPublicChannelsWithAnInvalidMember(t *testing.T) {
 	slackTransformer := NewTransformer("test", log.New())
 	slackTransformer.Intermediate.UsersById = map[string]*IntermediateUser{"m1": {}, "m2": {}}
+	slackTransformer.Intermediate.ChannelOwners = make(map[string][]string)
 
 	publicChannels := []SlackChannel{
 		{
@@ -195,6 +197,7 @@ func TestTransformPublicChannelsWithAnInvalidMember(t *testing.T) {
 func TestTransformPrivateChannels(t *testing.T) {
 	slackTransformer := NewTransformer("test", log.New())
 	slackTransformer.Intermediate.UsersById = map[string]*IntermediateUser{"m1": {}, "m2": {}, "m3": {}}
+	slackTransformer.Intermediate.ChannelOwners = make(map[string][]string)
 
 	privateChannels := []SlackChannel{
 		{
@@ -254,6 +257,7 @@ func TestTransformPrivateChannels(t *testing.T) {
 func TestTransformBigGroupChannels(t *testing.T) {
 	slackTransformer := NewTransformer("test", log.New())
 	slackTransformer.Intermediate.UsersById = map[string]*IntermediateUser{"m1": {}, "m2": {}, "m3": {}, "m4": {}, "m5": {}, "m6": {}, "m7": {}, "m8": {}, "m9": {}}
+	slackTransformer.Intermediate.ChannelOwners = make(map[string][]string)
 	channelMembers := []string{"m1", "m2", "m3", "m4", "m5", "m6", "m7", "m8", "m9"}
 
 	bigGroupChannels := []SlackChannel{
@@ -312,6 +316,7 @@ func TestTransformBigGroupChannels(t *testing.T) {
 func TestTransformRegularGroupChannels(t *testing.T) {
 	slackTransformer := NewTransformer("test", log.New())
 	slackTransformer.Intermediate.UsersById = map[string]*IntermediateUser{"m1": {}, "m2": {}, "m3": {}}
+	slackTransformer.Intermediate.ChannelOwners = make(map[string][]string)
 
 	regularGroupChannels := []SlackChannel{
 		{
@@ -370,6 +375,7 @@ func TestTransformRegularGroupChannels(t *testing.T) {
 func TestTransformDirectChannels(t *testing.T) {
 	slackTransformer := NewTransformer("test", log.New())
 	slackTransformer.Intermediate.UsersById = map[string]*IntermediateUser{"m1": {}, "m2": {}, "m3": {}}
+	slackTransformer.Intermediate.ChannelOwners = make(map[string][]string)
 
 	directChannels := []SlackChannel{
 		{
@@ -404,6 +410,7 @@ func TestTransformDirectChannels(t *testing.T) {
 func TestTransformChannelWithOneValidMember(t *testing.T) {
 	slackTransformer := NewTransformer("test", log.New())
 	slackTransformer.Intermediate.UsersById = map[string]*IntermediateUser{"m1": {}}
+	slackTransformer.Intermediate.ChannelOwners = make(map[string][]string)
 
 	t.Run("A direct channel with only one valid member should not be transformed", func(t *testing.T) {
 		directChannels := []SlackChannel{
@@ -591,7 +598,7 @@ func TestTransformUsers(t *testing.T) {
 
 	defaultEmailDomain := ""
 	skipEmptyEmails := false
-	slackTransformer.TransformUsers(users, skipEmptyEmails, defaultEmailDomain)
+	slackTransformer.TransformUsers(users, skipEmptyEmails, defaultEmailDomain, "")
 	require.Len(t, slackTransformer.Intermediate.UsersById, len(users))
 
 	for i, id := range []string{id1, id2, id3} {
@@ -601,6 +608,7 @@ func TestTransformUsers(t *testing.T) {
 		assert.Equal(t, fmt.Sprintf("lastname%d", i+1), slackTransformer.Intermediate.UsersById[id].LastName)
 		assert.Equal(t, fmt.Sprintf("position%d", i+1), slackTransformer.Intermediate.UsersById[id].Position)
 		assert.Equal(t, fmt.Sprintf("email%d@example.com", i+1), slackTransformer.Intermediate.UsersById[id].Email)
+		assert.Equal(t, "", slackTransformer.Intermediate.UsersById[id].AuthService)
 		assert.Zero(t, slackTransformer.Intermediate.UsersById[id].DeleteAt)
 	}
 }
@@ -661,7 +669,7 @@ func TestDeleteAt(t *testing.T) {
 
 	defaultEmailDomain := ""
 	skipEmptyEmails := false
-	slackTransformer.TransformUsers(users, skipEmptyEmails, defaultEmailDomain)
+	slackTransformer.TransformUsers(users, skipEmptyEmails, defaultEmailDomain, "")
 	require.Zero(t, slackTransformer.Intermediate.UsersById[activeUsers[0].Id].DeleteAt)
 	require.Zero(t, slackTransformer.Intermediate.UsersById[activeUsers[1].Id].DeleteAt)
 	require.NotZero(t, slackTransformer.Intermediate.UsersById[inactiveUsers[0].Id].DeleteAt)

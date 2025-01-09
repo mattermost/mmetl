@@ -14,13 +14,16 @@ import (
 )
 
 type SlackChannel struct {
-	Id      string          `json:"id"`
-	Name    string          `json:"name"`
-	Creator string          `json:"creator"`
-	Members []string        `json:"members"`
-	Purpose SlackChannelSub `json:"purpose"`
-	Topic   SlackChannelSub `json:"topic"`
-	Type    model.ChannelType
+	Id        string          `json:"id"`
+	Name      string          `json:"name"`
+	Creator   string          `json:"creator"`
+	Members   []string        `json:"members"`
+	Purpose   SlackChannelSub `json:"purpose"`
+	Topic     SlackChannelSub `json:"topic"`
+	IsPrivate bool            `json:"is_private"`
+	IsGroup   bool            `json:"is_group"`
+	IsChannel bool            `json:"is_channel"`
+	Type      model.ChannelType
 }
 
 type SlackChannelSub struct {
@@ -38,8 +41,19 @@ type SlackUser struct {
 	Id       string       `json:"id"`
 	Username string       `json:"name"`
 	IsBot    bool         `json:"is_bot"`
+	IsAdmin  bool         `json:"is_admin"`
+	IsOwner  bool         `json:"is_owner"`
 	Profile  SlackProfile `json:"profile"`
 	Deleted  bool         `json:"deleted"`
+}
+
+type SlackBotProfile struct {
+	Id       string            `json:"id"`
+	Username string            `json:"name"`
+	AppID    string            `json:"app_id"`
+	Icons    map[string]string `json:"icons"`
+	TeamID   string            `json:"team_id"`
+	Updated  uint64            `json:"updated"`
 }
 
 type SlackFile struct {
@@ -76,6 +90,7 @@ type SlackPost struct {
 	User        string                   `json:"user"`
 	BotId       string                   `json:"bot_id"`
 	BotUsername string                   `json:"username"`
+	BotProfile  SlackBotProfile          `json:"bot_profile"`
 	Text        string                   `json:"text"`
 	TimeStamp   string                   `json:"ts"`
 	ThreadTS    string                   `json:"thread_ts"`
@@ -91,7 +106,7 @@ type SlackPost struct {
 }
 
 func (p *SlackPost) IsPlainMessage() bool {
-	return p.Type == "message" && (p.SubType == "" || p.SubType == "file_share" || p.SubType == "thread_broadcast")
+	return p.Type == "message" && p.BotId == "" && (p.SubType == "" || p.SubType == "file_share" || p.SubType == "thread_broadcast")
 }
 
 func (p *SlackPost) IsFileComment() bool {
@@ -99,7 +114,7 @@ func (p *SlackPost) IsFileComment() bool {
 }
 
 func (p *SlackPost) IsBotMessage() bool {
-	return p.Type == "message" && (p.SubType == "bot_message" || p.SubType == "tombstone")
+	return p.Type == "message" && (p.SubType == "bot_message" || p.SubType == "tombstone" || p.BotId != "")
 }
 
 func (p *SlackPost) IsJoinLeaveMessage() bool {
@@ -340,6 +355,29 @@ func (t *Transformer) SlackConvertPostsMarkup(posts map[string][]SlackPost) map[
 				result = rule.regex.ReplaceAllStringFunc(result, rule.fn)
 			}
 			posts[channelName][postIdx].Text = result
+
+			for attachIdx, attachment := range posts[channelName][postIdx].Attachments {
+				if len(attachment.Color) == 6 {
+					posts[channelName][postIdx].Attachments[attachIdx].Color = "#" + attachment.Color
+				}
+				attachText := attachment.Text
+				attachPretext := attachment.Pretext
+				attachFooter := attachment.Footer
+				for _, rule := range regexReplaceAllString {
+					attachPretext = rule.regex.ReplaceAllString(attachPretext, rule.rpl)
+					attachText = rule.regex.ReplaceAllString(attachText, rule.rpl)
+					attachFooter = rule.regex.ReplaceAllString(attachFooter, rule.rpl)
+				}
+
+				for _, rule := range regexReplaceAllStringFunc {
+					attachPretext = rule.regex.ReplaceAllStringFunc(attachPretext, rule.fn)
+					attachText = rule.regex.ReplaceAllStringFunc(attachText, rule.fn)
+					attachFooter = rule.regex.ReplaceAllStringFunc(attachFooter, rule.fn)
+				}
+				posts[channelName][postIdx].Attachments[attachIdx].Pretext = attachPretext
+				posts[channelName][postIdx].Attachments[attachIdx].Text = attachText
+				posts[channelName][postIdx].Attachments[attachIdx].Footer = attachFooter
+			}
 		}
 	}
 

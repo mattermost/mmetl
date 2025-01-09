@@ -46,6 +46,12 @@ func checkSlackCmdF(cmd *cobra.Command, args []string) error {
 	debug, _ := cmd.Flags().GetBool("debug")
 	skipEmptyEmails, _ := cmd.Flags().GetBool("skip-empty-emails")
 	defaultEmailDomain, _ := cmd.Flags().GetString("default-email-domain")
+	authService, _ := cmd.Flags().GetString("auth-service")
+
+	err := slack.CheckAuthService(authService)
+	if err != nil {
+		return err
+	}
 
 	// input file
 	fileReader, err := os.Open(inputFilePath)
@@ -90,7 +96,7 @@ func checkSlackCmdF(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	err = slackTransformer.Transform(slackExport, "", true, true, false, skipEmptyEmails, defaultEmailDomain)
+	err = slackTransformer.Transform(slackExport, "", true, true, false, skipEmptyEmails, defaultEmailDomain, authService)
 	if err != nil {
 		return err
 	}

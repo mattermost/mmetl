@@ -2,6 +2,7 @@ package slack
 
 import (
 	"archive/zip"
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -84,6 +85,9 @@ type IntermediateUser struct {
 	Password    string   `json:"password"`
 	Memberships []string `json:"memberships"`
 	DeleteAt    int64    `json:"delete_at"`
+	AuthService string   `json:"auth_service"`
+	AuthData    string   `json:"auth_data"`
+	IsAdmin     bool     `json:"is_admin"`
 }
 
 func (u *IntermediateUser) Sanitise(logger log.FieldLogger, defaultEmailDomain string, skipEmptyEmails bool) {
@@ -149,12 +153,35 @@ type Intermediate struct {
 	DirectChannels  []*IntermediateChannel       `json:"direct_channels"`
 	UsersById       map[string]*IntermediateUser `json:"users"`
 	Posts           []*IntermediatePost          `json:"posts"`
+	ChannelOwners   map[string][]string
+	BotsById        map[string]string
 }
 
-func (t *Transformer) TransformUsers(users []SlackUser, skipEmptyEmails bool, defaultEmailDomain string) {
+func (t *Transformer) TransformUsers(users []SlackUser, skipEmptyEmails bool, defaultEmailDomain string, authSerivce string) {
 	t.Logger.Info("Transforming users")
 
 	t.Logger.Debugf("TransformUsers: Input SlackUser structs: %+v", users)
+
+	authServiceMap := map[string]string{}
+
+	if authSerivce != "" {
+		csvf, err := os.Open(authSerivce + "_map.csv")
+		if err == nil {
+			csvReader := csv.NewReader(csvf)
+			data, err := csvReader.ReadAll()
+			if err == nil {
+				for _, line := range data {
+					authServiceMap[line[0]] = line[1]
+				}
+			} else {
+				t.Logger.Error(err)
+			}
+		} else {
+			t.Logger.Errorf("File %s_map.csv with map not found. Auth service will not be mapped", authSerivce)
+		}
+		defer csvf.Close()
+
+	}
 
 	resultUsers := map[string]*IntermediateUser{}
 	for _, user := range users {
@@ -181,19 +208,42 @@ func (t *Transformer) TransformUsers(users []SlackUser, skipEmptyEmails bool, de
 			LastName:  lastName,
 			Position:  user.Profile.Title,
 			Email:     user.Profile.Email,
-			Password:  model.NewId(),
 			DeleteAt:  deleteAt,
+			IsAdmin:   (user.IsAdmin || user.IsOwner),
+		}
+
+		var userAuthData string
+		var isAuthService bool
+
+		userAuthData, isAuthService = authServiceMap[user.Username]
+		if !isAuthService && user.Profile.Email != "" {
+			userAuthData, isAuthService = authServiceMap[user.Profile.Email]
+		}
+
+		if isAuthService {
+			newUser.AuthService = authSerivce
+			newUser.AuthData = userAuthData
+		} else if os.Getenv("ENV") == "testing" {
+			newUser.Password = "testpassword"
+		} else {
+			newUser.Password = model.NewId()
 		}
 
 		t.Logger.Debugf("TransformUsers: newUser IntermediateUser struct: %+v", newUser)
 
 		if user.IsBot {
-			newUser.Id = user.Profile.BotID
+			newUser.Email = fmt.Sprintf("%s@bot", user.Username)
+			t.Intermediate.BotsById[user.Profile.BotID] = newUser.Id
 		}
 
 		newUser.Sanitise(t.Logger, defaultEmailDomain, skipEmptyEmails)
 		resultUsers[newUser.Id] = newUser
-		t.Logger.Debugf("Slack user with email %s and password %s has been imported.", newUser.Email, newUser.Password)
+
+		if isAuthService {
+			t.Logger.Debugf("Slack user with email %s and auth service %s has been imported.", newUser.Email, newUser.AuthService)
+		} else {
+			t.Logger.Debugf("Slack user with email %s and password %s has been imported.", newUser.Email, newUser.Password)
+		}
 	}
 
 	t.Intermediate.UsersById = resultUsers
@@ -232,8 +282,13 @@ func (t *Transformer) TransformChannels(channels []SlackChannel) []*Intermediate
 			channel.Type = model.ChannelTypePrivate
 		}
 
+		if channel.Type == model.ChannelTypeOpen && channel.IsPrivate {
+			channel.Type = model.ChannelTypePrivate
+		}
+
 		name := SlackConvertChannelName(channel.Name, channel.Id)
 		newChannel := &IntermediateChannel{
+			Id:           channel.Id,
 			OriginalName: getOriginalName(channel),
 			Name:         name,
 			DisplayName:  name,
@@ -244,6 +299,11 @@ func (t *Transformer) TransformChannels(channels []SlackChannel) []*Intermediate
 		}
 
 		newChannel.Sanitise(t.Logger)
+
+		if channel.Creator != "" {
+			t.Intermediate.ChannelOwners[channel.Creator] = append(t.Intermediate.ChannelOwners[channel.Creator], newChannel.Name)
+		}
+
 		resultChannels = append(resultChannels, newChannel)
 	}
 
@@ -482,6 +542,19 @@ func (t *Transformer) CreateIntermediateUser(userID string) {
 	t.Logger.Warnf("Created a new user because the original user was missing from the import files. user=%s", userID)
 }
 
+func (t *Transformer) CreateIntermediateBot(profile SlackBotProfile) {
+	newUser := &IntermediateUser{
+		Id:        profile.Id,
+		Username:  strings.ToLower(profile.Id),
+		FirstName: profile.Username,
+		Email:     fmt.Sprintf("%s@bot", profile.Id),
+		Password:  model.NewId(),
+	}
+	t.Intermediate.UsersById[profile.Id] = newUser
+	t.Intermediate.BotsById[profile.Id] = profile.Id
+	t.Logger.Warnf("Bot user added %s", profile.Username)
+}
+
 func (t *Transformer) CreateAndAddPostToThreads(post SlackPost, threads map[string]*IntermediatePost, timestamps map[int64]bool, channel *IntermediateChannel) {
 	author := t.Intermediate.UsersById[post.User]
 	if author == nil {
@@ -601,6 +674,7 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 	channelsByOriginalName := buildChannelsByOriginalNameMap(t.Intermediate)
 
 	resultPosts := []*IntermediatePost{}
+
 	for originalChannelName, channelPosts := range slackExport.Posts {
 		channel, ok := channelsByOriginalName[originalChannelName]
 		if !ok {
@@ -679,17 +753,24 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 
 			// bot message
 			case post.IsBotMessage():
-				if post.BotId == "" {
-					if post.User == "" {
-						t.Logger.Warn("Unable to import the message as the user field is missing.")
-						continue
-					}
-					post.BotId = post.User
+				if post.BotId == "" && post.User == "" {
+					t.Logger.Warn("Unable to import the message as the user field is missing.")
+					continue
 				}
 
-				author := t.Intermediate.UsersById[post.BotId]
+				author := t.Intermediate.UsersById[post.User]
 				if author == nil {
-					t.CreateIntermediateUser(post.BotId)
+					if userId, ok := t.Intermediate.BotsById[post.BotId]; ok {
+						author = t.Intermediate.UsersById[userId]
+					}
+				}
+				if author == nil {
+					botProfile := post.BotProfile
+					if botProfile.Id == "" {
+						botProfile.Id = post.BotId
+						botProfile.Username = post.BotUsername
+					}
+					t.CreateIntermediateBot(botProfile)
 					author = t.Intermediate.UsersById[post.BotId]
 				}
 
@@ -771,8 +852,10 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 				// all huddles are owned by USLACKBOT, but the room has a CreatedBy prop.
 				// this lets us get the actual user who created the huddle and fit with how Mattermost works.
 				poster := post.User
-				if len(post.Room.CreatedBy) > 0 {
-					poster = post.Room.CreatedBy
+				if post.Room != nil {
+					if len(post.Room.CreatedBy) > 0 {
+						poster = post.Room.CreatedBy
+					}
 				}
 
 				author := t.Intermediate.UsersById[poster]
@@ -813,8 +896,11 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 	return nil
 }
 
-func (t *Transformer) Transform(slackExport *SlackExport, attachmentsDir string, skipAttachments, discardInvalidProps, allowDownload, skipEmptyEmails bool, defaultEmailDomain string) error {
-	t.TransformUsers(slackExport.Users, skipEmptyEmails, defaultEmailDomain)
+func (t *Transformer) Transform(slackExport *SlackExport, attachmentsDir string, skipAttachments, discardInvalidProps, allowDownload, skipEmptyEmails bool, defaultEmailDomain string, authSerivce string) error {
+
+	t.Intermediate.ChannelOwners = make(map[string][]string)
+	t.Intermediate.BotsById = make(map[string]string)
+	t.TransformUsers(slackExport.Users, skipEmptyEmails, defaultEmailDomain, authSerivce)
 
 	if err := t.TransformAllChannels(slackExport); err != nil {
 		return err
