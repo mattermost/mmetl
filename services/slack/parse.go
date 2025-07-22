@@ -50,6 +50,12 @@ type SlackFile struct {
 	DownloadURL string `json:"url_private_download"`
 }
 
+type SlackReaction struct {
+	Name  string   `json:"name"`
+	Count int64    `json:"count"`
+	Users []string `json:"users"`
+}
+
 type SlackRoom struct {
 	Id                 string   `json:"id"`
 	Name               string   `json:"name"`
@@ -81,6 +87,7 @@ type SlackPost struct {
 	File        *SlackFile               `json:"file"`
 	Files       []*SlackFile             `json:"files"`
 	Attachments []*model.SlackAttachment `json:"attachments"`
+	Reactions   []*SlackReaction         `json:"reactions"`
 	Room        *SlackRoom               `json:"room"`
 }
 
