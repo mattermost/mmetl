@@ -44,6 +44,7 @@ func init() {
 	TransformSlackCmd.Flags().BoolP("skip-convert-posts", "c", false, "Skips converting mentions and post markup. Only for testing purposes")
 	TransformSlackCmd.Flags().BoolP("skip-attachments", "a", false, "Skips copying the attachments from the import file")
 	TransformSlackCmd.Flags().Bool("skip-empty-emails", false, "Ignore empty email addresses from the import file. Note that this results in invalid data.")
+	TransformSlackCmd.Flags().Bool("skip-profile-pictures", false, "Skips copying the profile pictures from the import file")
 	TransformSlackCmd.Flags().String("default-email-domain", "", "If this flag is provided: When a user's email address is empty, the output's email address will be generated from their username and the provided domain.")
 	TransformSlackCmd.Flags().BoolP("allow-download", "l", false, "Allows downloading the attachments for the import file")
 	TransformSlackCmd.Flags().BoolP("discard-invalid-props", "p", false, "Skips converting posts with invalid props instead discarding the props themselves")
@@ -65,6 +66,7 @@ func transformSlackCmdF(cmd *cobra.Command, args []string) error {
 	attachmentsDir, _ := cmd.Flags().GetString("attachments-dir")
 	skipConvertPosts, _ := cmd.Flags().GetBool("skip-convert-posts")
 	skipAttachments, _ := cmd.Flags().GetBool("skip-attachments")
+	skipProfilePictures, _ := cmd.Flags().GetBool("skip-profile-pictures")
 	skipEmptyEmails, _ := cmd.Flags().GetBool("skip-empty-emails")
 	defaultEmailDomain, _ := cmd.Flags().GetString("default-email-domain")
 	allowDownload, _ := cmd.Flags().GetBool("allow-download")
@@ -84,6 +86,19 @@ func transformSlackCmdF(cmd *cobra.Command, args []string) error {
 	if !skipAttachments {
 		if fileInfo, err := os.Stat(attachmentsFullDir); os.IsNotExist(err) {
 			if createErr := os.MkdirAll(attachmentsFullDir, 0755); createErr != nil {
+				return createErr
+			}
+		} else if err != nil {
+			return err
+		} else if !fileInfo.IsDir() {
+			return fmt.Errorf("File \"%s\" is not a directory", attachmentsDir)
+		}
+	}
+
+	if !skipProfilePictures {
+		profilePicturesDir := path.Join(attachmentsDir, "profile_pictures")
+		if fileInfo, err := os.Stat(profilePicturesDir); os.IsNotExist(err) {
+			if createErr := os.MkdirAll(profilePicturesDir, 0755); createErr != nil {
 				return createErr
 			}
 		} else if err != nil {

@@ -75,15 +75,16 @@ func (c *IntermediateChannel) Sanitise(logger log.FieldLogger) {
 }
 
 type IntermediateUser struct {
-	Id          string   `json:"id"`
-	Username    string   `json:"username"`
-	FirstName   string   `json:"first_name"`
-	LastName    string   `json:"last_name"`
-	Position    string   `json:"position"`
-	Email       string   `json:"email"`
-	Password    string   `json:"password"`
-	Memberships []string `json:"memberships"`
-	DeleteAt    int64    `json:"delete_at"`
+	Id             string   `json:"id"`
+	Username       string   `json:"username"`
+	FirstName      string   `json:"first_name"`
+	LastName       string   `json:"last_name"`
+	Position       string   `json:"position"`
+	Email          string   `json:"email"`
+	Password       string   `json:"password"`
+	Memberships    []string `json:"memberships"`
+	DeleteAt       int64    `json:"delete_at"`
+	ProfilePicture string   `json:"profile_picture"`
 }
 
 func (u *IntermediateUser) Sanitise(logger log.FieldLogger, defaultEmailDomain string, skipEmptyEmails bool) {
@@ -151,7 +152,7 @@ type Intermediate struct {
 	Posts           []*IntermediatePost          `json:"posts"`
 }
 
-func (t *Transformer) TransformUsers(users []SlackUser, skipEmptyEmails bool, defaultEmailDomain string) {
+func (t *Transformer) TransformUsers(users []SlackUser, skipEmptyEmails bool, defaultEmailDomain string, attachmentsDir string, pictures map[string]*zip.File) {
 	t.Logger.Info("Transforming users")
 
 	t.Logger.Debugf("TransformUsers: Input SlackUser structs: %+v", users)
@@ -187,6 +188,15 @@ func (t *Transformer) TransformUsers(users []SlackUser, skipEmptyEmails bool, de
 
 		t.Logger.Debugf("TransformUsers: newUser IntermediateUser struct: %+v", newUser)
 
+		if len(user.Profile.ImagePath) > 0 {
+			err := addProfilePicture(user.Profile.ImagePath, pictures, attachmentsDir)
+			if err == nil {
+				newUser.ProfilePicture = user.Profile.ImagePath
+			} else {
+				t.Logger.Warnf("Failed to import profile picture: %s", err.Error())
+			}
+		}
+
 		if user.IsBot {
 			newUser.Id = user.Profile.BotID
 		}
@@ -197,6 +207,33 @@ func (t *Transformer) TransformUsers(users []SlackUser, skipEmptyEmails bool, de
 	}
 
 	t.Intermediate.UsersById = resultUsers
+}
+
+func addProfilePicture(zipPath string, pictures map[string]*zip.File, attachmentsDir string) error {
+	zipFile, ok := pictures[zipPath]
+	if !ok {
+		return errors.Errorf("failed to retrieve profile picture with id %s", zipPath)
+	}
+
+	zipFileReader, err := zipFile.Open()
+	if err != nil {
+		return errors.Wrapf(err, "failed to open profile picture from zipfile for id %s", zipPath)
+	}
+	defer zipFileReader.Close()
+
+	destFilePath := path.Join(attachmentsDir, zipPath)
+	destFile, err := os.Create(destFilePath)
+	if err != nil {
+		return errors.Wrapf(err, "failed to create file %s in the profile pictures directory", zipPath)
+	}
+	defer destFile.Close()
+
+	_, err = io.Copy(destFile, zipFileReader)
+	if err != nil {
+		return errors.Wrapf(err, "failed to write file %s in the profile pictures directory", zipPath)
+	}
+
+	return nil
 }
 
 func filterValidMembers(members []string, users map[string]*IntermediateUser) []string {
@@ -814,7 +851,7 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 }
 
 func (t *Transformer) Transform(slackExport *SlackExport, attachmentsDir string, skipAttachments, discardInvalidProps, allowDownload, skipEmptyEmails bool, defaultEmailDomain string) error {
-	t.TransformUsers(slackExport.Users, skipEmptyEmails, defaultEmailDomain)
+	t.TransformUsers(slackExport.Users, skipEmptyEmails, defaultEmailDomain, attachmentsDir, slackExport.ProfilePictures)
 
 	if err := t.TransformAllChannels(slackExport); err != nil {
 		return err
