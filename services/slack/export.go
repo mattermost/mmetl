@@ -74,9 +74,9 @@ func SplitChannelsByMemberSize(channels []SlackChannel, limit int) (regularChann
 
 func GetImportLineFromChannel(team string, channel *IntermediateChannel) *imports.LineImportData {
 	newChannel := &imports.ChannelImportData{
-		Team:        model.NewString(team),
-		Name:        model.NewString(channel.Name),
-		DisplayName: model.NewString(channel.DisplayName),
+		Team:        model.NewPointer(team),
+		Name:        model.NewPointer(channel.Name),
+		DisplayName: model.NewPointer(channel.DisplayName),
 		Type:        &channel.Type,
 		Header:      &channel.Header,
 		Purpose:     &channel.Purpose,
@@ -102,26 +102,23 @@ func GetImportLineFromUser(user *IntermediateUser, team string) *imports.LineImp
 	channelMemberships := []imports.UserChannelImportData{}
 	for _, channelName := range user.Memberships {
 		channelMemberships = append(channelMemberships, imports.UserChannelImportData{
-			Name:  model.NewString(channelName),
-			Roles: model.NewString(model.ChannelUserRoleId),
+			Name: model.NewPointer(channelName),
 		})
 	}
 
 	return &imports.LineImportData{
 		Type: "user",
 		User: &imports.UserImportData{
-			Username:  model.NewString(user.Username),
-			Email:     model.NewString(user.Email),
-			Nickname:  model.NewString(""),
-			FirstName: model.NewString(user.FirstName),
-			LastName:  model.NewString(user.LastName),
-			Position:  model.NewString(user.Position),
-			Roles:     model.NewString(model.SystemUserRoleId),
+			Username:  model.NewPointer(user.Username),
+			Email:     model.NewPointer(user.Email),
+			Nickname:  model.NewPointer(""),
+			FirstName: model.NewPointer(user.FirstName),
+			LastName:  model.NewPointer(user.LastName),
+			Position:  model.NewPointer(user.Position),
 			Teams: &[]imports.UserTeamImportData{
 				{
-					Name:     model.NewString(team),
+					Name:     model.NewPointer(team),
 					Channels: &channelMemberships,
-					Roles:    model.NewString(model.TeamUserRoleId),
 				},
 			},
 		},
@@ -132,7 +129,7 @@ func GetAttachmentImportDataFromPaths(paths []string) []imports.AttachmentImport
 	attachments := []imports.AttachmentImportData{}
 	for _, path := range paths {
 		attachmentImportData := imports.AttachmentImportData{
-			Path: model.NewString(path),
+			Path: model.NewPointer(path),
 		}
 		attachments = append(attachments, attachmentImportData)
 	}
@@ -157,9 +154,9 @@ func createRepliesForAttachments(attachments []imports.AttachmentImportData, use
 			}
 
 			newReply := imports.ReplyImportData{
-				User:        model.NewString(user),
-				Message:     model.NewString(""),
-				CreateAt:    model.NewInt64(createAt + int64(i)),
+				User:        model.NewPointer(user),
+				Message:     model.NewPointer(""),
+				CreateAt:    model.NewPointer(createAt + int64(i)),
 				Attachments: &replyAttachments,
 			}
 			replies = append(replies, newReply)
@@ -240,7 +237,7 @@ func GetImportLineFromPost(post *IntermediatePost, team string) *imports.LineImp
 		newPost = &imports.LineImportData{
 			Type: "post",
 			Post: &imports.PostImportData{
-				Team:        model.NewString(team),
+				Team:        model.NewPointer(team),
 				Channel:     &post.Channel,
 				User:        &post.User,
 				Message:     &post.Message,

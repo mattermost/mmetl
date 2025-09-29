@@ -51,6 +51,7 @@ func init() {
 
 	TransformCmd.AddCommand(
 		TransformSlackCmd,
+		TransformTelegramCmd,
 	)
 
 	RootCmd.AddCommand(
