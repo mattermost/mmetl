@@ -126,10 +126,10 @@ func transformSlackCmdF(cmd *cobra.Command, args []string) error {
 		logger.Level = log.DebugLevel
 		logger.Info("Debug mode enabled")
 	}
-	
+
 	// Detect available workspaces in the export
 	workspaces := slack.DetectWorkspaces(zipReader)
-	
+
 	if len(workspaces) > 0 && slackWorkspaceName == "" {
 		// Multi-workspace export without flag specified - use first workspace
 		slackWorkspaceName = workspaces[0]
@@ -155,7 +155,7 @@ func transformSlackCmdF(cmd *cobra.Command, args []string) error {
 	} else if slackWorkspaceName == "" {
 		logger.Info("Processing single workspace export")
 	}
-	
+
 	slackTransformer := slack.NewTransformer(team, slackWorkspaceName, logger)
 
 	slackExport, err := slackTransformer.ParseSlackExportFile(zipReader, skipConvertPosts)
