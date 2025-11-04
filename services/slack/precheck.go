@@ -19,11 +19,11 @@ func (t *Transformer) checkForRequiredFile(zipReader *zip.Reader, fileName strin
 
 	if !found {
 		if foundInSubdirectory {
-			t.Logger.Errorf("Failed to find required file %s in the correct location, but might have found it in a subdirectory.", fileName)
-		} else {
-			t.Logger.Errorf("Failed to find required file %s in the correct location.", fileName)
+			// Accept files found in subdirectories (e.g., teams/team1/channels.json for multi-workspace exports)
+			t.Logger.Debugf("Found required file %s in a subdirectory (multi-workspace export)", fileName)
+			return true
 		}
-
+		t.Logger.Errorf("Failed to find required file %s", fileName)
 		return false
 	}
 
