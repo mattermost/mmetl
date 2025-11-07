@@ -70,7 +70,7 @@ func TestIntermediateChannelSanitise(t *testing.T) {
 		channel.Sanitise(log.New())
 
 		assert.Equal(t, "channelid1", channel.Name)
-		assert.Equal(t, "channelid1", channel.DisplayName)
+		assert.Equal(t, "døsplay_name", channel.DisplayName)
 	})
 }
 
