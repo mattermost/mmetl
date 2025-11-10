@@ -135,13 +135,10 @@ func transformSlackCmdF(cmd *cobra.Command, args []string) error {
 	workspaces := slack.DetectWorkspaces(zipReader)
 
 	if len(workspaces) > 0 && slackWorkspaceName == "" {
-		// Multi-workspace export without flag specified - use first workspace
+		return fmt.Errorf("multiple workspaces detected; --slack-workspace-name flag is required")
+	} else if len(workspaces) > 1 && slackWorkspaceName != "" {
 		slackWorkspaceName = workspaces[0]
-		logger.Infof("Detected multi-workspace export. Processing workspace: %s", slackWorkspaceName)
-		if len(workspaces) > 1 {
-			logger.Infof("Other workspaces available: %v", workspaces[1:])
-			logger.Info("Use --slack-workspace-name to select a different workspace")
-		}
+		logger.Infof("Processing single workspace: %s", slackWorkspaceName)
 	} else if slackWorkspaceName != "" && len(workspaces) > 0 {
 		// Validate that the specified workspace exists
 		found := false
