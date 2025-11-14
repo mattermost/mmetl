@@ -339,7 +339,8 @@ func (t *Transformer) SlackConvertPostsMarkup(posts map[string][]SlackPost) map[
 			for _, rule := range regexReplaceAllStringFunc {
 				result = rule.regex.ReplaceAllStringFunc(result, rule.fn)
 			}
-			posts[channelName][postIdx].Text = truncateRunes(result, model.PostMessageMaxRunesV2)
+			// Don't truncate here - splitting will happen later in the transformation phase
+			posts[channelName][postIdx].Text = result
 		}
 	}
 

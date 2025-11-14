@@ -901,4 +901,48 @@ func TestTransformPosts(t *testing.T) {
 		require.Equal(t, 1, len(post.Replies))
 		require.Equal(t, 1, len(post.Replies[0].Reactions))
 	})
+
+	t.Run("long posts are split into thread replies", func(t *testing.T) {
+		slackTransformer := NewTransformer("test", log.New())
+		slackTransformer.Intermediate.UsersById = map[string]*IntermediateUser{"m1": {Username: "m1"}}
+		slackTransformer.Intermediate.PublicChannels = []*IntermediateChannel{
+			{
+				Name:         "channel1",
+				OriginalName: "channel1",
+			},
+		}
+
+		// Create a post with text that exceeds the maximum rune limit
+		longText := model.NewRandomString(model.PostMessageMaxRunesV2 * 2)
+		slackExport := &SlackExport{
+			Posts: map[string][]SlackPost{
+				"channel1": {
+					{
+						User:      "m1",
+						Text:      longText,
+						TimeStamp: "1695219818.000100",
+						Type:      "message",
+					},
+				},
+			},
+		}
+
+		err := slackTransformer.TransformPosts(slackExport, "", false, false, false)
+		require.NoError(t, err)
+		require.Equal(t, 1, len(slackTransformer.Intermediate.Posts))
+
+		post := slackTransformer.Intermediate.Posts[0]
+		require.Equal(t, "m1", post.User)
+
+		// Verify the first chunk is within the limit
+		require.LessOrEqual(t, len([]rune(post.Message)), model.PostMessageMaxRunesV2)
+
+		// Verify continuation chunks were created as replies
+		require.Greater(t, len(post.Replies), 0, "Expected split post to have replies")
+
+		// Verify all reply chunks are within the limit
+		for _, reply := range post.Replies {
+			require.LessOrEqual(t, len([]rune(reply.Message)), model.PostMessageMaxRunesV2)
+		}
+	})
 }
