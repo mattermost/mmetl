@@ -107,6 +107,11 @@ func GetImportLineFromUser(user *IntermediateUser, team string) *imports.LineImp
 		})
 	}
 
+	var channelsPtr *[]imports.UserChannelImportData
+	if len(channelMemberships) > 0 {
+		channelsPtr = &channelMemberships
+	}
+
 	return &imports.LineImportData{
 		Type: "user",
 		User: &imports.UserImportData{
@@ -120,7 +125,7 @@ func GetImportLineFromUser(user *IntermediateUser, team string) *imports.LineImp
 			Teams: &[]imports.UserTeamImportData{
 				{
 					Name:     model.NewString(team),
-					Channels: &channelMemberships,
+					Channels: channelsPtr,
 					Roles:    model.NewString(model.TeamUserRoleId),
 				},
 			},
