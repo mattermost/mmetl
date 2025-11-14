@@ -337,7 +337,6 @@ func (t *GridTransformer) findTeamIdFromChannelDir(channelDirName string) (strin
 		}
 
 		teamID, err := t.findTeamIDFromPostArray(posts)
-
 		if err != nil {
 			return "", err
 		}
@@ -346,6 +345,7 @@ func (t *GridTransformer) findTeamIdFromChannelDir(channelDirName string) (strin
 			return teamID, nil
 		}
 	}
+
 	return "", errors.New("No team ID found")
 }
 

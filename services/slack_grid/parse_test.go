@@ -173,21 +173,41 @@ func TestFindTeamIdFromChannelDir(t *testing.T) {
 		assert.Equal(t, "", teamID)
 	})
 
-	// TODO - Need to figure out why this test is only reading the posts.json file and seems to be ignoring the
-	// unreadable.json file.
-	// t.Run("bad file in directory", func(t *testing.T) {
-	// 	dir := createTestDir(t)
-	// 	defer os.RemoveAll(dir)
-	// 	bulkTransformer.dirPath = dir
+	t.Run("fails to read file in directory (os.ReadFile error)", func(t *testing.T) {
+		dir := createTestDir(t)
+		defer os.RemoveAll(dir)
+		bt.dirPath = dir
 
-	// 	// writing the bad file first so it's read and handled.
-	// 	os.WriteFile(filepath.Join(dir, "/unreadable.json"), marshalJson(postsWithTwoTeams[2], t), 0644)
-	// 	os.WriteFile(filepath.Join(dir, "/posts.json"), marshalJson(postsWithTwoTeams[1], t), 0644)
+		// Create a file and remove read permissions to provoke a read error
+		testFile := filepath.Join(dir, "posts.json")
+		err := os.WriteFile(testFile, marshalJson(postsWithTwoTeams[1], t), 0000)
+		assert.NoError(t, err)
+		defer func() { _ = os.Chmod(testFile, 0644) }() // restore so RemoveAll works
 
-	// 	teamID, err := bulkTransformer.findTeamIdFromChannelDir("")
-	// 	assert.ErrorContains(t, err, "Error reading file")
-	// 	assert.Equal(t, "", teamID)
-	// })
+		teamID, err := bt.findTeamIdFromChannelDir("")
+		assert.Error(t, err)
+		assert.ErrorContains(t, err, "Error reading file")
+		assert.Equal(t, "", teamID)
+	})
+
+	t.Run("fails to read file in directory (json.Unmarshal error)", func(t *testing.T) {
+		dir := createTestDir(t)
+		defer os.RemoveAll(dir)
+		bt.dirPath = dir
+
+		// Create a file with invalid JSON contents
+		err := os.WriteFile(filepath.Join(dir, "a_unreadable.json"), []byte(`{`), 0644)
+		assert.NoError(t, err)
+
+		// Write a valid posts file as well
+		err = os.WriteFile(filepath.Join(dir, "posts.json"), marshalJson(postsWithTwoTeams[1], t), 0644)
+		assert.NoError(t, err)
+
+		teamID, err := bt.findTeamIdFromChannelDir("")
+		assert.Error(t, err)
+		assert.ErrorContains(t, err, "error unmarshalling json")
+		assert.Equal(t, "", teamID)
+	})
 
 	t.Run("finds no team name in a post directory", func(t *testing.T) {
 		dir := createDirAndWriteFiles(postsWithoutTeam, t)
