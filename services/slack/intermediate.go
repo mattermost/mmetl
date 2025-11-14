@@ -11,7 +11,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/mattermost/mattermost-server/v6/model"
+	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/text/unicode/norm"
@@ -105,19 +105,41 @@ func (u *IntermediateUser) Sanitise(logger log.FieldLogger, defaultEmailDomain s
 			exitFunc(1)
 		}
 	}
+
+	if utf8.RuneCountInString(u.FirstName) > model.UserFirstNameMaxRunes {
+		logger.Warnf("User %s first name exceeds the maximum length. It will be truncated when imported.", u.Username)
+		u.FirstName = truncateRunes(u.FirstName, model.UserFirstNameMaxRunes)
+	}
+
+	if utf8.RuneCountInString(u.LastName) > model.UserLastNameMaxRunes {
+		logger.Warnf("User %s last name exceeds the maximum length. It will be truncated when imported.", u.Username)
+		u.LastName = truncateRunes(u.LastName, model.UserLastNameMaxRunes)
+	}
+
+	if utf8.RuneCountInString(u.Position) > model.UserPositionMaxRunes {
+		logger.Warnf("User %s position exceeds the maximum length. It will be truncated when imported.", u.Username)
+		u.Position = truncateRunes(u.Position, model.UserPositionMaxRunes)
+	}
+}
+
+type IntermediateReaction struct {
+	User      string `json:"user"`
+	EmojiName string `json:"emoji_name"`
+	CreateAt  int64  `json:"create_at"`
 }
 
 type IntermediatePost struct {
-	User     string                `json:"user"`
-	Channel  string                `json:"channel"`
-	Message  string                `json:"message"`
-	Props    model.StringInterface `json:"props"`
-	CreateAt int64                 `json:"create_at"`
-	// Type           string              `json:"type"`
-	Attachments    []string            `json:"attachments"`
-	Replies        []*IntermediatePost `json:"replies"`
-	IsDirect       bool                `json:"is_direct"`
-	ChannelMembers []string            `json:"channel_members"`
+	User           string                  `json:"user"`
+	Channel        string                  `json:"channel"`
+	Message        string                  `json:"message"`
+	Props          model.StringInterface   `json:"props"`
+	CreateAt       int64                   `json:"create_at"`
+	Type           string                  `json:"type"`
+	Attachments    []string                `json:"attachments"`
+	Replies        []*IntermediatePost     `json:"replies"`
+	Reactions      []*IntermediateReaction `json:"reactions"`
+	IsDirect       bool                    `json:"is_direct"`
+	ChannelMembers []string                `json:"channel_members"`
 }
 
 type Intermediate struct {
@@ -468,10 +490,11 @@ func (t *Transformer) CreateAndAddPostToThreads(post SlackPost, threads map[stri
 	}
 
 	newPost := &IntermediatePost{
-		User:     author.Username,
-		Channel:  channel.Name,
-		Message:  post.Text,
-		CreateAt: SlackConvertTimeStamp(post.TimeStamp),
+		User:      author.Username,
+		Channel:   channel.Name,
+		Message:   post.Text,
+		Reactions: t.getReactionsFromPost(post),
+		CreateAt:  SlackConvertTimeStamp(post.TimeStamp),
 	}
 
 	AddPostToThreads(post, newPost, threads, channel, timestamps)
@@ -502,6 +525,72 @@ func (t *Transformer) AddAttachmentsToPost(post *SlackPost, newPost *Intermediat
 	props := model.StringInterface{"attachments": post.Attachments}
 	propsByteArray, _ := json.Marshal(props)
 	return props, propsByteArray
+}
+
+func buildMessagePropsFromHuddle(post *SlackPost) model.StringInterface {
+	type Attachment struct {
+		ID       int    `json:"id"`
+		Text     string `json:"text"`
+		Fallback string `json:"fallback"`
+	}
+
+	type MessageProps struct {
+		Title       string       `json:"title"`
+		EndAt       int64        `json:"end_at"`
+		StartAt     int64        `json:"start_at"`
+		Attachments []Attachment `json:"attachments"`
+		FromPlugin  bool         `json:"from_plugin"`
+	}
+
+	props := MessageProps{
+		Title: "",
+		Attachments: []Attachment{{
+			ID:       0,
+			Text:     "Call ended",
+			Fallback: "Call ended",
+		}},
+		FromPlugin: true,
+		EndAt:      0,
+		StartAt:    0,
+	}
+
+	if post.Room != nil {
+		props.EndAt = int64(post.Room.DateEnd) * 1000
+		props.StartAt = int64(post.Room.DateStart) * 1000
+	}
+
+	propsMap := make(map[string]interface{})
+	bytes, _ := json.Marshal(props)
+	_ = json.Unmarshal(bytes, &propsMap)
+
+	return propsMap
+}
+
+func (t *Transformer) getReactionsFromPost(post SlackPost) []*IntermediateReaction {
+	reactions := []*IntermediateReaction{}
+	for _, reaction := range post.Reactions {
+		for _, reactionUser := range reaction.Users {
+			reactionAuthor := t.Intermediate.UsersById[reactionUser]
+			if reactionAuthor == nil {
+				t.CreateIntermediateUser(reactionUser)
+				reactionAuthor = t.Intermediate.UsersById[reactionUser]
+			}
+			var cleanedReactionName = reaction.Name
+			if strings.Contains(reaction.Name, "::") {
+				cleanedReactionName = strings.Split(reaction.Name, "::")[0]
+			}
+			newReaction := &IntermediateReaction{
+				User:      reactionAuthor.Username,
+				EmojiName: cleanedReactionName,
+				CreateAt:  SlackConvertTimeStamp(post.TimeStamp) + 1,
+				// we don't have the real createAt available, so we pretend that reactions were created shortly after the post,
+				// to avoid validation errors at import time:
+				// BulkImport: Reaction CreateAt property must be greater than the parent post CreateAt.
+			}
+			reactions = append(reactions, newReaction)
+		}
+	}
+	return reactions
 }
 
 func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir string, skipAttachments, discardInvalidProps, allowDownload bool) error {
@@ -539,10 +628,11 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 					author = t.Intermediate.UsersById[post.User]
 				}
 				newPost := &IntermediatePost{
-					User:     author.Username,
-					Channel:  channel.Name,
-					Message:  post.Text,
-					CreateAt: SlackConvertTimeStamp(post.TimeStamp),
+					User:      author.Username,
+					Channel:   channel.Name,
+					Message:   post.Text,
+					Reactions: t.getReactionsFromPost(post),
+					CreateAt:  SlackConvertTimeStamp(post.TimeStamp),
 				}
 				t.AddFilesToPost(&post, skipAttachments, slackExport, attachmentsDir, newPost, allowDownload)
 
@@ -578,10 +668,11 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 					author = t.Intermediate.UsersById[post.User]
 				}
 				newPost := &IntermediatePost{
-					User:     author.Username,
-					Channel:  channel.Name,
-					Message:  post.Comment.Comment,
-					CreateAt: SlackConvertTimeStamp(post.TimeStamp),
+					User:      author.Username,
+					Channel:   channel.Name,
+					Message:   post.Comment.Comment,
+					Reactions: t.getReactionsFromPost(post),
+					CreateAt:  SlackConvertTimeStamp(post.TimeStamp),
 				}
 
 				AddPostToThreads(post, newPost, threads, channel, timestamps)
@@ -603,10 +694,11 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 				}
 
 				newPost := &IntermediatePost{
-					User:     author.Username,
-					Channel:  channel.Name,
-					Message:  post.Text,
-					CreateAt: SlackConvertTimeStamp(post.TimeStamp),
+					User:      author.Username,
+					Channel:   channel.Name,
+					Message:   post.Text,
+					Reactions: t.getReactionsFromPost(post),
+					CreateAt:  SlackConvertTimeStamp(post.TimeStamp),
 				}
 
 				t.AddFilesToPost(&post, skipAttachments, slackExport, attachmentsDir, newPost, allowDownload)
@@ -668,6 +760,40 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 				}
 				t.CreateAndAddPostToThreads(post, threads, timestamps, channel)
 
+			// Huddle thread
+			case post.isHuddleThread():
+				post.Text = "Call ended"
+				if post.User == "" {
+					t.Logger.Warn("Slack Import: Unable to import the message as the user field is missing.")
+					continue
+				}
+
+				// all huddles are owned by USLACKBOT, but the room has a CreatedBy prop.
+				// this lets us get the actual user who created the huddle and fit with how Mattermost works.
+				poster := post.User
+				if len(post.Room.CreatedBy) > 0 {
+					poster = post.Room.CreatedBy
+				}
+
+				author := t.Intermediate.UsersById[poster]
+				if author == nil {
+					t.CreateIntermediateUser(poster)
+					author = t.Intermediate.UsersById[poster]
+				}
+
+				huddleProps := buildMessagePropsFromHuddle(&post)
+
+				newPost := &IntermediatePost{
+					User:      author.Username,
+					Channel:   channel.Name,
+					Message:   post.Text,
+					Reactions: t.getReactionsFromPost(post),
+					CreateAt:  SlackConvertTimeStamp(post.TimeStamp),
+					Props:     huddleProps,
+					Type:      "custom_calls",
+				}
+
+				AddPostToThreads(post, newPost, threads, channel, timestamps)
 			default:
 				t.Logger.Warnf("Unable to import the message as its type is not supported. post_type=%s, post_subtype=%s", post.Type, post.SubType)
 			}

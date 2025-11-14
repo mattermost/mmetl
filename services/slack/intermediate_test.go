@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mattermost/mattermost-server/v6/model"
+	"github.com/mattermost/mattermost/server/public/model"
 )
 
 func TestIntermediateChannelSanitise(t *testing.T) {
@@ -531,6 +531,26 @@ func TestIntermediateUserSanitise(t *testing.T) {
 		require.Equal(t, expectedEmail, user.Email)
 		require.Equal(t, -1, exitCode)
 	})
+
+	t.Run("Properties should respect the max length", func(t *testing.T) {
+		user := &IntermediateUser{
+			Username:  "test-username",
+			Email:     "test-email@otherdomain.com",
+			FirstName: strings.Repeat("a", model.UserFirstNameMaxRunes+4),
+			LastName:  strings.Repeat("b", model.UserLastNameMaxRunes+4),
+			Position:  strings.Repeat("c", model.UserPositionMaxRunes+4),
+		}
+
+		expectedFirstName := strings.Repeat("a", model.UserFirstNameMaxRunes)
+		expectedLastName := strings.Repeat("b", model.UserLastNameMaxRunes)
+		expectedPosition := strings.Repeat("c", model.UserPositionMaxRunes)
+
+		user.Sanitise(log.New(), "", false)
+
+		assert.Equal(t, expectedFirstName, user.FirstName)
+		assert.Equal(t, expectedLastName, user.LastName)
+		assert.Equal(t, expectedPosition, user.Position)
+	})
 }
 
 func TestTransformUsers(t *testing.T) {
@@ -757,5 +777,128 @@ func TestAddPostToThreads(t *testing.T) {
 				require.EqualValues(t, tc.ExpectedTimestamps, tc.Timestamps)
 			})
 		}
+	})
+}
+
+func TestTransformPosts(t *testing.T) {
+	t.Run("huddle threads are converted to posts", func(t *testing.T) {
+		slackTransformer := NewTransformer("test", log.New())
+		slackTransformer.Intermediate.UsersById = map[string]*IntermediateUser{"m1": {Username: "m1"}, "m2": {Username: "m2"}}
+		slackTransformer.Intermediate.PublicChannels = []*IntermediateChannel{
+			{
+				Name:         "channel1",
+				OriginalName: "channel1",
+			},
+		}
+
+		slackExport := &SlackExport{
+			Posts: map[string][]SlackPost{
+				"channel1": {
+					{
+						User: "USLACKBOT",
+						Text: "",
+						Room: &SlackRoom{
+							CreatedBy: "m1",
+							DateStart: 1695219818,
+							DateEnd:   1695220775,
+						},
+						TimeStamp: "1695219818.000100",
+						SubType:   "huddle_thread",
+						Type:      "message",
+					},
+					{
+						User:      "m2",
+						Text:      "reply text",
+						ThreadTS:  "1695219818.000100",
+						TimeStamp: "1695219818.000101",
+						Type:      "message",
+					},
+				},
+			},
+		}
+
+		err := slackTransformer.TransformPosts(slackExport, "", false, false, false)
+		if err != nil {
+			t.Fatalf("expected no error, got %v", err)
+		}
+		if len(slackTransformer.Intermediate.Posts) != 1 {
+			t.Errorf("expected 1 post, got %d", len(slackTransformer.Intermediate.Posts))
+		}
+
+		post := slackTransformer.Intermediate.Posts[0]
+		if post.User != "m1" {
+			t.Errorf("expected user to be m1, got %s", post.User)
+		}
+
+		if post.Message != "Call ended" {
+			t.Errorf("expected message to be 'Call ended', got %s", post.Message)
+		}
+
+		if post.Props["attachments"] == nil {
+			t.Errorf("expected attachments to be set")
+		}
+
+		if len(post.Replies) != 1 {
+			t.Errorf("expected 1 post reply, got %d", len(post.Replies))
+		}
+
+	})
+
+	t.Run("reactions are imported", func(t *testing.T) {
+		slackTransformer := NewTransformer("test", log.New())
+		slackTransformer.Intermediate.UsersById = map[string]*IntermediateUser{"m1": {Username: "m1"}, "m2": {Username: "m2"}}
+		slackTransformer.Intermediate.PublicChannels = []*IntermediateChannel{
+			{
+				Name:         "channel1",
+				OriginalName: "channel1",
+			},
+		}
+
+		reactions1 := []*SlackReaction{{
+			Name:  "+1",
+			Count: 2,
+			Users: []string{"m1", "m2"},
+		}}
+		reactions2 := []*SlackReaction{{
+			Name:  "+1::skin-tone-3",
+			Count: 1,
+			Users: []string{"m1"},
+		}}
+		slackExport := &SlackExport{
+			Posts: map[string][]SlackPost{
+				"channel1": {
+					{
+						User:      "m1",
+						Text:      "hi everyone let's talk about this",
+						TimeStamp: "1695219818.000100",
+						Type:      "message",
+						Reactions: reactions1,
+					},
+					{
+						User:      "m2",
+						Text:      "reply text",
+						ThreadTS:  "1695219818.000100",
+						TimeStamp: "1695219818.000101",
+						Type:      "message",
+						Reactions: reactions2,
+					},
+				},
+			},
+		}
+
+		err := slackTransformer.TransformPosts(slackExport, "", false, false, false)
+		require.NoError(t, err)
+		require.Equal(t, 1, len(slackTransformer.Intermediate.Posts))
+
+		post := slackTransformer.Intermediate.Posts[0]
+		require.Equal(t, "m1", post.User)
+		require.Equal(t, "hi everyone let's talk about this", post.Message)
+		require.Equal(t, 2, len(post.Reactions))
+		require.Equal(t, "+1", post.Reactions[0].EmojiName)
+		require.Equal(t, "+1", post.Reactions[1].EmojiName)
+		require.Equal(t, "m1", post.Reactions[0].User)
+		require.Equal(t, int64(1695219818001), post.Reactions[0].CreateAt)
+		require.Equal(t, 1, len(post.Replies))
+		require.Equal(t, 1, len(post.Replies[0].Reactions))
 	})
 }
