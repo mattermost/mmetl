@@ -23,7 +23,7 @@ func init() {
 	GridTransformCmd.Flags().StringP("file", "f", "", "the Slack export file to clean")
 	GridTransformCmd.Flags().StringP("teamMap", "t", "", "The team mapping file to use")
 
-	GridTransformCmd.Flags().Bool("debug", true, "Whether to show debug logs or not")
+	GridTransformCmd.Flags().Bool("debug", false, "Whether to show debug logs or not")
 
 	if err := GridTransformCmd.MarkFlagRequired("file"); err != nil {
 		panic(err)
