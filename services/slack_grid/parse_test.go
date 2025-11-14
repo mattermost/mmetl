@@ -313,7 +313,7 @@ func writeToFileInTestDir(dir string, filename string, data []byte, t *testing.T
 func marshalJson(data interface{}, t *testing.T) []byte {
 	jsonData, err := json.Marshal(data)
 	if err != nil {
-		t.Fatal(errors.Wrap(err, "error mashalling json"))
+		t.Fatal(errors.Wrap(err, "error marshalling json"))
 	}
 	return jsonData
 }
