@@ -183,6 +183,7 @@ func (t *Transformer) filterValidMembers(members []string, users map[string]*Int
 		if _, ok := users[member]; ok {
 			validMembers = append(validMembers, member)
 		} else {
+			// Create a new deleted user for this lost reference so we can handle channel memberships appropriately
 			t.CreateIntermediateUser(member)
 			validMembers = append(validMembers, member)
 		}
