@@ -14,7 +14,7 @@ import (
 var GridTransformCmd = &cobra.Command{
 	Use:   "grid-transform",
 	Short: "Transforms a slack enterprise grid into multiple workspace export files.",
-	Long:  "Accepts a Slack Enterprise Grid export file and transforms it into multiple workspace export files to be imported seperatly into Mattermost.",
+	Long:  "Accepts a Slack Enterprise Grid export file and transforms it into multiple workspace export files to be imported separately into Mattermost.",
 	Args:  cobra.NoArgs,
 	RunE:  gridTransformCmdF,
 }
