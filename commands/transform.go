@@ -7,6 +7,7 @@ import (
 	"path"
 	"runtime"
 	"strconv"
+	"strings"
 
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
@@ -40,6 +41,7 @@ func init() {
 		panic(err)
 	}
 	TransformSlackCmd.Flags().StringP("output", "o", "bulk-export.jsonl", "the output path")
+	TransformSlackCmd.Flags().String("slack-workspace-name", "", "the name of the workspace to import from multi-workspace Slack exports (e.g., 'team1' for exports with teams/team1/ structure)")
 	TransformSlackCmd.Flags().StringP("attachments-dir", "d", "data", "the path for the attachments directory")
 	TransformSlackCmd.Flags().BoolP("skip-convert-posts", "c", false, "Skips converting mentions and post markup. Only for testing purposes")
 	TransformSlackCmd.Flags().BoolP("skip-attachments", "a", false, "Skips copying the attachments from the import file")
@@ -62,6 +64,7 @@ func transformSlackCmdF(cmd *cobra.Command, args []string) error {
 	team, _ := cmd.Flags().GetString("team")
 	inputFilePath, _ := cmd.Flags().GetString("file")
 	outputFilePath, _ := cmd.Flags().GetString("output")
+	slackWorkspaceName, _ := cmd.Flags().GetString("slack-workspace-name")
 	attachmentsDir, _ := cmd.Flags().GetString("attachments-dir")
 	skipConvertPosts, _ := cmd.Flags().GetBool("skip-convert-posts")
 	skipAttachments, _ := cmd.Flags().GetBool("skip-attachments")
@@ -70,6 +73,9 @@ func transformSlackCmdF(cmd *cobra.Command, args []string) error {
 	allowDownload, _ := cmd.Flags().GetBool("allow-download")
 	discardInvalidProps, _ := cmd.Flags().GetBool("discard-invalid-props")
 	debug, _ := cmd.Flags().GetBool("debug")
+
+	// convert team name to lowercase since Mattermost expects all team names to be lowercase
+	team = strings.ToLower(team)
 
 	// output file
 	if fileInfo, err := os.Stat(outputFilePath); err != nil && !os.IsNotExist(err) {
@@ -124,7 +130,34 @@ func transformSlackCmdF(cmd *cobra.Command, args []string) error {
 		logger.Level = log.DebugLevel
 		logger.Info("Debug mode enabled")
 	}
-	slackTransformer := slack.NewTransformer(team, logger)
+
+	// Detect available workspaces in the export
+	workspaces := slack.DetectWorkspaces(zipReader)
+
+	if len(workspaces) > 0 && slackWorkspaceName == "" {
+		return fmt.Errorf("multiple workspaces detected; --slack-workspace-name flag is required")
+	} else if len(workspaces) > 1 && slackWorkspaceName != "" {
+		slackWorkspaceName = workspaces[0]
+		logger.Infof("Processing single workspace: %s", slackWorkspaceName)
+	} else if slackWorkspaceName != "" && len(workspaces) > 0 {
+		// Validate that the specified workspace exists
+		found := false
+		for _, ws := range workspaces {
+			if ws == slackWorkspaceName {
+				found = true
+				break
+			}
+		}
+		if !found {
+			logger.Errorf("Specified workspace '%s' not found in export. Available workspaces: %v", slackWorkspaceName, workspaces)
+			return fmt.Errorf("workspace '%s' not found", slackWorkspaceName)
+		}
+		logger.Infof("Processing specified workspace: %s", slackWorkspaceName)
+	} else if slackWorkspaceName == "" {
+		logger.Info("Processing single workspace export")
+	}
+
+	slackTransformer := slack.NewTransformer(team, slackWorkspaceName, logger)
 
 	slackExport, err := slackTransformer.ParseSlackExportFile(zipReader, skipConvertPosts)
 	if err != nil {

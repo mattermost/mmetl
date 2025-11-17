@@ -348,15 +348,64 @@ func (t *Transformer) SlackConvertPostsMarkup(posts map[string][]SlackPost) map[
 	return posts
 }
 
+// DetectWorkspaces scans the zip file for team folders and returns a list of workspace names
+func DetectWorkspaces(zipReader *zip.Reader) []string {
+	workspaceMap := make(map[string]bool)
+	for _, file := range zipReader.File {
+		parts := strings.Split(file.Name, "/")
+		// Only include directories (not files) by checking if there's a third segment
+		// This filters out system files like .DS_Store and only includes actual workspace directories
+		if len(parts) >= 3 && parts[0] == "teams" && parts[1] != "" && !strings.HasPrefix(parts[1], ".") {
+			workspaceMap[parts[1]] = true
+		}
+	}
+
+	workspaces := make([]string, 0, len(workspaceMap))
+	for workspace := range workspaceMap {
+		workspaces = append(workspaces, workspace)
+	}
+	return workspaces
+}
+
+// getFilePrefix returns the appropriate file prefix based on the workspace name
+// Returns empty string for single workspace exports, "teams/workspacename/" for multi-workspace exports
+func (t *Transformer) getFilePrefix() string {
+	if t.WorkspaceName == "" {
+		return ""
+	}
+	return "teams/" + t.WorkspaceName + "/"
+}
+
+// matchesWorkspace checks if a file path belongs to the selected workspace
+func (t *Transformer) matchesWorkspace(filePath string) bool {
+	prefix := t.getFilePrefix()
+
+	// Single workspace export (no prefix)
+	if prefix == "" {
+		// File should NOT be in teams/ directory
+		return !strings.HasPrefix(filePath, "teams/")
+	}
+
+	// Multi-workspace export (has prefix)
+	return strings.HasPrefix(filePath, prefix)
+}
+
 func (t *Transformer) ParseSlackExportFile(zipReader *zip.Reader, skipConvertPosts bool) (*SlackExport, error) {
 	slackExport := SlackExport{TeamName: t.TeamName}
 	slackExport.Posts = make(map[string][]SlackPost)
 	slackExport.Uploads = make(map[string]*zip.File)
 	numFiles := len(zipReader.File)
 
+	prefix := t.getFilePrefix()
+
 	for i, file := range zipReader.File {
 		err := func(i int, file *zip.File) error {
 			t.Logger.Infof("Processing file %d of %d: %s", i+1, numFiles, file.Name)
+
+			// Skip files that don't belong to the selected workspace
+			if !t.matchesWorkspace(file.Name) {
+				return nil
+			}
 
 			reader, err := file.Open()
 			if err != nil {
@@ -364,19 +413,20 @@ func (t *Transformer) ParseSlackExportFile(zipReader *zip.Reader, skipConvertPos
 			}
 			defer reader.Close()
 
-			if file.Name == "channels.json" {
+			switch file.Name {
+			case prefix + "channels.json":
 				slackExport.PublicChannels, _ = t.SlackParseChannels(reader, model.ChannelTypeOpen)
 				slackExport.Channels = append(slackExport.Channels, slackExport.PublicChannels...)
-			} else if file.Name == "dms.json" {
+			case prefix + "dms.json":
 				slackExport.DirectChannels, _ = t.SlackParseChannels(reader, model.ChannelTypeDirect)
 				slackExport.Channels = append(slackExport.Channels, slackExport.DirectChannels...)
-			} else if file.Name == "groups.json" {
+			case prefix + "groups.json":
 				slackExport.PrivateChannels, _ = t.SlackParseChannels(reader, model.ChannelTypePrivate)
 				slackExport.Channels = append(slackExport.Channels, slackExport.PrivateChannels...)
-			} else if file.Name == "mpims.json" {
+			case prefix + "mpims.json":
 				slackExport.GroupChannels, _ = t.SlackParseChannels(reader, model.ChannelTypeGroup)
 				slackExport.Channels = append(slackExport.Channels, slackExport.GroupChannels...)
-			} else if file.Name == "users.json" {
+			case prefix + "users.json":
 				usersJSONFileName := os.Getenv("USERS_JSON_FILE")
 				if usersJSONFileName != "" {
 					reader.Close()
@@ -388,18 +438,26 @@ func (t *Transformer) ParseSlackExportFile(zipReader *zip.Reader, skipConvertPos
 
 				users, _ := t.SlackParseUsers(reader)
 				slackExport.Users = users
-			} else {
+			default:
 				spl := strings.Split(file.Name, "/")
-				if len(spl) == 2 && strings.HasSuffix(spl[1], ".json") {
+				// Handle channel message files
+				// Single workspace: channel/date.json (2 segments)
+				// Multi workspace: teams/team1/channel/date.json (4 segments)
+				if (len(spl) == 2 || len(spl) == 4) && strings.HasSuffix(spl[len(spl)-1], ".json") {
 					newposts, _ := t.SlackParsePosts(reader)
-					channel := spl[0]
+					// Extract channel name (last directory before the .json file)
+					channel := spl[len(spl)-2]
 					if _, ok := slackExport.Posts[channel]; !ok {
 						slackExport.Posts[channel] = newposts
 					} else {
 						slackExport.Posts[channel] = append(slackExport.Posts[channel], newposts...)
 					}
-				} else if len(spl) == 3 && spl[0] == "__uploads" {
-					slackExport.Uploads[spl[1]] = file
+				} else if (len(spl) == 3 || len(spl) == 5) && strings.Contains(file.Name, "__uploads") {
+					// Handle uploads
+					// Single workspace: __uploads/file/name (3 segments)
+					// Multi workspace: teams/team1/__uploads/file/name (5 segments)
+					uploadFileId := spl[len(spl)-2]
+					slackExport.Uploads[uploadFileId] = file
 				}
 			}
 

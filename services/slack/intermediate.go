@@ -59,9 +59,6 @@ func (c *IntermediateChannel) Sanitise(logger log.FieldLogger) {
 	if len(c.DisplayName) == 1 {
 		c.DisplayName = "slack-channel-" + c.DisplayName
 	}
-	if !isValidChannelNameCharacters(c.DisplayName) {
-		c.DisplayName = strings.ToLower(c.Id)
-	}
 
 	if utf8.RuneCountInString(c.Purpose) > model.ChannelPurposeMaxRunes {
 		logger.Warnf("Channel %s purpose exceeds the maximum length. It will be truncated when imported.", c.DisplayName)
@@ -236,7 +233,7 @@ func (t *Transformer) TransformChannels(channels []SlackChannel) []*Intermediate
 		newChannel := &IntermediateChannel{
 			OriginalName: getOriginalName(channel),
 			Name:         name,
-			DisplayName:  name,
+			DisplayName:  channel.Name,
 			Members:      validMembers,
 			Purpose:      channel.Purpose.Value,
 			Header:       channel.Topic.Value,

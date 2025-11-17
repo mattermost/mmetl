@@ -78,7 +78,7 @@ func checkSlackCmdF(cmd *cobra.Command, args []string) error {
 		logger.Level = log.DebugLevel
 		logger.Info("Debug mode enabled")
 	}
-	slackTransformer := slack.NewTransformer("test", logger)
+	slackTransformer := slack.NewTransformer("test", "", logger)
 
 	valid := slackTransformer.Precheck(zipReader)
 	if !valid {
