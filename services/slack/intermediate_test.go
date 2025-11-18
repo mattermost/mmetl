@@ -547,6 +547,95 @@ func TestIntermediateUserSanitise(t *testing.T) {
 
 		user.Sanitise(log.New(), "", false)
 
+		// Verify fields are not greater than max allowed runes
+		assert.LessOrEqual(t, len([]rune(user.FirstName)), model.UserFirstNameMaxRunes, "FirstName should not exceed max runes")
+		assert.LessOrEqual(t, len([]rune(user.LastName)), model.UserLastNameMaxRunes, "LastName should not exceed max runes")
+		assert.LessOrEqual(t, len([]rune(user.Position)), model.UserPositionMaxRunes, "Position should not exceed max runes")
+
+		// Verify exact truncated values
+		assert.Equal(t, expectedFirstName, user.FirstName)
+		assert.Equal(t, expectedLastName, user.LastName)
+		assert.Equal(t, expectedPosition, user.Position)
+	})
+
+	t.Run("Properties should not be truncated if under max length", func(t *testing.T) {
+		user := &IntermediateUser{
+			Username:  "test-username",
+			Email:     "test-email@otherdomain.com",
+			FirstName: "John",
+			LastName:  "Doe",
+			Position:  "Software Engineer",
+		}
+
+		expectedFirstName := "John"
+		expectedLastName := "Doe"
+		expectedPosition := "Software Engineer"
+
+		user.Sanitise(log.New(), "", false)
+
+		// Verify fields are not greater than max allowed runes
+		assert.LessOrEqual(t, len([]rune(user.FirstName)), model.UserFirstNameMaxRunes, "FirstName should not exceed max runes")
+		assert.LessOrEqual(t, len([]rune(user.LastName)), model.UserLastNameMaxRunes, "LastName should not exceed max runes")
+		assert.LessOrEqual(t, len([]rune(user.Position)), model.UserPositionMaxRunes, "Position should not exceed max runes")
+
+		assert.Equal(t, expectedFirstName, user.FirstName)
+		assert.Equal(t, expectedLastName, user.LastName)
+		assert.Equal(t, expectedPosition, user.Position)
+	})
+
+	t.Run("Properties should not be truncated if exactly at max length", func(t *testing.T) {
+		user := &IntermediateUser{
+			Username:  "test-username",
+			Email:     "test-email@otherdomain.com",
+			FirstName: strings.Repeat("a", model.UserFirstNameMaxRunes),
+			LastName:  strings.Repeat("b", model.UserLastNameMaxRunes),
+			Position:  strings.Repeat("c", model.UserPositionMaxRunes),
+		}
+
+		expectedFirstName := strings.Repeat("a", model.UserFirstNameMaxRunes)
+		expectedLastName := strings.Repeat("b", model.UserLastNameMaxRunes)
+		expectedPosition := strings.Repeat("c", model.UserPositionMaxRunes)
+
+		user.Sanitise(log.New(), "", false)
+
+		// Verify fields are not greater than max allowed runes
+		assert.LessOrEqual(t, len([]rune(user.FirstName)), model.UserFirstNameMaxRunes, "FirstName should not exceed max runes")
+		assert.LessOrEqual(t, len([]rune(user.LastName)), model.UserLastNameMaxRunes, "LastName should not exceed max runes")
+		assert.LessOrEqual(t, len([]rune(user.Position)), model.UserPositionMaxRunes, "Position should not exceed max runes")
+
+		assert.Equal(t, expectedFirstName, user.FirstName)
+		assert.Equal(t, expectedLastName, user.LastName)
+		assert.Equal(t, expectedPosition, user.Position)
+	})
+
+	t.Run("Properties with multi-byte characters should be truncated correctly", func(t *testing.T) {
+		// Using emoji and other multi-byte characters to ensure rune counting works correctly
+		// Each emoji is 1 rune but multiple bytes
+		user := &IntermediateUser{
+			Username:  "test-username",
+			Email:     "test-email@otherdomain.com",
+			FirstName: strings.Repeat("😀", model.UserFirstNameMaxRunes+4),
+			LastName:  strings.Repeat("日", model.UserLastNameMaxRunes+5),
+			Position:  strings.Repeat("🎯", model.UserPositionMaxRunes+3),
+		}
+
+		user.Sanitise(log.New(), "", false)
+
+		// Verify fields are not greater than max allowed runes
+		assert.LessOrEqual(t, len([]rune(user.FirstName)), model.UserFirstNameMaxRunes, "FirstName should not exceed max runes")
+		assert.LessOrEqual(t, len([]rune(user.LastName)), model.UserLastNameMaxRunes, "LastName should not exceed max runes")
+		assert.LessOrEqual(t, len([]rune(user.Position)), model.UserPositionMaxRunes, "Position should not exceed max runes")
+
+		// Verify truncation happened by checking exact rune count (in this case they should be exactly at max)
+		assert.Equal(t, model.UserFirstNameMaxRunes, len([]rune(user.FirstName)))
+		assert.Equal(t, model.UserLastNameMaxRunes, len([]rune(user.LastName)))
+		assert.Equal(t, model.UserPositionMaxRunes, len([]rune(user.Position)))
+
+		// Verify content is preserved up to max runes
+		expectedFirstName := strings.Repeat("😀", model.UserFirstNameMaxRunes)
+		expectedLastName := strings.Repeat("日", model.UserLastNameMaxRunes)
+		expectedPosition := strings.Repeat("🎯", model.UserPositionMaxRunes)
+
 		assert.Equal(t, expectedFirstName, user.FirstName)
 		assert.Equal(t, expectedLastName, user.LastName)
 		assert.Equal(t, expectedPosition, user.Position)
