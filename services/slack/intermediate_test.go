@@ -440,6 +440,13 @@ func TestTransformChannelWithOneValidMember(t *testing.T) {
 	})
 }
 
+func assertUserFieldsWithinLimits(t *testing.T, user *IntermediateUser) {
+	t.Helper()
+	assert.LessOrEqual(t, len([]rune(user.FirstName)), model.UserFirstNameMaxRunes, "FirstName should not exceed max runes")
+	assert.LessOrEqual(t, len([]rune(user.LastName)), model.UserLastNameMaxRunes, "LastName should not exceed max runes")
+	assert.LessOrEqual(t, len([]rune(user.Position)), model.UserPositionMaxRunes, "Position should not exceed max runes")
+}
+
 func TestIntermediateUserSanitise(t *testing.T) {
 	t.Run("If there is no email, and --default-email-domain and --skip-empty-emails flags are not provided, we should exit the program.", func(t *testing.T) {
 		user := &IntermediateUser{
@@ -548,9 +555,7 @@ func TestIntermediateUserSanitise(t *testing.T) {
 		user.Sanitise(log.New(), "", false)
 
 		// Verify fields are not greater than max allowed runes
-		assert.LessOrEqual(t, len([]rune(user.FirstName)), model.UserFirstNameMaxRunes, "FirstName should not exceed max runes")
-		assert.LessOrEqual(t, len([]rune(user.LastName)), model.UserLastNameMaxRunes, "LastName should not exceed max runes")
-		assert.LessOrEqual(t, len([]rune(user.Position)), model.UserPositionMaxRunes, "Position should not exceed max runes")
+		assertUserFieldsWithinLimits(t, user)
 
 		// Verify exact truncated values
 		assert.Equal(t, expectedFirstName, user.FirstName)
@@ -574,9 +579,7 @@ func TestIntermediateUserSanitise(t *testing.T) {
 		user.Sanitise(log.New(), "", false)
 
 		// Verify fields are not greater than max allowed runes
-		assert.LessOrEqual(t, len([]rune(user.FirstName)), model.UserFirstNameMaxRunes, "FirstName should not exceed max runes")
-		assert.LessOrEqual(t, len([]rune(user.LastName)), model.UserLastNameMaxRunes, "LastName should not exceed max runes")
-		assert.LessOrEqual(t, len([]rune(user.Position)), model.UserPositionMaxRunes, "Position should not exceed max runes")
+		assertUserFieldsWithinLimits(t, user)
 
 		assert.Equal(t, expectedFirstName, user.FirstName)
 		assert.Equal(t, expectedLastName, user.LastName)
@@ -599,9 +602,7 @@ func TestIntermediateUserSanitise(t *testing.T) {
 		user.Sanitise(log.New(), "", false)
 
 		// Verify fields are not greater than max allowed runes
-		assert.LessOrEqual(t, len([]rune(user.FirstName)), model.UserFirstNameMaxRunes, "FirstName should not exceed max runes")
-		assert.LessOrEqual(t, len([]rune(user.LastName)), model.UserLastNameMaxRunes, "LastName should not exceed max runes")
-		assert.LessOrEqual(t, len([]rune(user.Position)), model.UserPositionMaxRunes, "Position should not exceed max runes")
+		assertUserFieldsWithinLimits(t, user)
 
 		assert.Equal(t, expectedFirstName, user.FirstName)
 		assert.Equal(t, expectedLastName, user.LastName)
@@ -622,9 +623,7 @@ func TestIntermediateUserSanitise(t *testing.T) {
 		user.Sanitise(log.New(), "", false)
 
 		// Verify fields are not greater than max allowed runes
-		assert.LessOrEqual(t, len([]rune(user.FirstName)), model.UserFirstNameMaxRunes, "FirstName should not exceed max runes")
-		assert.LessOrEqual(t, len([]rune(user.LastName)), model.UserLastNameMaxRunes, "LastName should not exceed max runes")
-		assert.LessOrEqual(t, len([]rune(user.Position)), model.UserPositionMaxRunes, "Position should not exceed max runes")
+		assertUserFieldsWithinLimits(t, user)
 
 		// Verify truncation happened by checking exact rune count (in this case they should be exactly at max)
 		assert.Equal(t, model.UserFirstNameMaxRunes, len([]rune(user.FirstName)))
