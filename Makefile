@@ -6,6 +6,7 @@ BUILD_VERSION ?= $(shell git ls-remote --tags --refs https://github.com/mattermo
 LDFLAGS += -X "github.com/mattermost/mmetl/commands.BuildHash=$(BUILD_HASH)"
 LDFLAGS += -X "github.com/mattermost/mmetl/commands.Version=$(BUILD_VERSION)"
 BUILD_COMMAND ?= go build -ldflags '$(LDFLAGS)'
+
 all: build
 
 build: check-style
@@ -48,8 +49,7 @@ golangci-lint:
 	fi; \
 
 	@echo Running golangci-lint
-	golangci-lint run --skip-dirs-use-default --timeout 5m -E gofmt ./...
-
+	golangci-lint run --timeout 5m -E gofmt ./...
 
 gofmt:
 	@echo Running gofmt
@@ -67,13 +67,11 @@ gofmt:
 	done
 	@echo Gofmt success
 
-
 test:
 	@echo Running tests
-	$(GO) test -race -v $(GO_PACKAGES)
+	$(GO) test -race -v $(GO_PACKAGES) -count=1
 
 check-style: golangci-lint
-
 
 verify-gomod:
 	$(GO) mod download
