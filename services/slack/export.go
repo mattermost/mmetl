@@ -7,6 +7,7 @@ import (
 	"math"
 	"os"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -375,7 +376,18 @@ func (t *Transformer) ExportDirectChannels(channels []*IntermediateChannel, writ
 }
 
 func (t *Transformer) ExportUsers(writer io.Writer) error {
+	// Collect users from map and sort them by username for deterministic output
+	users := make([]*IntermediateUser, 0, len(t.Intermediate.UsersById))
 	for _, user := range t.Intermediate.UsersById {
+		users = append(users, user)
+	}
+
+	// Sort by username to ensure consistent ordering
+	sort.Slice(users, func(i, j int) bool {
+		return users[i].Username < users[j].Username
+	})
+
+	for _, user := range users {
 		line := GetImportLineFromUser(user, t.TeamName)
 		if err := ExportWriteLine(writer, line); err != nil {
 			return err
