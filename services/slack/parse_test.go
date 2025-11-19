@@ -2,6 +2,7 @@ package slack
 
 import (
 	"testing"
+	"unicode/utf8"
 
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/sirupsen/logrus"
@@ -24,8 +25,8 @@ func TestSlackConvertPostsMarkup(t *testing.T) {
 
 		// Posts should NOT be truncated during markdown conversion
 		// They will be split into thread replies later in the transformation phase
-		if len(post.Text) <= model.PostMessageMaxRunesV2 {
-			t.Errorf("Test expects a long post, but got length %d", len(post.Text))
+		if utf8.RuneCountInString(post.Text) <= model.PostMessageMaxRunesV2 {
+			t.Errorf("Test expects a long post, but got length %d", utf8.RuneCountInString(post.Text))
 		}
 
 	})
