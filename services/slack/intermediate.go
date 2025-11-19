@@ -558,11 +558,11 @@ func buildMessagePropsFromHuddle(post *SlackPost) model.StringInterface {
 	}
 
 	if post.Room != nil {
-		props.EndAt = int64(post.Room.DateEnd) * 1000
-		props.StartAt = int64(post.Room.DateStart) * 1000
+		props.EndAt = post.Room.DateEnd * 1000
+		props.StartAt = post.Room.DateStart * 1000
 	}
 
-	propsMap := make(map[string]interface{})
+	propsMap := make(map[string]any)
 	bytes, _ := json.Marshal(props)
 	_ = json.Unmarshal(bytes, &propsMap)
 

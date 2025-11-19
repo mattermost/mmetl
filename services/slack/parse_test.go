@@ -28,7 +28,6 @@ func TestSlackConvertPostsMarkup(t *testing.T) {
 		if utf8.RuneCountInString(post.Text) <= model.PostMessageMaxRunesV2 {
 			t.Errorf("Test expects a long post, but got length %d", utf8.RuneCountInString(post.Text))
 		}
-
 	})
 }
 

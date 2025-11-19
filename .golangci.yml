@@ -1,0 +1,51 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: none
+  enable:
+    - bidichk
+    - errcheck
+    - govet
+    - ineffassign
+    - makezero
+    - misspell
+    # - modernize
+    # - revive
+    - staticcheck
+    - unconvert
+    - unqueryvet
+    - unused
+    - whitespace
+  settings:
+    govet:
+      disable:
+        - fieldalignment
+      enable-all: true
+    unqueryvet:
+      check-sql-builders: true
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - std-error-handling
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    gofmt:
+      simplify: true
+      rewrite-rules:
+        - pattern: interface{}
+          replacement: any
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
+      - mock.*
