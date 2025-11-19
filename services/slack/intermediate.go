@@ -834,9 +834,58 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 			splitPostIntoThread(post)
 
 			// Also split any existing replies that exceed the limit
-			for _, reply := range post.Replies {
-				splitPostIntoThread(reply)
+			// We need to iterate carefully because we'll be modifying the replies slice
+			originalReplies := post.Replies
+			post.Replies = []*IntermediatePost{}
+
+			// Build a set of used timestamps from existing replies to avoid duplicates
+			usedTimestamps := make(map[int64]bool)
+			for _, reply := range originalReplies {
+				usedTimestamps[reply.CreateAt] = true
 			}
+
+			for _, reply := range originalReplies {
+				if utf8.RuneCountInString(reply.Message) <= model.PostMessageMaxRunesV2 {
+					// Reply doesn't need splitting, keep as-is
+					post.Replies = append(post.Replies, reply)
+					continue
+				}
+
+				// Reply needs splitting - add all chunks as siblings
+				chunks := splitTextIntoChunks(reply.Message, model.PostMessageMaxRunesV2)
+
+				// First chunk: update the original reply
+				reply.Message = chunks[0]
+				post.Replies = append(post.Replies, reply)
+
+				// Remaining chunks: create new sibling replies
+				for i, chunk := range chunks[1:] {
+					// Find a unique timestamp by incrementing until we find one not in use
+					timestamp := reply.CreateAt + int64(i+1)
+					for usedTimestamps[timestamp] {
+						timestamp++
+					}
+					usedTimestamps[timestamp] = true
+
+					continuationReply := &IntermediatePost{
+						User:           reply.User,
+						Channel:        reply.Channel,
+						Message:        chunk,
+						CreateAt:       timestamp,
+						IsDirect:       reply.IsDirect,
+						ChannelMembers: reply.ChannelMembers,
+						// No reactions, attachments, or props for continuation chunks
+					}
+					post.Replies = append(post.Replies, continuationReply)
+				}
+			}
+
+			// Sort replies by CreateAt to ensure proper ordering
+			// This is important because split chunks may have timestamps that need to be
+			// interleaved with other replies
+			sort.Slice(post.Replies, func(i, j int) bool {
+				return post.Replies[i].CreateAt < post.Replies[j].CreateAt
+			})
 
 			channelPosts = append(channelPosts, post)
 		}
