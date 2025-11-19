@@ -15,7 +15,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00 # v6.0.0
         with:
-          go-version: 1.21
+          go-version-file: go.mod
 
       - name: Install golangci-lint
         run: |
@@ -28,12 +28,6 @@ jobs:
           go mod tidy
       - name: Build and package
         run: make package
-
-      - name: Save cache
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        with:
-          path: build
-          key: go-mod-v1-${{ hashFiles('**/go.sum') }}
 
       - name: Upload artifacts
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
