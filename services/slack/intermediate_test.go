@@ -316,9 +316,6 @@ func TestTransformBigGroupChannels(t *testing.T) {
 		assert.Equal(t, fmt.Sprintf("purpose%d", i+1), result[i].DisplayName)
 		// First 3 channels have 9 valid members, last channel has 8 valid + 1 created deleted user (m10)
 		expectedMemberCount := 9
-		if i == 3 {
-			expectedMemberCount = 9 // m10 gets created as a deleted user, so still 9 total
-		}
 		assert.Equal(t, expectedMemberCount, len(result[i].Members))
 		assert.Equal(t, fmt.Sprintf("purpose%d", i+1), result[i].Purpose)
 		assert.Equal(t, fmt.Sprintf("topic%d", i+1), result[i].Header)
