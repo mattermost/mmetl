@@ -945,4 +945,342 @@ func TestTransformPosts(t *testing.T) {
 			require.LessOrEqual(t, len([]rune(reply.Message)), model.PostMessageMaxRunesV2)
 		}
 	})
+
+	t.Run("very long main post gets split into root post and multiple replies", func(t *testing.T) {
+		slackTransformer := NewTransformer("test", log.New())
+		slackTransformer.Intermediate.UsersById = map[string]*IntermediateUser{"m1": {Username: "m1"}}
+		slackTransformer.Intermediate.PublicChannels = []*IntermediateChannel{
+			{
+				Name:         "channel1",
+				OriginalName: "channel1",
+			},
+		}
+
+		// Create a post with text that is 2.5x the maximum rune limit
+		longText := model.NewRandomString((model.PostMessageMaxRunesV2 * 5) / 2)
+		reactions := []*SlackReaction{{
+			Name:  "thumbsup",
+			Count: 1,
+			Users: []string{"m1"},
+		}}
+
+		slackExport := &SlackExport{
+			Posts: map[string][]SlackPost{
+				"channel1": {
+					{
+						User:      "m1",
+						Text:      longText,
+						TimeStamp: "1695219818.000100",
+						Type:      "message",
+						Reactions: reactions,
+					},
+				},
+			},
+		}
+
+		err := slackTransformer.TransformPosts(slackExport, "", false, false, false)
+		require.NoError(t, err)
+		require.Equal(t, 1, len(slackTransformer.Intermediate.Posts))
+
+		post := slackTransformer.Intermediate.Posts[0]
+		require.Equal(t, "m1", post.User)
+		require.Equal(t, "channel1", post.Channel)
+
+		// Verify the main post message is within the limit
+		require.LessOrEqual(t, len([]rune(post.Message)), model.PostMessageMaxRunesV2)
+		require.Greater(t, len(post.Message), 0, "Main post should not be empty")
+
+		// Verify continuation chunks were created as replies
+		require.Greater(t, len(post.Replies), 1, "Expected at least 2 reply chunks for 2.5x text")
+
+		// Verify all reply chunks are within the limit
+		for i, reply := range post.Replies {
+			require.LessOrEqual(t, len([]rune(reply.Message)), model.PostMessageMaxRunesV2,
+				"Reply chunk %d exceeds maximum runes", i)
+			require.Greater(t, len(reply.Message), 0, "Reply chunk %d should not be empty", i)
+
+			// Verify reply has correct metadata
+			require.Equal(t, "m1", reply.User, "Reply chunk %d should have same user", i)
+			require.Equal(t, "channel1", reply.Channel, "Reply chunk %d should have same channel", i)
+
+			// Verify timestamps are sequential
+			require.Equal(t, post.CreateAt+int64(i+1), reply.CreateAt,
+				"Reply chunk %d should have sequential timestamp", i)
+
+			// Verify no reactions or attachments on continuation chunks
+			require.Nil(t, reply.Reactions, "Reply chunk %d should not have reactions", i)
+			require.Empty(t, reply.Attachments, "Reply chunk %d should not have attachments", i)
+		}
+
+		// Verify reactions are only on the root post
+		require.Equal(t, 1, len(post.Reactions), "Root post should have reactions")
+		require.Equal(t, "thumbsup", post.Reactions[0].EmojiName)
+
+		// Verify all chunks together approximately equal original text length
+		totalLength := len([]rune(post.Message))
+		for _, reply := range post.Replies {
+			totalLength += len([]rune(reply.Message))
+		}
+		originalLength := len([]rune(longText))
+		// Allow some variance due to potential whitespace adjustments at split points
+		require.InDelta(t, originalLength, totalLength, float64(originalLength)*0.01,
+			"Total length of all chunks should approximately match original")
+	})
+
+	t.Run("very long reply to main post gets split into multiple replies to same root", func(t *testing.T) {
+		slackTransformer := NewTransformer("test", log.New())
+		slackTransformer.Intermediate.UsersById = map[string]*IntermediateUser{
+			"m1": {Username: "m1"},
+			"m2": {Username: "m2"},
+		}
+		slackTransformer.Intermediate.PublicChannels = []*IntermediateChannel{
+			{
+				Name:         "channel1",
+				OriginalName: "channel1",
+			},
+		}
+
+		// Create a thread with a normal root post and a very long reply (3x the limit)
+		rootText := "This is a normal root post"
+		longReplyText := model.NewRandomString(model.PostMessageMaxRunesV2 * 3)
+		rootTimestamp := "1695219818.000100"
+
+		reactions := []*SlackReaction{{
+			Name:  "heart",
+			Count: 1,
+			Users: []string{"m2"},
+		}}
+
+		slackExport := &SlackExport{
+			Posts: map[string][]SlackPost{
+				"channel1": {
+					// Root post
+					{
+						User:      "m1",
+						Text:      rootText,
+						TimeStamp: rootTimestamp,
+						ThreadTS:  rootTimestamp,
+						Type:      "message",
+					},
+					// Very long reply
+					{
+						User:      "m2",
+						Text:      longReplyText,
+						TimeStamp: "1695219818.000101",
+						ThreadTS:  rootTimestamp,
+						Type:      "message",
+						Reactions: reactions,
+					},
+				},
+			},
+		}
+
+		err := slackTransformer.TransformPosts(slackExport, "", false, false, false)
+		require.NoError(t, err)
+		require.Equal(t, 1, len(slackTransformer.Intermediate.Posts))
+
+		rootPost := slackTransformer.Intermediate.Posts[0]
+		require.Equal(t, "m1", rootPost.User)
+		require.Equal(t, rootText, rootPost.Message, "Root post should remain unchanged")
+
+		// Verify the root has replies
+		require.Greater(t, len(rootPost.Replies), 2,
+			"Expected at least 3 reply chunks for 3x text (original long reply split)")
+
+		// The first reply is the split long reply - verify it's been split
+		firstReply := rootPost.Replies[0]
+		require.Equal(t, "m2", firstReply.User)
+		require.LessOrEqual(t, len([]rune(firstReply.Message)), model.PostMessageMaxRunesV2,
+			"First reply chunk should be within limit")
+		require.Greater(t, len(firstReply.Message), 0, "First reply chunk should not be empty")
+
+		// Verify the first reply chunk has reactions (original reply's reactions)
+		require.Equal(t, 1, len(firstReply.Reactions), "First reply chunk should have reactions")
+		require.Equal(t, "heart", firstReply.Reactions[0].EmojiName)
+
+		// Track how many reply chunks are from m2 (the split long reply)
+		m2ReplyCount := 0
+		var m2Replies []*IntermediatePost
+		for _, reply := range rootPost.Replies {
+			if reply.User == "m2" {
+				m2ReplyCount++
+				m2Replies = append(m2Replies, reply)
+			}
+		}
+
+		require.Greater(t, m2ReplyCount, 2, "Expected at least 3 chunks from m2's long reply")
+
+		// Verify all m2 reply chunks are within the limit and have correct metadata
+		for i, reply := range m2Replies {
+			require.LessOrEqual(t, len([]rune(reply.Message)), model.PostMessageMaxRunesV2,
+				"m2 reply chunk %d exceeds maximum runes", i)
+			require.Greater(t, len(reply.Message), 0, "m2 reply chunk %d should not be empty", i)
+			require.Equal(t, "m2", reply.User, "Reply chunk %d should belong to m2", i)
+			require.Equal(t, "channel1", reply.Channel, "Reply chunk %d should be in channel1", i)
+
+			// Verify only the first chunk has reactions
+			if i == 0 {
+				require.Equal(t, 1, len(reply.Reactions), "First m2 reply chunk should have reactions")
+			} else {
+				require.Nil(t, reply.Reactions, "Continuation chunk %d should not have reactions", i)
+			}
+
+			// Verify no attachments on any continuation chunks (or first if it had none)
+			if i > 0 {
+				require.Empty(t, reply.Attachments, "Continuation chunk %d should not have attachments", i)
+			}
+		}
+
+		// Verify all m2 chunks together approximately equal original reply text length
+		totalM2Length := 0
+		for _, reply := range m2Replies {
+			totalM2Length += len([]rune(reply.Message))
+		}
+		originalReplyLength := len([]rune(longReplyText))
+		// Allow some variance due to potential whitespace adjustments at split points
+		require.InDelta(t, originalReplyLength, totalM2Length, float64(originalReplyLength)*0.01,
+			"Total length of all m2 reply chunks should approximately match original long reply")
+
+		// Verify timestamps are sequential for the split reply
+		for i := 1; i < len(m2Replies); i++ {
+			require.Greater(t, m2Replies[i].CreateAt, m2Replies[i-1].CreateAt,
+				"Reply chunk %d should have later timestamp than previous chunk", i)
+		}
+	})
+
+	t.Run("replies are properly ordered by CreateAt after splitting", func(t *testing.T) {
+		slackTransformer := NewTransformer("test", log.New())
+		slackTransformer.Intermediate.UsersById = map[string]*IntermediateUser{
+			"m1": {Username: "m1"},
+			"m2": {Username: "m2"},
+			"m3": {Username: "m3"},
+		}
+		slackTransformer.Intermediate.PublicChannels = []*IntermediateChannel{
+			{
+				Name:         "channel1",
+				OriginalName: "channel1",
+			},
+		}
+
+		// Create a thread with:
+		// - Root post at timestamp 100
+		// - Reply 1 at timestamp 101 (normal)
+		// - Reply 2 at timestamp 102 (long, will split into 3+ chunks: 102, 103, 104)
+		// - Reply 3 at timestamp 105 (normal, should come after all Reply 2 chunks)
+		rootTimestamp := "1695219818.000100"
+		longReplyText := model.NewRandomString(model.PostMessageMaxRunesV2 * 3)
+
+		slackExport := &SlackExport{
+			Posts: map[string][]SlackPost{
+				"channel1": {
+					// Root post
+					{
+						User:      "m1",
+						Text:      "Root post",
+						TimeStamp: rootTimestamp,
+						ThreadTS:  rootTimestamp,
+						Type:      "message",
+					},
+					// Reply 1 - normal
+					{
+						User:      "m2",
+						Text:      "First reply",
+						TimeStamp: "1695219818.000101",
+						ThreadTS:  rootTimestamp,
+						Type:      "message",
+					},
+					// Reply 2 - very long (will be split)
+					{
+						User:      "m3",
+						Text:      longReplyText,
+						TimeStamp: "1695219818.000102",
+						ThreadTS:  rootTimestamp,
+						Type:      "message",
+					},
+					// Reply 3 - normal (should come after all Reply 2 chunks)
+					{
+						User:      "m2",
+						Text:      "Last reply after the long one",
+						TimeStamp: "1695219818.000105",
+						ThreadTS:  rootTimestamp,
+						Type:      "message",
+					},
+				},
+			},
+		}
+
+		err := slackTransformer.TransformPosts(slackExport, "", false, false, false)
+		require.NoError(t, err)
+		require.Equal(t, 1, len(slackTransformer.Intermediate.Posts))
+
+		rootPost := slackTransformer.Intermediate.Posts[0]
+		require.Equal(t, "m1", rootPost.User)
+		require.Equal(t, "Root post", rootPost.Message)
+
+		// Verify we have at least 5 replies:
+		// - 1 from m2 (first reply)
+		// - 3+ from m3 (split long reply)
+		// - 1 from m2 (last reply)
+		require.GreaterOrEqual(t, len(rootPost.Replies), 5,
+			"Expected at least 5 replies (1 normal + 3+ split chunks + 1 normal)")
+
+		// Verify all replies are ordered by CreateAt
+		for i := 1; i < len(rootPost.Replies); i++ {
+			require.Less(t, rootPost.Replies[i-1].CreateAt, rootPost.Replies[i].CreateAt,
+				"Reply %d (CreateAt=%d) should be before Reply %d (CreateAt=%d)",
+				i-1, rootPost.Replies[i-1].CreateAt, i, rootPost.Replies[i].CreateAt)
+		}
+
+		// Verify the specific expected order:
+		// First reply should be from m2
+		require.Equal(t, "m2", rootPost.Replies[0].User, "First reply should be from m2")
+		require.Equal(t, "First reply", rootPost.Replies[0].Message)
+		// Note: timestamp may be adjusted by AddPostToThreads collision avoidance
+
+		// Find where m3's chunks end and m2's last reply begins
+		lastM3Index := -1
+		firstM2LastReplyIndex := -1
+		for i, reply := range rootPost.Replies {
+			if reply.User == "m3" {
+				lastM3Index = i
+			}
+			if reply.User == "m2" && reply.Message == "Last reply after the long one" {
+				firstM2LastReplyIndex = i
+				break
+			}
+		}
+
+		require.NotEqual(t, -1, lastM3Index, "Should have found m3's replies")
+		require.NotEqual(t, -1, firstM2LastReplyIndex, "Should have found m2's last reply")
+
+		// m2's last reply should come after all m3 chunks
+		require.Greater(t, firstM2LastReplyIndex, lastM3Index,
+			"m2's last reply (timestamp 105) should come after all m3 chunks")
+
+		// Verify m2's last reply has the correct timestamp
+		lastReply := rootPost.Replies[firstM2LastReplyIndex]
+		require.Equal(t, "m2", lastReply.User)
+		require.Equal(t, "Last reply after the long one", lastReply.Message)
+
+		// Verify all m3 chunks are in sequence (though not necessarily contiguous,
+		// as m2's last reply may be interleaved if it has a timestamp between chunks)
+		m3ChunkTimestamps := []int64{}
+		for _, reply := range rootPost.Replies {
+			if reply.User == "m3" {
+				m3ChunkTimestamps = append(m3ChunkTimestamps, reply.CreateAt)
+			}
+		}
+
+		require.GreaterOrEqual(t, len(m3ChunkTimestamps), 3, "m3 should have at least 3 chunks")
+
+		// m3 chunk timestamps should be strictly increasing (maintaining order from the split)
+		for i := 1; i < len(m3ChunkTimestamps); i++ {
+			require.Greater(t, m3ChunkTimestamps[i], m3ChunkTimestamps[i-1],
+				"m3 chunk timestamps should be strictly increasing")
+		}
+
+		// Verify the overall ordering is correct:
+		// All replies should be ordered by their CreateAt values
+		// This test ensures that sorting works correctly even with split chunks
+	})
 }
