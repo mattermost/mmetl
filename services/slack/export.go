@@ -29,6 +29,71 @@ func truncateRunes(s string, i int) string {
 	return s
 }
 
+// splitTextIntoChunks splits text into multiple chunks, each within the rune limit.
+// It tries to split on word boundaries (spaces) or line breaks when possible.
+// Returns a slice of strings, each within the maxRunes limit.
+func splitTextIntoChunks(text string, maxRunes int) []string {
+	runes := []rune(text)
+
+	// If the text fits within the limit, return it as-is
+	if len(runes) <= maxRunes {
+		return []string{text}
+	}
+
+	chunks := []string{}
+	currentPos := 0
+
+	for currentPos < len(runes) {
+		// Determine the end position for this chunk
+		endPos := currentPos + maxRunes
+		if endPos >= len(runes) {
+			// Last chunk
+			chunks = append(chunks, string(runes[currentPos:]))
+			break
+		}
+
+		// Try to find a good break point (newline, space, etc.)
+		breakPos := endPos
+
+		// First, look for a newline within a reasonable range
+		searchStart := currentPos
+		if endPos-currentPos > 100 {
+			searchStart = endPos - 100
+		}
+
+		foundNewline := false
+		for i := endPos - 1; i >= searchStart; i-- {
+			if runes[i] == '\n' {
+				breakPos = i + 1 // Include the newline in the current chunk
+				foundNewline = true
+				break
+			}
+		}
+
+		// If no newline found, look for a space
+		if !foundNewline {
+			for i := endPos - 1; i >= searchStart; i-- {
+				if runes[i] == ' ' {
+					breakPos = i + 1 // Include the space in the current chunk
+					break
+				}
+			}
+		}
+
+		// If we're still at endPos, it means we couldn't find a good break point
+		// In this case, just split at the limit
+		if breakPos == endPos && breakPos < len(runes) {
+			// Check if we're in the middle of a word - if so, just split there
+			breakPos = endPos
+		}
+
+		chunks = append(chunks, string(runes[currentPos:breakPos]))
+		currentPos = breakPos
+	}
+
+	return chunks
+}
+
 func SlackConvertTimeStamp(ts string) int64 {
 	timeStrings := strings.Split(ts, ".")
 
