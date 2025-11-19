@@ -859,7 +859,6 @@ func TestTransformPosts(t *testing.T) {
 		if len(post.Replies) != 1 {
 			t.Errorf("expected 1 post reply, got %d", len(post.Replies))
 		}
-
 	})
 
 	t.Run("reactions are imported", func(t *testing.T) {

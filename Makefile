@@ -49,7 +49,7 @@ golangci-lint:
 	fi; \
 
 	@echo Running golangci-lint
-	golangci-lint run --timeout 5m -E gofmt ./...
+	golangci-lint run ./...
 
 gofmt:
 	@echo Running gofmt
