@@ -199,14 +199,17 @@ func (t *Transformer) TransformUsers(users []SlackUser, skipEmptyEmails bool, de
 	t.Intermediate.UsersById = resultUsers
 }
 
-func filterValidMembers(members []string, users map[string]*IntermediateUser) []string {
+func (t *Transformer) filterValidMembers(members []string, users map[string]*IntermediateUser) []string {
 	validMembers := []string{}
 	for _, member := range members {
 		if _, ok := users[member]; ok {
 			validMembers = append(validMembers, member)
+		} else {
+			// Create a new deleted user for this lost reference so we can handle channel memberships appropriately
+			t.CreateIntermediateUser(member)
+			validMembers = append(validMembers, member)
 		}
 	}
-
 	return validMembers
 }
 
@@ -221,7 +224,7 @@ func getOriginalName(channel SlackChannel) string {
 func (t *Transformer) TransformChannels(channels []SlackChannel) []*IntermediateChannel {
 	resultChannels := []*IntermediateChannel{}
 	for _, channel := range channels {
-		validMembers := filterValidMembers(channel.Members, t.Intermediate.UsersById)
+		validMembers := t.filterValidMembers(channel.Members, t.Intermediate.UsersById)
 		if (channel.Type == model.ChannelTypeDirect || channel.Type == model.ChannelTypeGroup) && len(validMembers) <= 1 {
 			t.Logger.Warnf("Bulk export for direct channels containing a single member is not supported. Not importing channel %s", channel.Name)
 			continue

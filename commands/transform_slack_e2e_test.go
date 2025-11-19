@@ -98,6 +98,8 @@ func TestYourCommandFunction(t *testing.T) {
 {"type":"channel","channel":{"team":"myteam","name":"random","display_name":"random","type":"O","header":"Anything goes!","purpose":"Non-work related chit-chat"}}
 {"type":"user","user":{"username":"JohnDoe","email":"john.doe@example.com","auth_service":null,"nickname":"","first_name":"John","last_name":"Doe","position":"Software Engineer","roles":"system_user","locale":null,"teams":[{"name":"myteam","roles":"team_user","channels":[{"name":"general","roles":"channel_user"},{"name":"random","roles":"channel_user"}]}]}}
 {"type":"user","user":{"username":"JaneSmith","email":"jane.smith@example.com","auth_service":null,"nickname":"","first_name":"Jane","last_name":"Smith","position":"Product Manager","roles":"system_user","locale":null,"teams":[{"name":"myteam","roles":"team_user","channels":[{"name":"general","roles":"channel_user"},{"name":"random","roles":"channel_user"}]}]}}
+{"type":"user","user":{"username":"user3","email":"user3@local","auth_service":null,"nickname":"","first_name":"Deleted","last_name":"User","position":"","roles":"system_user","locale":null,"teams":[{"name":"myteam","roles":"team_user","channels":[{"name":"general","roles":"channel_user"},{"name":"random","roles":"channel_user"}]}]}}
+{"type":"user","user":{"username":"user4","email":"user4@local","auth_service":null,"nickname":"","first_name":"Deleted","last_name":"User","position":"","roles":"system_user","locale":null,"teams":[{"name":"myteam","roles":"team_user","channels":[{"name":"random","roles":"channel_user"}]}]}}
 `,
 		},
 	} {

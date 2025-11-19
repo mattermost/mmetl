@@ -185,7 +185,7 @@ func TestTransformPublicChannelsWithAnInvalidMember(t *testing.T) {
 	for i := range result {
 		assert.Equal(t, fmt.Sprintf("channel-name-%d", i+1), result[i].Name)
 		assert.Equal(t, fmt.Sprintf("channel-name-%d", i+1), result[i].DisplayName)
-		assert.Equal(t, []string{"m1", "m2"}, result[i].Members)
+		assert.Equal(t, []string{"m1", "m2", "m3"}, result[i].Members)
 		assert.Equal(t, fmt.Sprintf("purpose%d", i+1), result[i].Purpose)
 		assert.Equal(t, fmt.Sprintf("topic%d", i+1), result[i].Header)
 		assert.Equal(t, model.ChannelTypeOpen, result[i].Type)
@@ -294,6 +294,18 @@ func TestTransformBigGroupChannels(t *testing.T) {
 			},
 			Type: model.ChannelTypeGroup,
 		},
+		{
+			Id:      "id4",
+			Creator: "creator4",
+			Members: []string{"m1", "m2", "m3", "m4", "m5", "m6", "m7", "m8", "m10"},
+			Purpose: SlackChannelSub{
+				Value: "purpose4",
+			},
+			Topic: SlackChannelSub{
+				Value: "topic4",
+			},
+			Type: model.ChannelTypeGroup,
+		},
 	}
 
 	result := slackTransformer.TransformChannels(bigGroupChannels)
@@ -302,7 +314,9 @@ func TestTransformBigGroupChannels(t *testing.T) {
 	for i := range result {
 		assert.Equal(t, fmt.Sprintf("purpose%d", i+1), result[i].Name)
 		assert.Equal(t, fmt.Sprintf("purpose%d", i+1), result[i].DisplayName)
-		assert.Equal(t, channelMembers, result[i].Members)
+		// First 3 channels have 9 valid members, last channel has 8 valid + 1 created deleted user (m10)
+		expectedMemberCount := 9
+		assert.Equal(t, expectedMemberCount, len(result[i].Members))
 		assert.Equal(t, fmt.Sprintf("purpose%d", i+1), result[i].Purpose)
 		assert.Equal(t, fmt.Sprintf("topic%d", i+1), result[i].Header)
 		assert.Equal(t, model.ChannelTypePrivate, result[i].Type)
@@ -416,7 +430,9 @@ func TestTransformChannelWithOneValidMember(t *testing.T) {
 		}
 
 		result := slackTransformer.TransformChannels(directChannels)
-		require.Len(t, result, 0)
+		// With the new behavior, missing members (m2, m3) are created as deleted users,
+		// so the channel now has 3 members and will be transformed
+		require.Len(t, result, 1)
 	})
 
 	t.Run("A group channel with only one valid member should not be transformed", func(t *testing.T) {
@@ -436,7 +452,9 @@ func TestTransformChannelWithOneValidMember(t *testing.T) {
 		}
 
 		result := slackTransformer.TransformChannels(groupChannels)
-		require.Len(t, result, 0)
+		// With the new behavior, missing members (m2, m3) are created as deleted users,
+		// so the channel now has 3 members and will be transformed
+		require.Len(t, result, 1)
 	})
 }
 
