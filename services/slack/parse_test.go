@@ -2,10 +2,34 @@ package slack
 
 import (
 	"testing"
+	"unicode/utf8"
 
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/sirupsen/logrus"
 )
+
+func TestSlackConvertPostsMarkup(t *testing.T) {
+	var posts = map[string][]SlackPost{
+		"channelName": {
+			{
+				Text: model.NewRandomString(model.PostMessageMaxRunesV2 * 2),
+			},
+		},
+	}
+
+	t.Run("Test post not truncated during markdown conversion", func(t *testing.T) {
+		transformer := NewTransformer("test", logrus.New())
+
+		parsedPosts := transformer.SlackConvertPostsMarkup(posts)
+		post := parsedPosts["channelName"][0]
+
+		// Posts should NOT be truncated during markdown conversion
+		// They will be split into thread replies later in the transformation phase
+		if utf8.RuneCountInString(post.Text) <= model.PostMessageMaxRunesV2 {
+			t.Errorf("Test expects a long post, but got length %d", utf8.RuneCountInString(post.Text))
+		}
+	})
+}
 
 func TestSlackConvertUserMentions(t *testing.T) {
 	type TestCases struct {

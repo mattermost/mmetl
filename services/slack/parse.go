@@ -161,7 +161,7 @@ func (t *Transformer) SlackParseUsers(data io.Reader) ([]SlackUser, error) {
 		return users, err
 	}
 
-	usersAsMaps := []map[string]interface{}{}
+	usersAsMaps := []map[string]any{}
 	_ = json.Unmarshal(b, &usersAsMaps)
 
 	for i, u := range users {
@@ -339,6 +339,7 @@ func (t *Transformer) SlackConvertPostsMarkup(posts map[string][]SlackPost) map[
 			for _, rule := range regexReplaceAllStringFunc {
 				result = rule.regex.ReplaceAllStringFunc(result, rule.fn)
 			}
+			// Don't truncate here - splitting will happen later in the transformation phase
 			posts[channelName][postIdx].Text = result
 		}
 	}
@@ -364,19 +365,20 @@ func (t *Transformer) ParseSlackExportFile(zipReader *zip.Reader, skipConvertPos
 			}
 			defer reader.Close()
 
-			if file.Name == "channels.json" {
+			switch file.Name {
+			case "channels.json":
 				slackExport.PublicChannels, _ = t.SlackParseChannels(reader, model.ChannelTypeOpen)
 				slackExport.Channels = append(slackExport.Channels, slackExport.PublicChannels...)
-			} else if file.Name == "dms.json" {
+			case "dms.json":
 				slackExport.DirectChannels, _ = t.SlackParseChannels(reader, model.ChannelTypeDirect)
 				slackExport.Channels = append(slackExport.Channels, slackExport.DirectChannels...)
-			} else if file.Name == "groups.json" {
+			case "groups.json":
 				slackExport.PrivateChannels, _ = t.SlackParseChannels(reader, model.ChannelTypePrivate)
 				slackExport.Channels = append(slackExport.Channels, slackExport.PrivateChannels...)
-			} else if file.Name == "mpims.json" {
+			case "mpims.json":
 				slackExport.GroupChannels, _ = t.SlackParseChannels(reader, model.ChannelTypeGroup)
 				slackExport.Channels = append(slackExport.Channels, slackExport.GroupChannels...)
-			} else if file.Name == "users.json" {
+			case "users.json":
 				usersJSONFileName := os.Getenv("USERS_JSON_FILE")
 				if usersJSONFileName != "" {
 					reader.Close()
@@ -388,7 +390,7 @@ func (t *Transformer) ParseSlackExportFile(zipReader *zip.Reader, skipConvertPos
 
 				users, _ := t.SlackParseUsers(reader)
 				slackExport.Users = users
-			} else {
+			default:
 				spl := strings.Split(file.Name, "/")
 				if len(spl) == 2 && strings.HasSuffix(spl[1], ".json") {
 					newposts, _ := t.SlackParsePosts(reader)
