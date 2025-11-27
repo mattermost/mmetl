@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-func (t *Transformer) checkForRequiredFile(zipReader *zip.Reader, fileName string) bool {
+func (t *Transformer) CheckForRequiredFile(zipReader *zip.Reader, fileName string) bool {
 	found := false
 	foundInSubdirectory := false
 
@@ -39,7 +39,7 @@ func (t *Transformer) Precheck(zipReader *zip.Reader) bool {
 	valid := true
 
 	for _, fileName := range requiredFiles {
-		fileExists := t.checkForRequiredFile(zipReader, fileName)
+		fileExists := t.CheckForRequiredFile(zipReader, fileName)
 
 		valid = valid && fileExists
 	}
