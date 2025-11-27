@@ -161,7 +161,7 @@ func (t *Transformer) SlackParseUsers(data io.Reader) ([]SlackUser, error) {
 		return users, err
 	}
 
-	usersAsMaps := []map[string]interface{}{}
+	usersAsMaps := []map[string]any{}
 	_ = json.Unmarshal(b, &usersAsMaps)
 
 	for i, u := range users {
@@ -339,6 +339,7 @@ func (t *Transformer) SlackConvertPostsMarkup(posts map[string][]SlackPost) map[
 			for _, rule := range regexReplaceAllStringFunc {
 				result = rule.regex.ReplaceAllStringFunc(result, rule.fn)
 			}
+			// Don't truncate here - splitting will happen later in the transformation phase
 			posts[channelName][postIdx].Text = result
 		}
 	}
@@ -414,19 +415,19 @@ func (t *Transformer) ParseSlackExportFile(zipReader *zip.Reader, skipConvertPos
 			defer reader.Close()
 
 			switch file.Name {
-			case prefix + "channels.json":
+			case "channels.json":
 				slackExport.PublicChannels, _ = t.SlackParseChannels(reader, model.ChannelTypeOpen)
 				slackExport.Channels = append(slackExport.Channels, slackExport.PublicChannels...)
-			case prefix + "dms.json":
+			case "dms.json":
 				slackExport.DirectChannels, _ = t.SlackParseChannels(reader, model.ChannelTypeDirect)
 				slackExport.Channels = append(slackExport.Channels, slackExport.DirectChannels...)
-			case prefix + "groups.json":
+			case "groups.json":
 				slackExport.PrivateChannels, _ = t.SlackParseChannels(reader, model.ChannelTypePrivate)
 				slackExport.Channels = append(slackExport.Channels, slackExport.PrivateChannels...)
-			case prefix + "mpims.json":
+			case "mpims.json":
 				slackExport.GroupChannels, _ = t.SlackParseChannels(reader, model.ChannelTypeGroup)
 				slackExport.Channels = append(slackExport.Channels, slackExport.GroupChannels...)
-			case prefix + "users.json":
+			case "users.json":
 				usersJSONFileName := os.Getenv("USERS_JSON_FILE")
 				if usersJSONFileName != "" {
 					reader.Close()
