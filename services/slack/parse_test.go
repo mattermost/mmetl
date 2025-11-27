@@ -51,7 +51,7 @@ func TestSlackConvertUserMentions(t *testing.T) {
 			Username: "user1",
 		},
 	}
-	transformer := NewTransformer("test", logrus.New())
+	transformer := NewTransformer("test", "", logrus.New())
 
 	for _, testCase := range testCases {
 		posts := map[string][]SlackPost{
