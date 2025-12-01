@@ -31,7 +31,6 @@ func (t *GridTransformer) readDir(dest string) ([]fs.DirEntry, error) {
 }
 
 func (t *GridTransformer) dirHasContent(dest string) (bool, error) {
-
 	err := os.MkdirAll(t.dirPath, os.ModePerm)
 	if err != nil {
 		return false, errors.Wrap(err, "error creating directory")
@@ -73,7 +72,6 @@ func (t *GridTransformer) ExtractDirectory(zipReader *zip.Reader) error {
 	totalFiles := len(zipReader.File)
 
 	for i, f := range zipReader.File {
-
 		// Slack file conversations have a : in the name. So, "FC:123:123" would be valid. This simply removes the : from the name.
 		// currently, these imports are not supported by the slack grid importer so the files are not referenced later.
 		sanitizedFileName := strings.ReplaceAll(f.Name, ":", "")
@@ -122,7 +120,6 @@ func (t *GridTransformer) ExtractDirectory(zipReader *zip.Reader) error {
 }
 
 func (t *GridTransformer) ZipTeamDirectories() error {
-
 	// zip the directories under /teams
 
 	teams, err := t.readDir(filepath.Join(t.dirPath, "teams"))
@@ -184,14 +181,14 @@ func ZipDir(source, target string) error {
 		}
 
 		if !info.IsDir() {
-			file, err := os.Open(path)
-			if err != nil {
-				return err
+			file, openErr := os.Open(path)
+			if openErr != nil {
+				return openErr
 			}
 			defer file.Close()
-			_, err = io.Copy(writer, file)
-			if err != nil {
-				return err
+			_, copyErr := io.Copy(writer, file)
+			if copyErr != nil {
+				return copyErr
 			}
 		}
 		return err
