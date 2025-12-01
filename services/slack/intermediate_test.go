@@ -70,7 +70,7 @@ func TestIntermediateChannelSanitise(t *testing.T) {
 		channel.Sanitise(log.New())
 
 		assert.Equal(t, "channelid1", channel.Name)
-		assert.Equal(t, "channelid1", channel.DisplayName)
+		assert.Equal(t, "døsplay_name", channel.DisplayName)
 	})
 }
 
@@ -249,6 +249,54 @@ func TestTransformPrivateChannels(t *testing.T) {
 		assert.Equal(t, fmt.Sprintf("topic%d", i+1), result[i].Header)
 		assert.Equal(t, model.ChannelTypePrivate, result[i].Type)
 	}
+}
+
+func TestTransformChannelsPreservesDisplayName(t *testing.T) {
+	slackTransformer := NewTransformer("test", log.New())
+	slackTransformer.Intermediate.UsersById = map[string]*IntermediateUser{"m1": {}, "m2": {}}
+
+	channels := []SlackChannel{
+		{
+			Id:      "id1",
+			Name:    "channel-with-émojis-🎉",
+			Creator: "creator1",
+			Members: []string{"m1", "m2"},
+			Purpose: SlackChannelSub{
+				Value: "purpose1",
+			},
+			Topic: SlackChannelSub{
+				Value: "topic1",
+			},
+			Type: model.ChannelTypeOpen,
+		},
+		{
+			Id:      "id2",
+			Name:    "chännel-with-spëcial-çhars",
+			Creator: "creator2",
+			Members: []string{"m1", "m2"},
+			Purpose: SlackChannelSub{
+				Value: "purpose2",
+			},
+			Topic: SlackChannelSub{
+				Value: "topic2",
+			},
+			Type: model.ChannelTypePrivate,
+		},
+	}
+
+	result := slackTransformer.TransformChannels(channels)
+	require.Len(t, result, len(channels))
+
+	// First channel - verify display name preserves original with special chars
+	assert.Equal(t, "channel-with-émojis-🎉", result[0].DisplayName)
+	// Name should be sanitized (alphanumeric only)
+	assert.NotEqual(t, "channel-with-émojis-🎉", result[0].Name)
+	assert.True(t, isValidChannelNameCharacters(result[0].Name), "Name should contain only valid characters")
+
+	// Second channel
+	assert.Equal(t, "chännel-with-spëcial-çhars", result[1].DisplayName)
+	assert.NotEqual(t, "chännel-with-spëcial-çhars", result[1].Name)
+	assert.True(t, isValidChannelNameCharacters(result[1].Name), "Name should contain only valid characters")
 }
 
 func TestTransformBigGroupChannels(t *testing.T) {
