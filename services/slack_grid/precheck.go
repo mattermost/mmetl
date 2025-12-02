@@ -5,7 +5,6 @@ import (
 )
 
 func (t *GridTransformer) GridPreCheck(zipReader *zip.Reader) bool {
-
 	requiredFiles := []string{
 		"channels.json",
 		"dms.json",
@@ -16,7 +15,7 @@ func (t *GridTransformer) GridPreCheck(zipReader *zip.Reader) bool {
 	valid := true
 
 	for _, fileName := range requiredFiles {
-		fileExists := t.Transformer.CheckForRequiredFile(zipReader, fileName)
+		fileExists := t.CheckForRequiredFile(zipReader, fileName)
 		valid = valid && fileExists
 	}
 

@@ -252,7 +252,6 @@ func getChannelDirName(channel slack.SlackChannel, channelType ChannelFiles) str
 }
 
 func (t *GridTransformer) performChannelMove(channelType ChannelFiles, channel ChannelsToMove, channelsToMove []ChannelsToMove, channelIndex int) error {
-
 	if len(channel.TeamName) == 0 {
 		return errors.Errorf(ErrFindingTeamName, channel.Path)
 	}
@@ -286,7 +285,6 @@ func (t *GridTransformer) performChannelMove(channelType ChannelFiles, channel C
 
 // this finds the correct json file in the directory and appends the channel information to it.
 func (t *GridTransformer) appendChannelToTeamChannelsFile(channelType ChannelFiles, channel ChannelsToMove) error {
-
 	path := filepath.Join(t.dirPath, "teams", channel.TeamName, string(channelType)+".json")
 
 	// Read the existing channels

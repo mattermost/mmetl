@@ -101,7 +101,6 @@ func TestParseGridSlackExportFile(t *testing.T) {
 }
 
 func TestChannelHasBeenMoved(t *testing.T) {
-
 	channels := []ChannelsToMove{
 		{SlackChannel: slack.SlackChannel{Id: "channel1"}, Moved: true},
 		{SlackChannel: slack.SlackChannel{Id: "channel2"}, Moved: false},
@@ -134,7 +133,7 @@ func TestFindTeamIDFromPostArray(t *testing.T) {
 
 	t.Run("finds the team name in a post array", func(t *testing.T) {
 		for _, test := range tests {
-			teamID, err := bt.findTeamIDFromPostArray(marshalJson(test.posts, t))
+			teamID, err := bt.findTeamIDFromPostArray(marshalJSON(test.posts, t))
 			assert.NoError(t, err)
 			assert.Equal(t, test.result, teamID)
 		}
@@ -157,7 +156,6 @@ func TestFindTeamIdFromChannelDir(t *testing.T) {
 	}
 
 	t.Run("finds the team name in a post directory", func(t *testing.T) {
-
 		dir := createDirAndWriteFiles(postsWithTwoTeams, t)
 		defer os.RemoveAll(dir)
 		bt.dirPath = dir
@@ -167,7 +165,6 @@ func TestFindTeamIdFromChannelDir(t *testing.T) {
 	})
 
 	t.Run("directory does not exist", func(t *testing.T) {
-
 		teamID, err := bt.findTeamIdFromChannelDir("badPath")
 		assert.ErrorContains(t, err, "error reading directory")
 		assert.Equal(t, "", teamID)
@@ -180,7 +177,7 @@ func TestFindTeamIdFromChannelDir(t *testing.T) {
 
 		// Create a file and remove read permissions to provoke a read error
 		testFile := filepath.Join(dir, "posts.json")
-		err := os.WriteFile(testFile, marshalJson(postsWithTwoTeams[1], t), 0000)
+		err := os.WriteFile(testFile, marshalJSON(postsWithTwoTeams[1], t), 0000)
 		assert.NoError(t, err)
 		defer func() { _ = os.Chmod(testFile, 0644) }() // restore so RemoveAll works
 
@@ -200,7 +197,7 @@ func TestFindTeamIdFromChannelDir(t *testing.T) {
 		assert.NoError(t, err)
 
 		// Write a valid posts file as well
-		err = os.WriteFile(filepath.Join(dir, "posts.json"), marshalJson(postsWithTwoTeams[1], t), 0644)
+		err = os.WriteFile(filepath.Join(dir, "posts.json"), marshalJSON(postsWithTwoTeams[1], t), 0644)
 		assert.NoError(t, err)
 
 		teamID, err := bt.findTeamIdFromChannelDir("")
@@ -225,7 +222,7 @@ func TestAppendChannelToChannelsToMove(t *testing.T) {
 
 	teamName := "team1"
 
-	teamExistingChannels := marshalJson([]slack.SlackChannel{{Id: "0"}}, t)
+	teamExistingChannels := marshalJSON([]slack.SlackChannel{{Id: "0"}}, t)
 	writeToFileInTestDir(filepath.Join(bt.dirPath, "teams", teamName), string(ChannelFilePublic)+".json", teamExistingChannels, t)
 
 	channelsToMerge := []ChannelsToMove{
@@ -249,7 +246,6 @@ func TestAppendChannelToChannelsToMove(t *testing.T) {
 }
 
 func TestHandleMovingChannels(t *testing.T) {
-
 	bt := setupGridTransformer(t)
 
 	bt.Teams = map[string]string{
@@ -261,13 +257,13 @@ func TestHandleMovingChannels(t *testing.T) {
 
 	// storing the channels.json file in the team directory to be used.
 	writeToFileInTestDir(teamPath, "channels.json",
-		marshalJson([]slack.SlackChannel{}, t),
+		marshalJSON([]slack.SlackChannel{}, t),
 		t,
 	)
 
 	// creating a channel with a single post in it that we can move.
 	writeToFileInTestDir(channelPath, "posts.json",
-		marshalJson([]Post{{Team: "team1"}}, t),
+		marshalJSON([]Post{{Team: "team1"}}, t),
 		t,
 	)
 
@@ -307,7 +303,7 @@ func createDirAndWriteFiles(data [][]Post, t *testing.T) string {
 	dir := createTestDir(t)
 
 	for i, posts := range data {
-		postArray := marshalJson(posts, t)
+		postArray := marshalJSON(posts, t)
 		fileName := "/post_" + strconv.Itoa(i) + ".json"
 		writeToFileInTestDir(dir, fileName, postArray, t)
 	}
@@ -330,7 +326,7 @@ func writeToFileInTestDir(dir string, filename string, data []byte, t *testing.T
 	}
 }
 
-func marshalJson(data interface{}, t *testing.T) []byte {
+func marshalJSON(data any, t *testing.T) []byte {
 	jsonData, err := json.Marshal(data)
 	if err != nil {
 		t.Fatal(errors.Wrap(err, "error marshalling json"))
@@ -348,7 +344,7 @@ func createTestDir(t *testing.T) string {
 	return dir
 }
 
-func marshalAndWriteToZipFile(zipWriter *zip.Writer, filename string, data interface{}, t *testing.T) {
+func marshalAndWriteToZipFile(zipWriter *zip.Writer, filename string, data any, t *testing.T) {
 	// Create a new file in the zip file
 	fileWriter, err := zipWriter.Create(filename)
 	if err != nil {
