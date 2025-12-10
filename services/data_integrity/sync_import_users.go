@@ -74,7 +74,8 @@ func SyncImportUsers(reader io.Reader, flags SyncImportUsersFlags, client *model
 			oldUsername := *user.Username
 			logger.Debugf("Processing user %s", oldUsername)
 
-			usernameChanged, emailChanged, err := mergeImportFileUser(ctx, user, flags, client, logger)
+			var usernameChanged, emailChanged bool
+			usernameChanged, emailChanged, err = mergeImportFileUser(ctx, user, flags, client, logger)
 			if err != nil {
 				logger.Errorf("Error checking user %s, keeping import record as-is. %v", *user.Username, err)
 				break
@@ -250,5 +251,4 @@ func mergeImportFileUser(ctx context.Context, user *imports.UserImportData, flag
 	}
 
 	return usernameChanged, emailChanged, nil
-
 }
