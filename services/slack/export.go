@@ -30,6 +30,71 @@ func truncateRunes(s string, i int) string {
 	return s
 }
 
+// splitTextIntoChunks splits text into multiple chunks, each within the rune limit.
+// It tries to split on word boundaries (spaces) or line breaks when possible.
+// Returns a slice of strings, each within the maxRunes limit.
+func splitTextIntoChunks(text string, maxRunes int) []string {
+	runes := []rune(text)
+
+	// If the text fits within the limit, return it as-is
+	if len(runes) <= maxRunes {
+		return []string{text}
+	}
+
+	chunks := []string{}
+	currentPos := 0
+
+	for currentPos < len(runes) {
+		// Determine the end position for this chunk
+		endPos := currentPos + maxRunes
+		if endPos >= len(runes) {
+			// Last chunk
+			chunks = append(chunks, string(runes[currentPos:]))
+			break
+		}
+
+		// Try to find a good break point (newline, space, etc.)
+		breakPos := endPos
+
+		// First, look for a newline within a reasonable range
+		searchStart := currentPos
+		if endPos-currentPos > 100 {
+			searchStart = endPos - 100
+		}
+
+		foundNewline := false
+		for i := endPos - 1; i >= searchStart; i-- {
+			if runes[i] == '\n' {
+				breakPos = i + 1 // Include the newline in the current chunk
+				foundNewline = true
+				break
+			}
+		}
+
+		// If no newline found, look for a space
+		if !foundNewline {
+			for i := endPos - 1; i >= searchStart; i-- {
+				if runes[i] == ' ' {
+					breakPos = i + 1 // Include the space in the current chunk
+					break
+				}
+			}
+		}
+
+		// If we're still at endPos, it means we couldn't find a good break point
+		// In this case, just split at the limit
+		if breakPos == endPos && breakPos < len(runes) {
+			// Check if we're in the middle of a word - if so, just split there
+			breakPos = endPos
+		}
+
+		chunks = append(chunks, string(runes[currentPos:breakPos]))
+		currentPos = breakPos
+	}
+
+	return chunks
+}
+
 func SlackConvertTimeStamp(ts string) int64 {
 	timeStrings := strings.Split(ts, ".")
 
@@ -108,6 +173,11 @@ func GetImportLineFromUser(user *IntermediateUser, team string) *imports.LineImp
 		})
 	}
 
+	var channelsPtr *[]imports.UserChannelImportData
+	if len(channelMemberships) > 0 {
+		channelsPtr = &channelMemberships
+	}
+
 	return &imports.LineImportData{
 		Type: "user",
 		User: &imports.UserImportData{
@@ -122,7 +192,7 @@ func GetImportLineFromUser(user *IntermediateUser, team string) *imports.LineImp
 			Teams: &[]imports.UserTeamImportData{
 				{
 					Name:     model.NewString(team),
-					Channels: &channelMemberships,
+					Channels: channelsPtr,
 					Roles:    model.NewString(model.TeamUserRoleId),
 				},
 			},
@@ -192,13 +262,34 @@ func GetImportLineFromPost(post *IntermediatePost, team string) *imports.LineImp
 			replyAttachments = replyAttachments[0:POST_MAX_ATTACHMENTS]
 		}
 
+		reactions := []imports.ReactionImportData{}
+		for _, reaction := range reply.Reactions {
+			newReaction := imports.ReactionImportData{
+				User:      &reaction.User,
+				EmojiName: &reaction.EmojiName,
+				CreateAt:  &reaction.CreateAt,
+			}
+			reactions = append(reactions, newReaction)
+		}
+
 		newReply := imports.ReplyImportData{
 			User:        &reply.User,
 			Message:     &reply.Message,
 			CreateAt:    &reply.CreateAt,
 			Attachments: &replyAttachments,
+			Reactions:   &reactions,
 		}
 		replies = append(replies, newReply)
+	}
+
+	reactions := []imports.ReactionImportData{}
+	for _, reaction := range post.Reactions {
+		newReaction := imports.ReactionImportData{
+			User:      &reaction.User,
+			EmojiName: &reaction.EmojiName,
+			CreateAt:  &reaction.CreateAt,
+		}
+		reactions = append(reactions, newReaction)
 	}
 
 	var newPost *imports.LineImportData
@@ -212,6 +303,7 @@ func GetImportLineFromPost(post *IntermediatePost, team string) *imports.LineImp
 				Props:          &post.Props,
 				CreateAt:       &post.CreateAt,
 				Replies:        &replies,
+				Reactions:      &reactions,
 				Attachments:    &postAttachments,
 				Type:           &post.Type,
 			},
@@ -227,6 +319,7 @@ func GetImportLineFromPost(post *IntermediatePost, team string) *imports.LineImp
 				Props:       &post.Props,
 				CreateAt:    &post.CreateAt,
 				Replies:     &replies,
+				Reactions:   &reactions,
 				Attachments: &postAttachments,
 				Type:        &post.Type,
 			},
@@ -284,18 +377,19 @@ func (t *Transformer) ExportDirectChannels(channels []*IntermediateChannel, writ
 }
 
 func (t *Transformer) ExportUsers(writer io.Writer) error {
-	users := t.Intermediate.UsersById
-	userIds := make([]string, len(users))
-	i := 0
-	for k := range users {
-		userIds[i] = k
-		i++
+	// Collect users from map and sort them by username for deterministic output
+	users := make([]*IntermediateUser, 0, len(t.Intermediate.UsersById))
+	for _, user := range t.Intermediate.UsersById {
+		users = append(users, user)
 	}
 
-	sort.Strings(userIds)
+	// Sort by username to ensure consistent ordering
+	sort.Slice(users, func(i, j int) bool {
+		return users[i].Username < users[j].Username
+	})
 
-	for _, userId := range userIds {
-		line := GetImportLineFromUser(users[userId], t.TeamName)
+	for _, user := range users {
+		line := GetImportLineFromUser(user, t.TeamName)
 		if err := ExportWriteLine(writer, line); err != nil {
 			return err
 		}

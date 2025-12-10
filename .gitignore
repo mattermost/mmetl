@@ -1,4 +1,18 @@
-mmetl
+# Build artifacts
 build/
-.DS_STORE
+mmetl
 *.log
+mmetl.md5.txt
+
+# Data used during development
+slackData
+tmp
+*.jsonl
+*.log
+*.zip
+
+# IDE and editor files
+.idea
+
+# OS files
+.DS_Store

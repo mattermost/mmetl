@@ -59,9 +59,6 @@ func (c *IntermediateChannel) Sanitise(logger log.FieldLogger) {
 	if len(c.DisplayName) == 1 {
 		c.DisplayName = "slack-channel-" + c.DisplayName
 	}
-	if !isValidChannelNameCharacters(c.DisplayName) {
-		c.DisplayName = strings.ToLower(c.Id)
-	}
 
 	if utf8.RuneCountInString(c.Purpose) > model.ChannelPurposeMaxRunes {
 		logger.Warnf("Channel %s purpose exceeds the maximum length. It will be truncated when imported.", c.DisplayName)
@@ -105,19 +102,41 @@ func (u *IntermediateUser) Sanitise(logger log.FieldLogger, defaultEmailDomain s
 			exitFunc(1)
 		}
 	}
+
+	if utf8.RuneCountInString(u.FirstName) > model.UserFirstNameMaxRunes {
+		logger.Warnf("User %s first name exceeds the maximum length. It will be truncated when imported.", u.Username)
+		u.FirstName = truncateRunes(u.FirstName, model.UserFirstNameMaxRunes)
+	}
+
+	if utf8.RuneCountInString(u.LastName) > model.UserLastNameMaxRunes {
+		logger.Warnf("User %s last name exceeds the maximum length. It will be truncated when imported.", u.Username)
+		u.LastName = truncateRunes(u.LastName, model.UserLastNameMaxRunes)
+	}
+
+	if utf8.RuneCountInString(u.Position) > model.UserPositionMaxRunes {
+		logger.Warnf("User %s position exceeds the maximum length. It will be truncated when imported.", u.Username)
+		u.Position = truncateRunes(u.Position, model.UserPositionMaxRunes)
+	}
+}
+
+type IntermediateReaction struct {
+	User      string `json:"user"`
+	EmojiName string `json:"emoji_name"`
+	CreateAt  int64  `json:"create_at"`
 }
 
 type IntermediatePost struct {
-	User           string                `json:"user"`
-	Channel        string                `json:"channel"`
-	Message        string                `json:"message"`
-	Props          model.StringInterface `json:"props"`
-	CreateAt       int64                 `json:"create_at"`
-	Type           string                `json:"type"`
-	Attachments    []string              `json:"attachments"`
-	Replies        []*IntermediatePost   `json:"replies"`
-	IsDirect       bool                  `json:"is_direct"`
-	ChannelMembers []string              `json:"channel_members"`
+	User           string                  `json:"user"`
+	Channel        string                  `json:"channel"`
+	Message        string                  `json:"message"`
+	Props          model.StringInterface   `json:"props"`
+	CreateAt       int64                   `json:"create_at"`
+	Type           string                  `json:"type"`
+	Attachments    []string                `json:"attachments"`
+	Replies        []*IntermediatePost     `json:"replies"`
+	Reactions      []*IntermediateReaction `json:"reactions"`
+	IsDirect       bool                    `json:"is_direct"`
+	ChannelMembers []string                `json:"channel_members"`
 }
 
 type Intermediate struct {
@@ -177,14 +196,17 @@ func (t *Transformer) TransformUsers(users []SlackUser, skipEmptyEmails bool, de
 	t.Intermediate.UsersById = resultUsers
 }
 
-func filterValidMembers(members []string, users map[string]*IntermediateUser) []string {
+func (t *Transformer) filterValidMembers(members []string, users map[string]*IntermediateUser) []string {
 	validMembers := []string{}
 	for _, member := range members {
 		if _, ok := users[member]; ok {
 			validMembers = append(validMembers, member)
+		} else {
+			// Create a new deleted user for this lost reference so we can handle channel memberships appropriately
+			t.CreateIntermediateUser(member)
+			validMembers = append(validMembers, member)
 		}
 	}
-
 	return validMembers
 }
 
@@ -199,7 +221,7 @@ func getOriginalName(channel SlackChannel) string {
 func (t *Transformer) TransformChannels(channels []SlackChannel) []*IntermediateChannel {
 	resultChannels := []*IntermediateChannel{}
 	for _, channel := range channels {
-		validMembers := filterValidMembers(channel.Members, t.Intermediate.UsersById)
+		validMembers := t.filterValidMembers(channel.Members, t.Intermediate.UsersById)
 		if (channel.Type == model.ChannelTypeDirect || channel.Type == model.ChannelTypeGroup) && len(validMembers) <= 1 {
 			t.Logger.Warnf("Bulk export for direct channels containing a single member is not supported. Not importing channel %s", channel.Name)
 			continue
@@ -214,7 +236,7 @@ func (t *Transformer) TransformChannels(channels []SlackChannel) []*Intermediate
 		newChannel := &IntermediateChannel{
 			OriginalName: getOriginalName(channel),
 			Name:         name,
-			DisplayName:  name,
+			DisplayName:  channel.Name,
 			Members:      validMembers,
 			Purpose:      channel.Purpose.Value,
 			Header:       channel.Topic.Value,
@@ -468,10 +490,11 @@ func (t *Transformer) CreateAndAddPostToThreads(post SlackPost, threads map[stri
 	}
 
 	newPost := &IntermediatePost{
-		User:     author.Username,
-		Channel:  channel.Name,
-		Message:  post.Text,
-		CreateAt: SlackConvertTimeStamp(post.TimeStamp),
+		User:      author.Username,
+		Channel:   channel.Name,
+		Message:   post.Text,
+		Reactions: t.getReactionsFromPost(post),
+		CreateAt:  SlackConvertTimeStamp(post.TimeStamp),
 	}
 
 	AddPostToThreads(post, newPost, threads, channel, timestamps)
@@ -532,15 +555,71 @@ func buildMessagePropsFromHuddle(post *SlackPost) model.StringInterface {
 	}
 
 	if post.Room != nil {
-		props.EndAt = int64(post.Room.DateEnd) * 1000
-		props.StartAt = int64(post.Room.DateStart) * 1000
+		props.EndAt = post.Room.DateEnd * 1000
+		props.StartAt = post.Room.DateStart * 1000
 	}
 
-	propsMap := make(map[string]interface{})
+	propsMap := make(map[string]any)
 	bytes, _ := json.Marshal(props)
 	_ = json.Unmarshal(bytes, &propsMap)
 
 	return propsMap
+}
+
+func (t *Transformer) getReactionsFromPost(post SlackPost) []*IntermediateReaction {
+	reactions := []*IntermediateReaction{}
+	for _, reaction := range post.Reactions {
+		for _, reactionUser := range reaction.Users {
+			reactionAuthor := t.Intermediate.UsersById[reactionUser]
+			if reactionAuthor == nil {
+				t.CreateIntermediateUser(reactionUser)
+				reactionAuthor = t.Intermediate.UsersById[reactionUser]
+			}
+			var cleanedReactionName = reaction.Name
+			if strings.Contains(reaction.Name, "::") {
+				cleanedReactionName = strings.Split(reaction.Name, "::")[0]
+			}
+			newReaction := &IntermediateReaction{
+				User:      reactionAuthor.Username,
+				EmojiName: cleanedReactionName,
+				CreateAt:  SlackConvertTimeStamp(post.TimeStamp) + 1,
+				// we don't have the real createAt available, so we pretend that reactions were created shortly after the post,
+				// to avoid validation errors at import time:
+				// BulkImport: Reaction CreateAt property must be greater than the parent post CreateAt.
+			}
+			reactions = append(reactions, newReaction)
+		}
+	}
+	return reactions
+}
+
+// splitPostIntoThread splits a post's message if it exceeds the maximum rune limit.
+// The first chunk becomes/remains the main post, and additional chunks are added as replies.
+// Reactions and attachments are kept only on the first chunk.
+func splitPostIntoThread(post *IntermediatePost) {
+	if utf8.RuneCountInString(post.Message) <= model.PostMessageMaxRunesV2 {
+		// No splitting needed
+		return
+	}
+
+	chunks := splitTextIntoChunks(post.Message, model.PostMessageMaxRunesV2)
+
+	// First chunk stays as the main message
+	post.Message = chunks[0]
+
+	// Create replies for the remaining chunks
+	for i, chunk := range chunks[1:] {
+		reply := &IntermediatePost{
+			User:           post.User,
+			Channel:        post.Channel,
+			Message:        chunk,
+			CreateAt:       post.CreateAt + int64(i+1), // Increment timestamp to maintain order
+			IsDirect:       post.IsDirect,
+			ChannelMembers: post.ChannelMembers,
+			// No reactions, attachments, or props for continuation chunks
+		}
+		post.Replies = append(post.Replies, reply)
+	}
 }
 
 func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir string, skipAttachments, discardInvalidProps, allowDownload bool) error {
@@ -578,10 +657,11 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 					author = t.Intermediate.UsersById[post.User]
 				}
 				newPost := &IntermediatePost{
-					User:     author.Username,
-					Channel:  channel.Name,
-					Message:  post.Text,
-					CreateAt: SlackConvertTimeStamp(post.TimeStamp),
+					User:      author.Username,
+					Channel:   channel.Name,
+					Message:   post.Text,
+					Reactions: t.getReactionsFromPost(post),
+					CreateAt:  SlackConvertTimeStamp(post.TimeStamp),
 				}
 				t.AddFilesToPost(&post, skipAttachments, slackExport, attachmentsDir, newPost, allowDownload)
 
@@ -617,10 +697,11 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 					author = t.Intermediate.UsersById[post.User]
 				}
 				newPost := &IntermediatePost{
-					User:     author.Username,
-					Channel:  channel.Name,
-					Message:  post.Comment.Comment,
-					CreateAt: SlackConvertTimeStamp(post.TimeStamp),
+					User:      author.Username,
+					Channel:   channel.Name,
+					Message:   post.Comment.Comment,
+					Reactions: t.getReactionsFromPost(post),
+					CreateAt:  SlackConvertTimeStamp(post.TimeStamp),
 				}
 
 				AddPostToThreads(post, newPost, threads, channel, timestamps)
@@ -642,10 +723,11 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 				}
 
 				newPost := &IntermediatePost{
-					User:     author.Username,
-					Channel:  channel.Name,
-					Message:  post.Text,
-					CreateAt: SlackConvertTimeStamp(post.TimeStamp),
+					User:      author.Username,
+					Channel:   channel.Name,
+					Message:   post.Text,
+					Reactions: t.getReactionsFromPost(post),
+					CreateAt:  SlackConvertTimeStamp(post.TimeStamp),
 				}
 
 				t.AddFilesToPost(&post, skipAttachments, slackExport, attachmentsDir, newPost, allowDownload)
@@ -718,7 +800,7 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 				// all huddles are owned by USLACKBOT, but the room has a CreatedBy prop.
 				// this lets us get the actual user who created the huddle and fit with how Mattermost works.
 				poster := post.User
-				if len(post.Room.CreatedBy) > 0 {
+				if post.Room != nil && len(post.Room.CreatedBy) > 0 {
 					poster = post.Room.CreatedBy
 				}
 
@@ -731,12 +813,13 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 				huddleProps := buildMessagePropsFromHuddle(&post)
 
 				newPost := &IntermediatePost{
-					User:     author.Username,
-					Channel:  channel.Name,
-					Message:  post.Text,
-					CreateAt: SlackConvertTimeStamp(post.TimeStamp),
-					Props:    huddleProps,
-					Type:     "custom_calls",
+					User:      author.Username,
+					Channel:   channel.Name,
+					Message:   post.Text,
+					Reactions: t.getReactionsFromPost(post),
+					CreateAt:  SlackConvertTimeStamp(post.TimeStamp),
+					Props:     huddleProps,
+					Type:      "custom_calls",
 				}
 
 				AddPostToThreads(post, newPost, threads, channel, timestamps)
@@ -747,6 +830,63 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 
 		channelPosts := []*IntermediatePost{}
 		for _, post := range threads {
+			// Split the post if it exceeds the maximum rune limit
+			splitPostIntoThread(post)
+
+			// Also split any existing replies that exceed the limit
+			// We need to iterate carefully because we'll be modifying the replies slice
+			originalReplies := post.Replies
+			post.Replies = []*IntermediatePost{}
+
+			// Build a set of used timestamps from existing replies to avoid duplicates
+			usedTimestamps := make(map[int64]bool)
+			for _, reply := range originalReplies {
+				usedTimestamps[reply.CreateAt] = true
+			}
+
+			for _, reply := range originalReplies {
+				if utf8.RuneCountInString(reply.Message) <= model.PostMessageMaxRunesV2 {
+					// Reply doesn't need splitting, keep as-is
+					post.Replies = append(post.Replies, reply)
+					continue
+				}
+
+				// Reply needs splitting - add all chunks as siblings
+				chunks := splitTextIntoChunks(reply.Message, model.PostMessageMaxRunesV2)
+
+				// First chunk: update the original reply
+				reply.Message = chunks[0]
+				post.Replies = append(post.Replies, reply)
+
+				// Remaining chunks: create new sibling replies
+				for i, chunk := range chunks[1:] {
+					// Find a unique timestamp by incrementing until we find one not in use
+					timestamp := reply.CreateAt + int64(i+1)
+					for usedTimestamps[timestamp] {
+						timestamp++
+					}
+					usedTimestamps[timestamp] = true
+
+					continuationReply := &IntermediatePost{
+						User:           reply.User,
+						Channel:        reply.Channel,
+						Message:        chunk,
+						CreateAt:       timestamp,
+						IsDirect:       reply.IsDirect,
+						ChannelMembers: reply.ChannelMembers,
+						// No reactions, attachments, or props for continuation chunks
+					}
+					post.Replies = append(post.Replies, continuationReply)
+				}
+			}
+
+			// Sort replies by CreateAt to ensure proper ordering
+			// This is important because split chunks may have timestamps that need to be
+			// interleaved with other replies
+			sort.Slice(post.Replies, func(i, j int) bool {
+				return post.Replies[i].CreateAt < post.Replies[j].CreateAt
+			})
+
 			channelPosts = append(channelPosts, post)
 		}
 		resultPosts = append(resultPosts, channelPosts...)

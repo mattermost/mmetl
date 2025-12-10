@@ -7,6 +7,7 @@ import (
 	"path"
 	"runtime"
 	"strconv"
+	"strings"
 
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
@@ -71,11 +72,14 @@ func transformSlackCmdF(cmd *cobra.Command, args []string) error {
 	discardInvalidProps, _ := cmd.Flags().GetBool("discard-invalid-props")
 	debug, _ := cmd.Flags().GetBool("debug")
 
+	// convert team name to lowercase since Mattermost expects all team names to be lowercase
+	team = strings.ToLower(team)
+
 	// output file
 	if fileInfo, err := os.Stat(outputFilePath); err != nil && !os.IsNotExist(err) {
 		return err
 	} else if err == nil && fileInfo.IsDir() {
-		return fmt.Errorf("Output file \"%s\" is a directory", outputFilePath)
+		return fmt.Errorf("output file \"%s\" is a directory", outputFilePath)
 	}
 
 	// attachments dir
@@ -89,7 +93,7 @@ func transformSlackCmdF(cmd *cobra.Command, args []string) error {
 		} else if err != nil {
 			return err
 		} else if !fileInfo.IsDir() {
-			return fmt.Errorf("File \"%s\" is not a directory", attachmentsDir)
+			return fmt.Errorf("file \"%s\" is not a directory", attachmentsDir)
 		}
 	}
 

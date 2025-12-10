@@ -90,6 +90,7 @@ func TestYourCommandFunction(t *testing.T) {
 		channelsData   string
 		usersData      string
 		postsData      string
+		team           string
 		expectedOutput string
 		expectedError  string
 	}{
@@ -97,16 +98,33 @@ func TestYourCommandFunction(t *testing.T) {
 			channelsData: defaultChannelsData,
 			usersData:    defaultUsersData,
 			postsData:    defaultPostsData,
+			team:         "myteam",
 			expectedOutput: `{"type":"version","version":1}
 {"type":"channel","channel":{"team":"myteam","name":"general","display_name":"general","type":"O","header":"Work matters","purpose":"Company wide announcements and work-based matters"}}
 {"type":"channel","channel":{"team":"myteam","name":"random","display_name":"random","type":"O","header":"Anything goes!","purpose":"Non-work related chit-chat"}}
-{"type":"user","user":{"username":"JohnDoe","email":"john.doe@example.com","auth_service":null,"nickname":"","first_name":"John","last_name":"Doe","position":"Software Engineer","roles":"system_user","locale":null,"teams":[{"name":"myteam","roles":"team_user","channels":[{"name":"general","roles":"channel_user"},{"name":"random","roles":"channel_user"}]}]}}
 {"type":"user","user":{"username":"JaneSmith","email":"jane.smith@example.com","auth_service":null,"nickname":"","first_name":"Jane","last_name":"Smith","position":"Product Manager","roles":"system_user","locale":null,"teams":[{"name":"myteam","roles":"team_user","channels":[{"name":"general","roles":"channel_user"},{"name":"random","roles":"channel_user"}]}]}}
+{"type":"user","user":{"username":"JohnDoe","email":"john.doe@example.com","auth_service":null,"nickname":"","first_name":"John","last_name":"Doe","position":"Software Engineer","roles":"system_user","locale":null,"teams":[{"name":"myteam","roles":"team_user","channels":[{"name":"general","roles":"channel_user"},{"name":"random","roles":"channel_user"}]}]}}
+{"type":"user","user":{"username":"user3","email":"user3@local","auth_service":null,"nickname":"","first_name":"Deleted","last_name":"User","position":"","roles":"system_user","locale":null,"teams":[{"name":"myteam","roles":"team_user","channels":[{"name":"general","roles":"channel_user"},{"name":"random","roles":"channel_user"}]}]}}
+{"type":"user","user":{"username":"user4","email":"user4@local","auth_service":null,"nickname":"","first_name":"Deleted","last_name":"User","position":"","roles":"system_user","locale":null,"teams":[{"name":"myteam","roles":"team_user","channels":[{"name":"random","roles":"channel_user"}]}]}}
+`,
+		},
+		"team name with uppercase is converted to lowercase": {
+			channelsData: defaultChannelsData,
+			usersData:    defaultUsersData,
+			postsData:    defaultPostsData,
+			team:         "MyTeam",
+			expectedOutput: `{"type":"version","version":1}
+{"type":"channel","channel":{"team":"myteam","name":"general","display_name":"general","type":"O","header":"Work matters","purpose":"Company wide announcements and work-based matters"}}
+{"type":"channel","channel":{"team":"myteam","name":"random","display_name":"random","type":"O","header":"Anything goes!","purpose":"Non-work related chit-chat"}}
+{"type":"user","user":{"username":"JaneSmith","email":"jane.smith@example.com","auth_service":null,"nickname":"","first_name":"Jane","last_name":"Smith","position":"Product Manager","roles":"system_user","locale":null,"teams":[{"name":"myteam","roles":"team_user","channels":[{"name":"general","roles":"channel_user"},{"name":"random","roles":"channel_user"}]}]}}
+{"type":"user","user":{"username":"JohnDoe","email":"john.doe@example.com","auth_service":null,"nickname":"","first_name":"John","last_name":"Doe","position":"Software Engineer","roles":"system_user","locale":null,"teams":[{"name":"myteam","roles":"team_user","channels":[{"name":"general","roles":"channel_user"},{"name":"random","roles":"channel_user"}]}]}}
+{"type":"user","user":{"username":"user3","email":"user3@local","auth_service":null,"nickname":"","first_name":"Deleted","last_name":"User","position":"","roles":"system_user","locale":null,"teams":[{"name":"myteam","roles":"team_user","channels":[{"name":"general","roles":"channel_user"},{"name":"random","roles":"channel_user"}]}]}}
+{"type":"user","user":{"username":"user4","email":"user4@local","auth_service":null,"nickname":"","first_name":"Deleted","last_name":"User","position":"","roles":"system_user","locale":null,"teams":[{"name":"myteam","roles":"team_user","channels":[{"name":"random","roles":"channel_user"}]}]}}
 `,
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			team := "myteam"
+			team := tc.team
 			inputFilePath := "test_input.zip"
 			outputFilePath := "test_output.txt"
 			defer func() {

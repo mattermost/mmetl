@@ -8,7 +8,7 @@ set of providers into a Mattermost compatible export file.
 To install the project in your `$GOPATH`, just run:
 
 ```sh
-go get -u github.com/mattermost/mmetl
+go install github.com/mattermost/mmetl@latest
 ```
 
 ## Usage
