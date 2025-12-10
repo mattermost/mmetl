@@ -3,6 +3,7 @@ build/
 mmetl
 *.log
 mmetl.md5.txt
+coverage.out
 
 # Data used during development
 slackData

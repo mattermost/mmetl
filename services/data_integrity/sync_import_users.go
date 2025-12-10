@@ -15,6 +15,12 @@ import (
 	"github.com/mattermost/mattermost/server/v8/channels/app/imports"
 )
 
+// MattermostClient is an interface for the Mattermost API client methods we need
+type MattermostClient interface {
+	GetUserByUsername(ctx context.Context, username, etag string) (*model.User, *model.Response, error)
+	GetUserByEmail(ctx context.Context, email, etag string) (*model.User, *model.Response, error)
+}
+
 type SyncImportUsersFlags struct {
 	DryRun     bool
 	OutputFile string
@@ -24,7 +30,7 @@ type SyncImportUsersFlags struct {
 const bufferSize = 1024 * 1024
 const scannerSize = 5 * 1024 * 1024
 
-func SyncImportUsers(reader io.Reader, flags SyncImportUsersFlags, client *model.Client4, logger *logrus.Logger) error {
+func SyncImportUsers(reader io.Reader, flags SyncImportUsersFlags, client MattermostClient, logger *logrus.Logger) error {
 	scanner := bufio.NewScanner(reader)
 	buf := make([]byte, 0, bufferSize)
 	scanner.Buffer(buf, scannerSize)
@@ -140,17 +146,23 @@ func removeDuplicateChannelMemberships(user *imports.UserImportData, flags SyncI
 
 	for _, c := range *teams[0].Channels {
 		if names[*c.Name] {
-			logger.Warnf("Removing duplicate channel membership: user %s channel %s", *user.Username, *c.Name)
+			if flags.DryRun {
+				logger.Warnf("Would remove duplicate channel membership: user %s channel %s", *user.Username, *c.Name)
+			} else {
+				logger.Warnf("Removing duplicate channel membership: user %s channel %s", *user.Username, *c.Name)
+			}
 		} else {
 			names[*c.Name] = true
 			chansOut = append(chansOut, c)
 		}
 	}
 
-	teams[0].Channels = &chansOut
+	if !flags.DryRun {
+		teams[0].Channels = &chansOut
+	}
 }
 
-func mergeImportFileUser(ctx context.Context, user *imports.UserImportData, flags SyncImportUsersFlags, client *model.Client4, logger *logrus.Logger) (usernameChanged, emailChanged bool, err error) {
+func mergeImportFileUser(ctx context.Context, user *imports.UserImportData, flags SyncImportUsersFlags, client MattermostClient, logger *logrus.Logger) (usernameChanged, emailChanged bool, err error) {
 	usernameExists := false
 	emailExists := false
 
