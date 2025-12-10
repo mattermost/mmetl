@@ -79,3 +79,15 @@ verify-gomod:
 
 tidy:
 	go mod tidy
+
+docs:
+	@echo Generating CLI documentation
+	$(GO) run ./internal/tools/docgen -out ./docs/cli -format markdown -frontmatter
+
+docs-check:
+	@echo Checking if docs are up-to-date
+	@$(GO) run ./internal/tools/docgen -out ./docs/cli -format markdown -frontmatter
+	@if [ -n "$$(git status --porcelain docs/cli)" ]; then \
+		echo "Documentation is out of date. Run 'make docs' to update."; \
+		exit 1; \
+	fi
