@@ -56,6 +56,8 @@ func TestSlackExportBuilder(t *testing.T) {
 		outputPath := filepath.Join(tempDir, "export.zip")
 
 		err := NewSlackExportBuilder().
+			AddUser(SlackUser{Id: "U001", Username: "user1"}).
+			AddUser(SlackUser{Id: "U002", Username: "user2"}).
 			AddChannel(SlackChannel{
 				Id:      "C001",
 				Name:    "general",
@@ -168,7 +170,9 @@ func TestSlackExportBuilder(t *testing.T) {
 		outputPath := filepath.Join(tempDir, "export.zip")
 
 		err := NewSlackExportBuilder().
-			AddChannel(SlackChannel{Id: "C001", Name: "general"}).
+			AddUser(SlackUser{Id: "U001", Username: "user1"}).
+			AddUser(SlackUser{Id: "U002", Username: "user2"}).
+			AddChannel(SlackChannel{Id: "C001", Name: "general", Members: []string{"U001", "U002"}}).
 			AddPost("general", SlackPost{
 				User:      "U001",
 				Text:      "Hello World!",
@@ -217,6 +221,7 @@ func TestSlackExportBuilder(t *testing.T) {
 		outputPath := filepath.Join(tempDir, "export.zip")
 
 		err := NewSlackExportBuilder().
+			AddUser(SlackUser{Id: "U001", Username: "user1"}).
 			AddPrivateChannel(SlackChannel{
 				Id:      "G001",
 				Name:    "private-team",
@@ -253,6 +258,9 @@ func TestSlackExportBuilder(t *testing.T) {
 		outputPath := filepath.Join(tempDir, "export.zip")
 
 		err := NewSlackExportBuilder().
+			AddUser(SlackUser{Id: "U001", Username: "user1"}).
+			AddUser(SlackUser{Id: "U002", Username: "user2"}).
+			AddUser(SlackUser{Id: "U003", Username: "user3"}).
 			AddGroupChannel(SlackChannel{
 				Id:      "G002",
 				Name:    "mpdm-user1--user2--user3-1",
@@ -280,8 +288,11 @@ func TestSlackExportBuilder(t *testing.T) {
 		outputPath := filepath.Join(tempDir, "export.zip")
 
 		err := NewSlackExportBuilder().
+			AddUser(SlackUser{Id: "U001", Username: "user1"}).
+			AddUser(SlackUser{Id: "U002", Username: "user2"}).
 			AddDirectChannel(SlackChannel{
 				Id:      "D001",
+				Name:    "dm-u001-u002",
 				Members: []string{"U001", "U002"},
 			}).
 			Build(outputPath)
@@ -306,7 +317,9 @@ func TestSlackExportBuilder(t *testing.T) {
 		outputPath := filepath.Join(tempDir, "export.zip")
 
 		err := NewSlackExportBuilder().
-			AddChannel(SlackChannel{Id: "C001", Name: "general"}).
+			AddUser(SlackUser{Id: "U001", Username: "user1"}).
+			AddUser(SlackUser{Id: "U002", Username: "user2"}).
+			AddChannel(SlackChannel{Id: "C001", Name: "general", Members: []string{"U001", "U002"}}).
 			AddPost("general", SlackPost{
 				User:      "U001",
 				Text:      "Thread root",
@@ -542,6 +555,399 @@ func TestSlackExportBuilderCanBeParsedByTransformer(t *testing.T) {
 	})
 }
 
+func TestSlackExportBuilderValidation(t *testing.T) {
+	t.Run("fails when post references non-existent channel", func(t *testing.T) {
+		tempDir := t.TempDir()
+		outputPath := filepath.Join(tempDir, "export.zip")
+
+		err := NewSlackExportBuilder().
+			AddUser(SlackUser{Id: "U001", Username: "user1"}).
+			AddChannel(SlackChannel{Id: "C001", Name: "general", Members: []string{"U001"}}).
+			AddPost("non-existent-channel", SlackPost{
+				User: "U001",
+				Text: "Hello",
+				Type: "message",
+			}).
+			Build(outputPath)
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "non-existent channel")
+		assert.Contains(t, err.Error(), "non-existent-channel")
+	})
+
+	t.Run("fails when post references non-existent user", func(t *testing.T) {
+		tempDir := t.TempDir()
+		outputPath := filepath.Join(tempDir, "export.zip")
+
+		err := NewSlackExportBuilder().
+			AddUser(SlackUser{Id: "U001", Username: "user1"}).
+			AddChannel(SlackChannel{Id: "C001", Name: "general", Members: []string{"U001"}}).
+			AddPost("general", SlackPost{
+				User: "U999", // Non-existent user
+				Text: "Hello",
+				Type: "message",
+			}).
+			Build(outputPath)
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "non-existent user")
+		assert.Contains(t, err.Error(), "U999")
+	})
+
+	t.Run("fails when channel member references non-existent user", func(t *testing.T) {
+		tempDir := t.TempDir()
+		outputPath := filepath.Join(tempDir, "export.zip")
+
+		err := NewSlackExportBuilder().
+			AddUser(SlackUser{Id: "U001", Username: "user1"}).
+			AddChannel(SlackChannel{
+				Id:      "C001",
+				Name:    "general",
+				Members: []string{"U001", "U999"}, // U999 doesn't exist
+			}).
+			Build(outputPath)
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "non-existent member user")
+		assert.Contains(t, err.Error(), "U999")
+	})
+
+	t.Run("fails when channel creator references non-existent user", func(t *testing.T) {
+		tempDir := t.TempDir()
+		outputPath := filepath.Join(tempDir, "export.zip")
+
+		err := NewSlackExportBuilder().
+			AddUser(SlackUser{Id: "U001", Username: "user1"}).
+			AddChannel(SlackChannel{
+				Id:      "C001",
+				Name:    "general",
+				Creator: "U999", // Non-existent creator
+				Members: []string{"U001"},
+			}).
+			Build(outputPath)
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "non-existent creator user")
+		assert.Contains(t, err.Error(), "U999")
+	})
+
+	t.Run("validates private channels", func(t *testing.T) {
+		tempDir := t.TempDir()
+		outputPath := filepath.Join(tempDir, "export.zip")
+
+		err := NewSlackExportBuilder().
+			AddUser(SlackUser{Id: "U001", Username: "user1"}).
+			AddPrivateChannel(SlackChannel{
+				Id:      "G001",
+				Name:    "private",
+				Members: []string{"U001", "U999"}, // U999 doesn't exist
+			}).
+			Build(outputPath)
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "non-existent member user")
+	})
+
+	t.Run("validates group channels", func(t *testing.T) {
+		tempDir := t.TempDir()
+		outputPath := filepath.Join(tempDir, "export.zip")
+
+		err := NewSlackExportBuilder().
+			AddUser(SlackUser{Id: "U001", Username: "user1"}).
+			AddGroupChannel(SlackChannel{
+				Id:      "G002",
+				Name:    "group-dm",
+				Members: []string{"U001", "U999"},
+			}).
+			Build(outputPath)
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "non-existent member user")
+	})
+
+	t.Run("validates direct channels", func(t *testing.T) {
+		tempDir := t.TempDir()
+		outputPath := filepath.Join(tempDir, "export.zip")
+
+		err := NewSlackExportBuilder().
+			AddUser(SlackUser{Id: "U001", Username: "user1"}).
+			AddDirectChannel(SlackChannel{
+				Id:      "D001",
+				Name:    "dm",
+				Members: []string{"U001", "U999"},
+			}).
+			Build(outputPath)
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "non-existent member user")
+	})
+
+	t.Run("allows posts to private channels", func(t *testing.T) {
+		tempDir := t.TempDir()
+		outputPath := filepath.Join(tempDir, "export.zip")
+
+		err := NewSlackExportBuilder().
+			AddUser(SlackUser{Id: "U001", Username: "user1"}).
+			AddPrivateChannel(SlackChannel{
+				Id:      "G001",
+				Name:    "private-team",
+				Members: []string{"U001"},
+			}).
+			AddPost("private-team", SlackPost{
+				User: "U001",
+				Text: "Secret message",
+				Type: "message",
+			}).
+			Build(outputPath)
+
+		require.NoError(t, err)
+	})
+
+	t.Run("allows bot messages without User field", func(t *testing.T) {
+		tempDir := t.TempDir()
+		outputPath := filepath.Join(tempDir, "export.zip")
+
+		err := NewSlackExportBuilder().
+			AddUser(SlackUser{Id: "U001", Username: "user1"}).
+			AddChannel(SlackChannel{Id: "C001", Name: "general", Members: []string{"U001"}}).
+			AddPost("general", SlackPost{
+				BotId:       "B001",
+				BotUsername: "webhook-bot",
+				Text:        "Automated message",
+				Type:        "message",
+				SubType:     "bot_message",
+			}).
+			Build(outputPath)
+
+		require.NoError(t, err)
+	})
+
+	t.Run("allows empty creator field", func(t *testing.T) {
+		tempDir := t.TempDir()
+		outputPath := filepath.Join(tempDir, "export.zip")
+
+		err := NewSlackExportBuilder().
+			AddUser(SlackUser{Id: "U001", Username: "user1"}).
+			AddChannel(SlackChannel{
+				Id:      "C001",
+				Name:    "general",
+				Creator: "", // Empty creator is allowed
+				Members: []string{"U001"},
+			}).
+			Build(outputPath)
+
+		require.NoError(t, err)
+	})
+
+	t.Run("valid export passes validation", func(t *testing.T) {
+		tempDir := t.TempDir()
+		outputPath := filepath.Join(tempDir, "export.zip")
+
+		err := NewSlackExportBuilder().
+			AddUser(SlackUser{Id: "U001", Username: "user1"}).
+			AddUser(SlackUser{Id: "U002", Username: "user2"}).
+			AddChannel(SlackChannel{
+				Id:      "C001",
+				Name:    "general",
+				Creator: "U001",
+				Members: []string{"U001", "U002"},
+			}).
+			AddPost("general", SlackPost{
+				User: "U001",
+				Text: "Hello",
+				Type: "message",
+			}).
+			AddPost("general", SlackPost{
+				User: "U002",
+				Text: "Hi back!",
+				Type: "message",
+			}).
+			Build(outputPath)
+
+		require.NoError(t, err)
+
+		// Verify file was created
+		_, err = os.Stat(outputPath)
+		require.NoError(t, err)
+	})
+}
+
+func TestSlackExportBuilderSkipValidation(t *testing.T) {
+	t.Run("SkipValidation allows building inconsistent exports", func(t *testing.T) {
+		tempDir := t.TempDir()
+		outputPath := filepath.Join(tempDir, "export.zip")
+
+		// This would normally fail validation - post references non-existent user
+		err := NewSlackExportBuilder().
+			AddChannel(SlackChannel{Id: "C001", Name: "general"}).
+			AddPost("general", SlackPost{
+				User: "U999", // Non-existent user
+				Text: "Hello from unknown user",
+				Type: "message",
+			}).
+			SkipValidation().
+			Build(outputPath)
+
+		require.NoError(t, err, "should build successfully with SkipValidation")
+
+		// Verify file was created
+		_, err = os.Stat(outputPath)
+		require.NoError(t, err)
+	})
+}
+
+func TestTransformerHandlesInconsistentExports(t *testing.T) {
+	logger := logrus.New()
+	logger.SetLevel(logrus.WarnLevel)
+
+	t.Run("creates placeholder user for posts from missing users", func(t *testing.T) {
+		tempDir := t.TempDir()
+		outputPath := filepath.Join(tempDir, "export.zip")
+
+		// Build an export with a post from a non-existent user
+		err := NewSlackExportBuilder().
+			AddUser(SlackUser{Id: "U001", Username: "existing.user", Profile: SlackProfile{Email: "existing@test.com"}}).
+			AddChannel(SlackChannel{Id: "C001", Name: "general", Members: []string{"U001"}}).
+			AddPost("general", SlackPost{
+				User:      "U_MISSING", // This user doesn't exist in users.json
+				Text:      "Post from deleted user",
+				TimeStamp: "1704067200.000100",
+				Type:      "message",
+			}).
+			SkipValidation().
+			Build(outputPath)
+		require.NoError(t, err)
+
+		// Parse and transform
+		file, err := os.Open(outputPath)
+		require.NoError(t, err)
+		defer file.Close()
+
+		info, err := file.Stat()
+		require.NoError(t, err)
+
+		reader, err := zip.NewReader(file, info.Size())
+		require.NoError(t, err)
+
+		transformer := NewTransformer("testteam", logger)
+
+		export, err := transformer.ParseSlackExportFile(reader, true)
+		require.NoError(t, err)
+
+		// Transform the export
+		err = transformer.Transform(export, "", true, false, false, false, "")
+		require.NoError(t, err)
+
+		// Verify the missing user was created as a placeholder
+		missingUser := transformer.Intermediate.UsersById["U_MISSING"]
+		require.NotNil(t, missingUser, "should create placeholder for missing user")
+		assert.Equal(t, "u_missing", missingUser.Username, "placeholder username should be lowercase ID")
+		assert.Equal(t, "Deleted", missingUser.FirstName)
+		assert.Equal(t, "User", missingUser.LastName)
+		assert.Equal(t, "U_MISSING@local", missingUser.Email)
+	})
+
+	t.Run("creates placeholder user for channel members that dont exist", func(t *testing.T) {
+		tempDir := t.TempDir()
+		outputPath := filepath.Join(tempDir, "export.zip")
+
+		// Build an export with a channel member that doesn't exist
+		err := NewSlackExportBuilder().
+			AddUser(SlackUser{Id: "U001", Username: "existing.user", Profile: SlackProfile{Email: "existing@test.com"}}).
+			AddChannel(SlackChannel{
+				Id:      "C001",
+				Name:    "general",
+				Members: []string{"U001", "U_DELETED_MEMBER"}, // U_DELETED_MEMBER doesn't exist
+			}).
+			SkipValidation().
+			Build(outputPath)
+		require.NoError(t, err)
+
+		// Parse and transform
+		file, err := os.Open(outputPath)
+		require.NoError(t, err)
+		defer file.Close()
+
+		info, err := file.Stat()
+		require.NoError(t, err)
+
+		reader, err := zip.NewReader(file, info.Size())
+		require.NoError(t, err)
+
+		transformer := NewTransformer("testteam", logger)
+
+		export, err := transformer.ParseSlackExportFile(reader, true)
+		require.NoError(t, err)
+
+		// Transform the export
+		err = transformer.Transform(export, "", true, false, false, false, "")
+		require.NoError(t, err)
+
+		// Verify the missing member was created as a placeholder
+		missingMember := transformer.Intermediate.UsersById["U_DELETED_MEMBER"]
+		require.NotNil(t, missingMember, "should create placeholder for missing member")
+		assert.Equal(t, "u_deleted_member", missingMember.Username)
+		assert.Equal(t, "Deleted", missingMember.FirstName)
+	})
+
+	t.Run("handles posts and reactions from multiple missing users", func(t *testing.T) {
+		tempDir := t.TempDir()
+		outputPath := filepath.Join(tempDir, "export.zip")
+
+		// Build an export with multiple missing users
+		err := NewSlackExportBuilder().
+			AddUser(SlackUser{Id: "U001", Username: "active.user", Profile: SlackProfile{Email: "active@test.com"}}).
+			AddChannel(SlackChannel{Id: "C001", Name: "general", Members: []string{"U001"}}).
+			AddPost("general", SlackPost{
+				User:      "U001",
+				Text:      "Hello",
+				TimeStamp: "1704067200.000100",
+				Type:      "message",
+			}).
+			AddPost("general", SlackPost{
+				User:      "U_MISSING_1",
+				Text:      "Post from first missing user",
+				TimeStamp: "1704067260.000200",
+				Type:      "message",
+			}).
+			AddPost("general", SlackPost{
+				User:      "U_MISSING_2",
+				Text:      "Post from second missing user",
+				TimeStamp: "1704067320.000300",
+				Type:      "message",
+			}).
+			SkipValidation().
+			Build(outputPath)
+		require.NoError(t, err)
+
+		// Parse and transform
+		file, err := os.Open(outputPath)
+		require.NoError(t, err)
+		defer file.Close()
+
+		info, err := file.Stat()
+		require.NoError(t, err)
+
+		reader, err := zip.NewReader(file, info.Size())
+		require.NoError(t, err)
+
+		transformer := NewTransformer("testteam", logger)
+
+		export, err := transformer.ParseSlackExportFile(reader, true)
+		require.NoError(t, err)
+
+		err = transformer.Transform(export, "", true, false, false, false, "")
+		require.NoError(t, err)
+
+		// Verify all missing users were created
+		assert.NotNil(t, transformer.Intermediate.UsersById["U_MISSING_1"])
+		assert.NotNil(t, transformer.Intermediate.UsersById["U_MISSING_2"])
+
+		// Verify posts were still created
+		assert.Len(t, transformer.Intermediate.Posts, 3)
+	})
+}
+
 func TestSlackExportBuilderEdgeCases(t *testing.T) {
 	t.Run("empty export creates valid zip", func(t *testing.T) {
 		tempDir := t.TempDir()
@@ -575,7 +981,9 @@ func TestSlackExportBuilderEdgeCases(t *testing.T) {
 		}
 
 		err := NewSlackExportBuilder().
-			AddChannel(SlackChannel{Id: "C001", Name: "general"}).
+			AddUser(SlackUser{Id: "U001", Username: "user1"}).
+			AddUser(SlackUser{Id: "U002", Username: "user2"}).
+			AddChannel(SlackChannel{Id: "C001", Name: "general", Members: []string{"U001", "U002"}}).
 			AddPosts("general", posts).
 			Build(outputPath)
 		require.NoError(t, err)
@@ -604,9 +1012,9 @@ func TestSlackExportBuilderEdgeCases(t *testing.T) {
 		builder := NewSlackExportBuilder().
 			AddUser(SlackUser{Id: "U001", Username: "user1"}).
 			AddUser(SlackUser{Id: "U002", Username: "user2"}).
-			AddChannel(SlackChannel{Id: "C001", Name: "ch1"}).
-			AddChannel(SlackChannel{Id: "C002", Name: "ch2"}).
-			AddPrivateChannel(SlackChannel{Id: "G001", Name: "private1"}).
+			AddChannel(SlackChannel{Id: "C001", Name: "ch1", Members: []string{"U001", "U002"}}).
+			AddChannel(SlackChannel{Id: "C002", Name: "ch2", Members: []string{"U001"}}).
+			AddPrivateChannel(SlackChannel{Id: "G001", Name: "private1", Members: []string{"U001"}}).
 			AddPost("ch1", SlackPost{User: "U001", Text: "msg1", Type: "message"}).
 			AddPost("ch1", SlackPost{User: "U002", Text: "msg2", Type: "message"})
 

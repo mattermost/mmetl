@@ -17,6 +17,7 @@ type SlackExportBuilder struct {
 	directChannels  []SlackChannel
 	users           []SlackUser
 	posts           map[string][]SlackPost // channel name -> posts
+	skipValidation  bool                   // skip consistency validation (for testing edge cases)
 }
 
 // NewSlackExportBuilder creates a new builder for Slack exports
@@ -78,8 +79,81 @@ func (b *SlackExportBuilder) AddPosts(channelName string, posts []SlackPost) *Sl
 	return b
 }
 
-// Build creates a ZIP file at the specified path containing the Slack export
+// SkipValidation disables consistency validation during Build().
+// Use this when testing how mmetl handles inconsistent Slack exports
+// (e.g., posts from deleted users, channels with missing members).
+func (b *SlackExportBuilder) SkipValidation() *SlackExportBuilder {
+	b.skipValidation = true
+	return b
+}
+
+// allChannels returns all channels from all types (public, private, group, direct)
+func (b *SlackExportBuilder) allChannels() []SlackChannel {
+	all := make([]SlackChannel, 0, len(b.channels)+len(b.privateChannels)+len(b.groupChannels)+len(b.directChannels))
+	all = append(all, b.channels...)
+	all = append(all, b.privateChannels...)
+	all = append(all, b.groupChannels...)
+	all = append(all, b.directChannels...)
+	return all
+}
+
+// validate checks that the export data is internally consistent
+func (b *SlackExportBuilder) validate() error {
+	// Build lookup maps for quick validation
+	userIDs := make(map[string]bool)
+	for _, user := range b.users {
+		userIDs[user.Id] = true
+	}
+
+	channelNames := make(map[string]bool)
+	for _, channel := range b.allChannels() {
+		channelNames[channel.Name] = true
+	}
+
+	// Validate channel creators and members reference existing users
+	for _, channel := range b.allChannels() {
+		if channel.Creator != "" && !userIDs[channel.Creator] {
+			return fmt.Errorf("channel %q references non-existent creator user %q", channel.Name, channel.Creator)
+		}
+		for _, memberID := range channel.Members {
+			if !userIDs[memberID] {
+				return fmt.Errorf("channel %q references non-existent member user %q", channel.Name, memberID)
+			}
+		}
+	}
+
+	// Validate posts reference existing channels and users
+	for channelName, posts := range b.posts {
+		if !channelNames[channelName] {
+			return fmt.Errorf("posts exist for non-existent channel %q", channelName)
+		}
+		for i, post := range posts {
+			// Only validate User field if it's set (bot messages might use BotId instead)
+			if post.User != "" && !userIDs[post.User] {
+				return fmt.Errorf("post %d in channel %q references non-existent user %q", i, channelName, post.User)
+			}
+		}
+	}
+
+	return nil
+}
+
+// Build creates a ZIP file at the specified path containing the Slack export.
+// By default, it validates data consistency before building, returning an error if:
+// - A post references a channel that doesn't exist
+// - A post references a user that doesn't exist
+// - A channel member references a user that doesn't exist
+// - A channel creator references a user that doesn't exist
+//
+// Use SkipValidation() to disable validation when testing edge case handling.
 func (b *SlackExportBuilder) Build(outputPath string) error {
+	// Validate data consistency before building (unless explicitly skipped)
+	if !b.skipValidation {
+		if err := b.validate(); err != nil {
+			return fmt.Errorf("validation failed: %w", err)
+		}
+	}
+
 	// Create a temporary directory to build the export structure
 	tempDir, err := os.MkdirTemp("", "slack-export-*")
 	if err != nil {
