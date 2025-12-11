@@ -1,3 +1,4 @@
+// Code based on https://cobra.dev/docs/how-to-guides/clis-for-llms/
 package main
 
 import (
@@ -14,7 +15,6 @@ import (
 
 func main() {
 	out := flag.String("out", "./docs/cli", "output directory")
-	format := flag.String("format", "markdown", "markdown|man|rest")
 	front := flag.Bool("frontmatter", false, "prepend simple YAML front matter to markdown")
 	flag.Parse()
 
@@ -25,34 +25,20 @@ func main() {
 	root := commands.RootCmd
 	root.DisableAutoGenTag = true // stable, reproducible files (no timestamp footer)
 
-	switch *format {
-	case "markdown":
-		if *front {
-			prep := func(filename string) string {
-				base := filepath.Base(filename)
-				name := strings.TrimSuffix(base, filepath.Ext(base))
-				title := strings.ReplaceAll(name, "_", " ")
-				return fmt.Sprintf("---\ntitle: %q\nslug: %q\ndescription: \"CLI reference for %s\"\n---\n\n", title, name, title)
-			}
-			link := func(name string) string { return strings.ToLower(name) }
-			if err := doc.GenMarkdownTreeCustom(root, *out, prep, link); err != nil {
-				log.Fatal(err)
-			}
-		} else {
-			if err := doc.GenMarkdownTree(root, *out); err != nil {
-				log.Fatal(err)
-			}
+	if *front {
+		prep := func(filename string) string {
+			base := filepath.Base(filename)
+			name := strings.TrimSuffix(base, filepath.Ext(base))
+			title := strings.ReplaceAll(name, "_", " ")
+			return fmt.Sprintf("---\ntitle: %q\nslug: %q\ndescription: \"CLI reference for %s\"\n---\n\n", title, name, title)
 		}
-	case "man":
-		hdr := &doc.GenManHeader{Title: strings.ToUpper(root.Name()), Section: "1"}
-		if err := doc.GenManTree(root, hdr, *out); err != nil {
+		link := func(name string) string { return strings.ToLower(name) }
+		if err := doc.GenMarkdownTreeCustom(root, *out, prep, link); err != nil {
 			log.Fatal(err)
 		}
-	case "rest":
-		if err := doc.GenReSTTree(root, *out); err != nil {
+	} else {
+		if err := doc.GenMarkdownTree(root, *out); err != nil {
 			log.Fatal(err)
 		}
-	default:
-		log.Fatalf("unknown format: %s", *format)
 	}
 }
