@@ -32,6 +32,9 @@ jobs:
       - name: Run tests
         run: make test
 
+      - name: Check documentation is up-to-date
+        run: make docs-check
+
   build:
     runs-on: ubuntu-latest
 

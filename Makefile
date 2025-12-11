@@ -1,3 +1,5 @@
+.PHONY: all build install package golangci-lint gofmt test check-style verify-gomod tidy docs docs-check
+
 GO_PACKAGES=$(shell go list ./...)
 GO ?= $(shell command -v go 2> /dev/null)
 BUILD_HASH ?= $(shell git rev-parse HEAD)
@@ -79,3 +81,15 @@ verify-gomod:
 
 tidy:
 	go mod tidy
+
+docs:
+	@echo Generating CLI documentation
+	$(GO) run ./internal/tools/docgen -out ./docs/cli -frontmatter
+
+docs-check:
+	@echo Checking if docs are up-to-date
+	@$(GO) run ./internal/tools/docgen -out ./docs/cli -frontmatter
+	@if [ -n "$$(git status --porcelain docs/cli)" ]; then \
+		echo "Documentation is out of date. Run 'make docs' to update."; \
+		exit 1; \
+	fi
