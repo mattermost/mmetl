@@ -42,3 +42,8 @@ make docs-check
 ```
 
 **Note:** The CI pipeline will automatically check if documentation is up-to-date on pull requests. If the check fails, run `make docs` and commit the updated files.
+
+## Commands
+
+For detailed documentation on all available commands, see the [CLI reference](docs/cli/mmetl.md).
+s documentation](docs/cli/mmetl_sync-import-users.md) for detailed usage information.
