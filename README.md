@@ -19,22 +19,29 @@ the current command:
 
 ```sh
 $ mmetl --help
-ETL tool to transform the export files from different providers to be compatible with Mattermost.
-
-Usage:
-  mmetl [command]
-
-Available Commands:
-  check             Checks the integrity of export files.
-  help              Help about any command
-  sync-import-users Syncs users from an import file with existing Mattermost users
-  transform         Transforms export files into Mattermost import files
-
-Flags:
-  -h, --help   help for mmetl
-
-Use "mmetl [command] --help" for more information about a command.
 ```
+
+You can also check the CLI generated documentation under [mmetl](docs/cli/mmetl.md).
+
+## Development
+
+### Updating Documentation
+
+The CLI documentation in `docs/cli/` is automatically generated from the Cobra command definitions. 
+
+To regenerate the documentation after making changes to commands:
+
+```sh
+make docs
+```
+
+To verify documentation is up-to-date (useful before committing):
+
+```sh
+make docs-check
+```
+
+**Note:** The CI pipeline will automatically check if documentation is up-to-date on pull requests. If the check fails, run `make docs` and commit the updated files.
 
 ## Commands
 
@@ -90,3 +97,4 @@ The command creates a log file named `sync-import-users.log` in the current dire
 - Always review the log file after running this command.
 - Consider using `--dry-run` first to preview changes.
 - Username changes are automatically propagated to all references in posts, channels, and direct messages.
+```
