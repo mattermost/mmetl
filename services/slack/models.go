@@ -154,4 +154,3 @@ type SlackExport struct {
 	Posts           map[string][]SlackPost
 	Uploads         map[string]*zip.File
 }
-

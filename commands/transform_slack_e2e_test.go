@@ -491,8 +491,8 @@ func createZipFromDir(outputPath, sourceDir string) error {
 
 		if info.IsDir() {
 			// For directories, add trailing slash
-			_, err := archive.Create(relPath + "/")
-			return err
+			_, createErr := archive.Create(relPath + "/")
+			return createErr
 		}
 
 		// Create file header

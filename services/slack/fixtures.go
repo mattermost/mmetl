@@ -209,7 +209,7 @@ func (b *SlackExportBuilder) Build(outputPath string) error {
 }
 
 // writeJSONFile writes data as JSON to a file in the given directory
-func (b *SlackExportBuilder) writeJSONFile(dir, filename string, data interface{}) error {
+func (b *SlackExportBuilder) writeJSONFile(dir, filename string, data any) error {
 	filePath := filepath.Join(dir, filename)
 	file, err := os.Create(filePath)
 	if err != nil {
@@ -254,8 +254,8 @@ func (b *SlackExportBuilder) createZipFile(outputPath, sourceDir string) error {
 
 		if info.IsDir() {
 			// For directories, add trailing slash
-			_, err := archive.Create(relPath + "/")
-			return err
+			_, createErr := archive.Create(relPath + "/")
+			return createErr
 		}
 
 		// Create file header
