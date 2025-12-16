@@ -372,9 +372,9 @@ func readImportLines(t *testing.T, filePath string) []ImportLine {
 }
 
 func findLineByType(lines []ImportLine, lineType string) *ImportLine {
-	for _, line := range lines {
-		if line.Type == lineType {
-			return &line
+	for i := range lines {
+		if lines[i].Type == lineType {
+			return &lines[i]
 		}
 	}
 	return nil
@@ -391,18 +391,18 @@ func findAllLinesByType(lines []ImportLine, lineType string) []ImportLine {
 }
 
 func findChannelByName(lines []ImportLine, name string) *ImportLine {
-	for _, line := range lines {
-		if line.Type == "channel" && line.Channel != nil && line.Channel.Name == name {
-			return &line
+	for i := range lines {
+		if lines[i].Type == "channel" && lines[i].Channel != nil && lines[i].Channel.Name == name {
+			return &lines[i]
 		}
 	}
 	return nil
 }
 
 func findUserByUsername(lines []ImportLine, username string) *ImportLine {
-	for _, line := range lines {
-		if line.Type == "user" && line.User != nil && line.User.Username == username {
-			return &line
+	for i := range lines {
+		if lines[i].Type == "user" && lines[i].User != nil && lines[i].User.Username == username {
+			return &lines[i]
 		}
 	}
 	return nil

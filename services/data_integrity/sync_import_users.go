@@ -49,7 +49,7 @@ func SyncImportUsers(reader io.Reader, flags SyncImportUsersFlags, client Matter
 	}
 
 	if !flags.DryRun {
-		out, err = os.OpenFile(flags.OutputFile, os.O_CREATE|os.O_WRONLY, 0666)
+		out, err = os.OpenFile(flags.OutputFile, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0666)
 		if err != nil {
 			return errors.Wrap(err, "Error opening output file")
 		}
@@ -72,6 +72,7 @@ func SyncImportUsers(reader io.Reader, flags SyncImportUsersFlags, client Matter
 			if writeErr := writeLine(line); writeErr != nil {
 				return writeErr
 			}
+			continue
 		}
 
 		switch lineData.Type {
@@ -141,6 +142,10 @@ func removeDuplicateChannelMemberships(user *imports.UserImportData, flags SyncI
 		return
 	}
 	teams := *user.Teams
+
+	if teams[0].Channels == nil {
+		return
+	}
 
 	chansOut := []imports.UserChannelImportData{}
 
