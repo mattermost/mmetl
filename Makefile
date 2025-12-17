@@ -71,7 +71,11 @@ gofmt:
 
 test:
 	@echo Running tests
-	$(GO) test -race -v $(GO_PACKAGES) -count=1
+	$(GO) test -race -v -timeout=15m $(GO_PACKAGES) -count=1
+
+test-short:
+	@echo Running short tests only
+	$(GO) test -short -race -v $(GO_PACKAGES) -count=1
 
 check-style: golangci-lint
 

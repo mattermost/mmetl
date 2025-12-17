@@ -386,6 +386,7 @@ func (t *Transformer) ParseSlackExportFile(zipReader *zip.Reader, skipConvertPos
 					if err != nil {
 						return errors.Wrap(err, "failed to read users file from USERS_JSON_FILE")
 					}
+					defer reader.Close()
 				}
 
 				users, _ := t.SlackParseUsers(reader)

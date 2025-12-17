@@ -10,8 +10,13 @@ import (
 	"strings"
 
 	"github.com/mattermost/mmetl/commands"
+	"github.com/spf13/cobra"
 	"github.com/spf13/cobra/doc"
 )
+
+// DocsExtraAnnotation is the annotation key for extra documentation content
+// that should appear in generated markdown files but not in CLI help.
+const DocsExtraAnnotation = "docs_extra"
 
 func main() {
 	out := flag.String("out", "./docs/cli", "output directory")
@@ -41,4 +46,40 @@ func main() {
 			log.Fatal(err)
 		}
 	}
+
+	// Append extra documentation from annotations
+	if err := appendDocsExtra(root, *out); err != nil {
+		log.Fatal(err)
+	}
+}
+
+// appendDocsExtra walks the command tree and appends any docs_extra annotation
+// content to the corresponding generated markdown files.
+func appendDocsExtra(cmd *cobra.Command, outDir string) error {
+	if extra, ok := cmd.Annotations[DocsExtraAnnotation]; ok && extra != "" {
+		filename := filepath.Join(outDir, cmdFilename(cmd))
+		f, err := os.OpenFile(filename, os.O_APPEND|os.O_WRONLY, 0644)
+		if err != nil {
+			return fmt.Errorf("failed to open %s for appending: %w", filename, err)
+		}
+		defer f.Close()
+
+		if _, err := f.WriteString("\n" + extra); err != nil {
+			return fmt.Errorf("failed to append docs_extra to %s: %w", filename, err)
+		}
+	}
+
+	for _, child := range cmd.Commands() {
+		if err := appendDocsExtra(child, outDir); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// cmdFilename returns the markdown filename for a command (matches cobra/doc convention).
+func cmdFilename(cmd *cobra.Command) string {
+	basename := strings.ReplaceAll(cmd.CommandPath(), " ", "_") + ".md"
+	return basename
 }
