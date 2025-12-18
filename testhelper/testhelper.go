@@ -2,9 +2,7 @@ package testhelper
 
 import (
 	"archive/zip"
-	"bufio"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -16,6 +14,8 @@ import (
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/v8/cmd/mmctl/commands/importer"
 	"github.com/stretchr/testify/require"
+	"github.com/testcontainers/testcontainers-go"
+	"github.com/testcontainers/testcontainers-go/exec"
 )
 
 // TestHelper provides helper functions and containers for integration testing
@@ -23,8 +23,9 @@ type TestHelper struct {
 	t         *testing.T
 	tearDowns []TearDownFunc
 
-	SiteURL string
-	Client  *model.Client4
+	SiteURL             string
+	Client              *model.Client4
+	MattermostContainer testcontainers.Container
 
 	// Admin user created during setup
 	AdminUser     *model.User
@@ -55,9 +56,10 @@ func SetupHelper(t *testing.T) *TestHelper {
 	t.Logf("PostgreSQL started with connection string: %s", postgresConnStr)
 
 	// Create Mattermost container
-	siteURL, mattermostTearDown, err := CreateMattermostContainer(ctx, dockerNet.Name)
+	mattermostContainer, siteURL, mattermostTearDown, err := CreateMattermostContainer(ctx, dockerNet.Name)
 	require.NoError(t, err, "failed to create mattermost container")
 	th.tearDowns = append(th.tearDowns, mattermostTearDown)
+	th.MattermostContainer = mattermostContainer
 	th.SiteURL = siteURL
 	t.Logf("Mattermost started at: %s", siteURL)
 
@@ -224,351 +226,129 @@ func (th *TestHelper) GetChannelMembers(channelID string) (model.ChannelMembers,
 	return members, err
 }
 
-// === Bulk Import via REST API ===
-// Since the /api/v4/imports endpoint is Enterprise-only, we simulate bulk import
-// by parsing the JSONL file and creating entities via the standard REST API.
+// === Bulk Import via mmctl ===
 
-// ImportLine represents a line in a Mattermost bulk import JSONL file
-type ImportLine struct {
-	Type    string         `json:"type"`
-	Version *int           `json:"version,omitempty"`
-	User    *ImportUser    `json:"user,omitempty"`
-	Channel *ImportChannel `json:"channel,omitempty"`
-	Post    *ImportPost    `json:"post,omitempty"`
-}
-
-type ImportUser struct {
-	Username  string       `json:"username"`
-	Email     string       `json:"email"`
-	Password  string       `json:"password,omitempty"`
-	FirstName string       `json:"first_name,omitempty"`
-	LastName  string       `json:"last_name,omitempty"`
-	Position  string       `json:"position,omitempty"`
-	Roles     string       `json:"roles,omitempty"`
-	DeleteAt  int64        `json:"delete_at,omitempty"`
-	Teams     []ImportTeam `json:"teams,omitempty"`
-}
-
-type ImportTeam struct {
-	Name     string                `json:"name"`
-	Roles    string                `json:"roles,omitempty"`
-	Channels []ImportChannelMember `json:"channels,omitempty"`
-}
-
-type ImportChannelMember struct {
-	Name  string `json:"name"`
-	Roles string `json:"roles,omitempty"`
-}
-
-type ImportChannel struct {
-	Team        string `json:"team"`
-	Name        string `json:"name"`
-	DisplayName string `json:"display_name,omitempty"`
-	Type        string `json:"type"`
-	Header      string `json:"header,omitempty"`
-	Purpose     string `json:"purpose,omitempty"`
-}
-
-type ImportPost struct {
-	Team     string        `json:"team"`
-	Channel  string        `json:"channel"`
-	User     string        `json:"user"`
-	Message  string        `json:"message"`
-	CreateAt int64         `json:"create_at,omitempty"`
-	Replies  []ImportReply `json:"replies,omitempty"`
-}
-
-type ImportReply struct {
-	User     string `json:"user"`
-	Message  string `json:"message"`
-	CreateAt int64  `json:"create_at,omitempty"`
-}
-
-// ImportBulkData reads a JSONL file and creates entities in Mattermost via the REST API.
-// This simulates what mmctl import does, but using the standard API available in Team Edition.
+// ImportBulkData imports a JSONL file into Mattermost using the real mmctl binary.
+// This uses the actual mmctl import process command to ensure we're testing the documented behavior.
 func (th *TestHelper) ImportBulkData(filePath string) error {
 	th.t.Logf("Importing bulk data from: %s", filePath)
 
-	file, err := os.Open(filePath)
-	if err != nil {
-		return fmt.Errorf("failed to open import file: %w", err)
-	}
-	defer file.Close()
-
-	// Parse all lines first
-	var lines []ImportLine
-	scanner := bufio.NewScanner(file)
-	// Increase buffer for large lines
-	buf := make([]byte, 0, 64*1024)
-	scanner.Buffer(buf, 1024*1024)
-
-	for scanner.Scan() {
-		var line ImportLine
-		if err := json.Unmarshal(scanner.Bytes(), &line); err != nil {
-			return fmt.Errorf("failed to parse import line: %w", err)
-		}
-		lines = append(lines, line)
-	}
-	if err := scanner.Err(); err != nil {
-		return fmt.Errorf("failed to read import file: %w", err)
-	}
-
-	// Create a map to track created users (username -> user)
-	createdUsers := make(map[string]*model.User)
-	// Map team name -> team
-	teams := make(map[string]*model.Team)
-	// Map "teamName:channelName" -> channel
-	channels := make(map[string]*model.Channel)
-
 	ctx := context.Background()
 
-	// First pass: collect team info and create users
-	for _, line := range lines {
-		if line.Type == "user" && line.User != nil {
-			user, err := th.importUser(ctx, line.User, teams, channels)
-			if err != nil {
-				th.t.Logf("Warning: failed to import user %s: %v", line.User.Username, err)
-				continue
-			}
-			createdUsers[user.Username] = user
-		}
-	}
-
-	// Second pass: create channels
-	for _, line := range lines {
-		if line.Type == "channel" && line.Channel != nil {
-			_, err := th.importChannel(ctx, line.Channel, teams, channels)
-			if err != nil {
-				th.t.Logf("Warning: failed to import channel %s: %v", line.Channel.Name, err)
-			}
-		}
-	}
-
-	// Third pass: add users to teams and channels based on their team memberships
-	for _, line := range lines {
-		if line.Type == "user" && line.User != nil {
-			user := createdUsers[line.User.Username]
-			if user == nil {
-				continue
-			}
-			for _, teamMembership := range line.User.Teams {
-				team := teams[teamMembership.Name]
-				if team == nil {
-					th.t.Logf("Warning: team %s not found for user %s", teamMembership.Name, line.User.Username)
-					continue
-				}
-				// Add user to team
-				_, _, err := th.Client.AddTeamMember(ctx, team.Id, user.Id)
-				if err != nil && !isAlreadyMemberError(err) {
-					th.t.Logf("Warning: failed to add user %s to team %s: %v", user.Username, team.Name, err)
-				}
-				// Add user to channels
-				for _, channelMembership := range teamMembership.Channels {
-					channelKey := fmt.Sprintf("%s:%s", teamMembership.Name, channelMembership.Name)
-					channel := channels[channelKey]
-					if channel == nil {
-						th.t.Logf("Warning: channel %s not found in team %s", channelMembership.Name, teamMembership.Name)
-						continue
-					}
-					_, _, err := th.Client.AddChannelMember(ctx, channel.Id, user.Id)
-					if err != nil && !isAlreadyMemberError(err) {
-						th.t.Logf("Warning: failed to add user %s to channel %s: %v", user.Username, channel.Name, err)
-					}
-				}
-			}
-		}
-	}
-
-	// Fourth pass: create posts
-	for _, line := range lines {
-		if line.Type == "post" && line.Post != nil {
-			err := th.importPost(ctx, line.Post, teams, channels, createdUsers)
-			if err != nil {
-				th.t.Logf("Warning: failed to import post: %v", err)
-			}
-		}
-	}
-
-	th.t.Logf("Import complete: %d users, %d channels", len(createdUsers), len(channels))
-	return nil
-}
-
-func isAlreadyMemberError(err error) bool {
-	if err == nil {
-		return false
-	}
-	errStr := err.Error()
-	return strings.Contains(errStr, "already") || strings.Contains(errStr, "member")
-}
-
-func (th *TestHelper) importUser(ctx context.Context, importUser *ImportUser, teams map[string]*model.Team, channels map[string]*model.Channel) (*model.User, error) {
-	// Check if user already exists
-	existingUser, _, err := th.Client.GetUserByUsername(ctx, importUser.Username, "")
-	if err == nil && existingUser != nil {
-		th.t.Logf("User %s already exists", importUser.Username)
-		return existingUser, nil
-	}
-
-	password := importUser.Password
-	if password == "" {
-		password = "testpassword123"
-	}
-
-	user := &model.User{
-		Username:  importUser.Username,
-		Email:     importUser.Email,
-		Password:  password,
-		FirstName: importUser.FirstName,
-		LastName:  importUser.LastName,
-		Position:  importUser.Position,
-	}
-
-	createdUser, _, err := th.Client.CreateUser(ctx, user)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create user: %w", err)
-	}
-
-	th.t.Logf("Created user: %s (%s)", createdUser.Username, createdUser.Email)
-
-	// If user should be deactivated
-	if importUser.DeleteAt > 0 {
-		_, err = th.Client.DeleteUser(ctx, createdUser.Id)
-		if err != nil {
-			th.t.Logf("Warning: failed to deactivate user %s: %v", createdUser.Username, err)
-		}
-		// Fetch updated user
-		createdUser, _, _ = th.Client.GetUser(ctx, createdUser.Id, "")
-	}
-
-	return createdUser, nil
-}
-
-func (th *TestHelper) importChannel(ctx context.Context, importChannel *ImportChannel, teams map[string]*model.Team, channels map[string]*model.Channel) (*model.Channel, error) {
-	// Get or cache team
-	team := teams[importChannel.Team]
-	if team == nil {
+	// Wrap JSONL in a zip if needed (mmctl requires zip files)
+	importPath := filePath
+	var tempZip string
+	if !isZipFile(filePath) {
+		th.t.Log("Wrapping JSONL in zip archive for mmctl import...")
 		var err error
-		team, _, err = th.Client.GetTeamByName(ctx, importChannel.Team, "")
+		tempZip, err = wrapJSONLInZip(filePath)
 		if err != nil {
-			return nil, fmt.Errorf("team %s not found: %w", importChannel.Team, err)
+			return fmt.Errorf("failed to wrap JSONL in zip: %w", err)
 		}
-		teams[importChannel.Team] = team
+		defer os.Remove(tempZip)
+		importPath = tempZip
 	}
 
-	channelKey := fmt.Sprintf("%s:%s", importChannel.Team, importChannel.Name)
-
-	// Check if channel already exists
-	existingChannel, _, err := th.Client.GetChannelByName(ctx, importChannel.Name, team.Id, "")
-	if err == nil && existingChannel != nil {
-		channels[channelKey] = existingChannel
-		return existingChannel, nil
-	}
-
-	channelType := model.ChannelTypeOpen
-	if importChannel.Type == "P" {
-		channelType = model.ChannelTypePrivate
-	}
-
-	displayName := importChannel.DisplayName
-	if displayName == "" {
-		displayName = importChannel.Name
-	}
-
-	channel := &model.Channel{
-		TeamId:      team.Id,
-		Name:        importChannel.Name,
-		DisplayName: displayName,
-		Type:        channelType,
-		Header:      importChannel.Header,
-		Purpose:     importChannel.Purpose,
-	}
-
-	createdChannel, _, err := th.Client.CreateChannel(ctx, channel)
+	// Copy the import file to the container
+	containerPath := "/tmp/import.zip"
+	th.t.Logf("Copying import file to container at %s", containerPath)
+	err := th.MattermostContainer.CopyFileToContainer(ctx, importPath, containerPath, 0644)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create channel: %w", err)
+		return fmt.Errorf("failed to copy import file to container: %w", err)
 	}
 
-	channels[channelKey] = createdChannel
-	th.t.Logf("Created channel: %s in team %s", createdChannel.Name, team.Name)
-	return createdChannel, nil
+	// Execute mmctl import process command inside the container
+	th.t.Log("Executing mmctl import process inside container...")
+	cmd := []string{"/mattermost/bin/mmctl", "import", "process", containerPath, "--local", "--bypass-upload"}
+
+	exitCode, reader, err := th.MattermostContainer.Exec(ctx, cmd, exec.Multiplexed())
+	if err != nil {
+		return fmt.Errorf("failed to execute mmctl command: %w", err)
+	}
+
+	// Read the output
+	output, err := io.ReadAll(reader)
+	if err != nil {
+		return fmt.Errorf("failed to read mmctl output: %w", err)
+	}
+
+	th.t.Logf("mmctl output:\n%s", string(output))
+
+	if exitCode != 0 {
+		return fmt.Errorf("mmctl import failed with exit code %d: %s", exitCode, string(output))
+	}
+
+	// Extract job ID from output (format: "Import process job successfully created, ID: <job_id>")
+	jobID := extractJobID(string(output))
+	if jobID == "" {
+		return fmt.Errorf("failed to extract job ID from mmctl output: %s", string(output))
+	}
+
+	th.t.Logf("Import job created with ID: %s, waiting for completion...", jobID)
+
+	// Poll the job status until it completes
+	err = th.waitForImportJobCompletion(ctx, jobID)
+	if err != nil {
+		return fmt.Errorf("import job failed: %w", err)
+	}
+
+	th.t.Log("Import completed successfully via mmctl")
+	return nil
 }
 
-func (th *TestHelper) importPost(ctx context.Context, importPost *ImportPost, teams map[string]*model.Team, channels map[string]*model.Channel, users map[string]*model.User) error {
-	channelKey := fmt.Sprintf("%s:%s", importPost.Team, importPost.Channel)
-	channel := channels[channelKey]
-	if channel == nil {
-		// Try to fetch it
-		team := teams[importPost.Team]
-		if team == nil {
-			return fmt.Errorf("team %s not found for post", importPost.Team)
-		}
-		ch, _, err := th.Client.GetChannelByName(ctx, importPost.Channel, team.Id, "")
-		if err != nil {
-			return fmt.Errorf("channel %s not found in team %s: %w", importPost.Channel, importPost.Team, err)
-		}
-		channel = ch
-		channels[channelKey] = channel
-	}
-
-	user := users[importPost.User]
-	if user == nil {
-		// Try to fetch the user
-		u, _, err := th.Client.GetUserByUsername(ctx, importPost.User, "")
-		if err != nil {
-			return fmt.Errorf("user %s not found: %w", importPost.User, err)
-		}
-		user = u
-		users[importPost.User] = user
-	}
-
-	// We need to create the post as the user, but we're logged in as admin
-	// For testing purposes, we'll create the post as admin but with the user's ID
-	// This is a limitation - in a real import, the post would be attributed correctly
-	post := &model.Post{
-		ChannelId: channel.Id,
-		Message:   importPost.Message,
-		UserId:    user.Id,
-	}
-
-	if importPost.CreateAt > 0 {
-		post.CreateAt = importPost.CreateAt
-	}
-
-	createdPost, _, err := th.Client.CreatePost(ctx, post)
-	if err != nil {
-		return fmt.Errorf("failed to create post: %w", err)
-	}
-
-	// Handle replies
-	for _, reply := range importPost.Replies {
-		replyUser := users[reply.User]
-		if replyUser == nil {
-			replyUser, _, _ = th.Client.GetUserByUsername(ctx, reply.User, "")
-			if replyUser != nil {
-				users[reply.User] = replyUser
+// extractJobID extracts the job ID from mmctl import process output
+func extractJobID(output string) string {
+	// Expected format: "Import process job successfully created, ID: <job_id>"
+	lines := strings.Split(output, "\n")
+	for _, line := range lines {
+		if strings.Contains(line, "Import process job successfully created") {
+			parts := strings.Split(line, "ID: ")
+			if len(parts) == 2 {
+				return strings.TrimSpace(parts[1])
 			}
 		}
-		if replyUser == nil {
-			th.t.Logf("Warning: reply user %s not found", reply.User)
-			continue
+	}
+	return ""
+}
+
+// waitForImportJobCompletion polls the import job status until it completes or fails
+func (th *TestHelper) waitForImportJobCompletion(ctx context.Context, jobID string) error {
+	maxAttempts := 60 // 60 attempts with 1 second sleep = 1 minute max wait
+	for i := 0; i < maxAttempts; i++ {
+		// Execute mmctl import job show command
+		cmd := []string{"/mattermost/bin/mmctl", "import", "job", "show", jobID, "--local"}
+		exitCode, reader, err := th.MattermostContainer.Exec(ctx, cmd, exec.Multiplexed())
+		if err != nil {
+			return fmt.Errorf("failed to check job status: %w", err)
 		}
 
-		replyPost := &model.Post{
-			ChannelId: channel.Id,
-			RootId:    createdPost.Id,
-			Message:   reply.Message,
-			UserId:    replyUser.Id,
-		}
-		if reply.CreateAt > 0 {
-			replyPost.CreateAt = reply.CreateAt
-		}
-		_, _, err := th.Client.CreatePost(ctx, replyPost)
+		output, err := io.ReadAll(reader)
 		if err != nil {
-			th.t.Logf("Warning: failed to create reply: %v", err)
+			return fmt.Errorf("failed to read job status output: %w", err)
 		}
+
+		if exitCode != 0 {
+			return fmt.Errorf("failed to get job status (exit code %d): %s", exitCode, string(output))
+		}
+
+		statusOutput := string(output)
+
+		// Check if job is complete (Status: success or Status: error)
+		if strings.Contains(statusOutput, "Status: success") {
+			th.t.Logf("Import job %s completed successfully", jobID)
+			return nil
+		}
+
+		if strings.Contains(statusOutput, "Status: error") || strings.Contains(statusOutput, "Status: canceled") {
+			return fmt.Errorf("import job failed with status: %s", statusOutput)
+		}
+
+		// Job is still in progress (Status: pending or Status: in_progress)
+		th.t.Logf("Import job %s still in progress, waiting... (attempt %d/%d)", jobID, i+1, maxAttempts)
+		time.Sleep(1 * time.Second)
 	}
 
-	return nil
+	return fmt.Errorf("import job %s did not complete within timeout", jobID)
 }
 
 // === Verification Helpers ===
