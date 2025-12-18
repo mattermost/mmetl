@@ -230,11 +230,18 @@ func (th *TestHelper) GetChannelMembers(channelID string) (model.ChannelMembers,
 
 // ImportLine represents a line in a Mattermost bulk import JSONL file
 type ImportLine struct {
-	Type    string         `json:"type"`
-	Version *int           `json:"version,omitempty"`
-	User    *ImportUser    `json:"user,omitempty"`
-	Channel *ImportChannel `json:"channel,omitempty"`
-	Post    *ImportPost    `json:"post,omitempty"`
+	Type    string          `json:"type"`
+	Version *int            `json:"version,omitempty"`
+	Team    *ImportTeamData `json:"team,omitempty"`
+	User    *ImportUser     `json:"user,omitempty"`
+	Channel *ImportChannel  `json:"channel,omitempty"`
+	Post    *ImportPost     `json:"post,omitempty"`
+}
+
+type ImportTeamData struct {
+	Name        string `json:"name"`
+	DisplayName string `json:"display_name,omitempty"`
+	Type        string `json:"type,omitempty"`
 }
 
 type ImportUser struct {
@@ -322,7 +329,19 @@ func (th *TestHelper) ImportBulkData(filePath string) error {
 
 	ctx := context.Background()
 
-	// First pass: collect team info and create users
+	// First pass: create teams
+	for _, line := range lines {
+		if line.Type == "team" && line.Team != nil {
+			team, err := th.importTeam(ctx, line.Team, teams)
+			if err != nil {
+				th.t.Logf("Warning: failed to import team %s: %v", line.Team.Name, err)
+			} else {
+				teams[team.Name] = team
+			}
+		}
+	}
+
+	// Second pass: create users
 	for _, line := range lines {
 		if line.Type == "user" && line.User != nil {
 			user, err := th.importUser(ctx, line.User, teams, channels)
@@ -334,7 +353,7 @@ func (th *TestHelper) ImportBulkData(filePath string) error {
 		}
 	}
 
-	// Second pass: create channels
+	// Third pass: create channels
 	for _, line := range lines {
 		if line.Type == "channel" && line.Channel != nil {
 			_, err := th.importChannel(ctx, line.Channel, teams, channels)
@@ -344,7 +363,7 @@ func (th *TestHelper) ImportBulkData(filePath string) error {
 		}
 	}
 
-	// Third pass: add users to teams and channels based on their team memberships
+	// Fourth pass: add users to teams and channels based on their team memberships
 	for _, line := range lines {
 		if line.Type == "user" && line.User != nil {
 			user := createdUsers[line.User.Username]
@@ -399,6 +418,39 @@ func isAlreadyMemberError(err error) bool {
 	}
 	errStr := err.Error()
 	return strings.Contains(errStr, "already") || strings.Contains(errStr, "member")
+}
+
+func (th *TestHelper) importTeam(ctx context.Context, importTeam *ImportTeamData, teams map[string]*model.Team) (*model.Team, error) {
+	// Check if team already exists
+	existingTeam, _, err := th.Client.GetTeamByName(ctx, importTeam.Name, "")
+	if err == nil && existingTeam != nil {
+		th.t.Logf("Team %s already exists", importTeam.Name)
+		return existingTeam, nil
+	}
+
+	displayName := importTeam.DisplayName
+	if displayName == "" {
+		displayName = importTeam.Name
+	}
+
+	teamType := importTeam.Type
+	if teamType == "" {
+		teamType = "O" // Default to open team
+	}
+
+	team := &model.Team{
+		Name:        importTeam.Name,
+		DisplayName: displayName,
+		Type:        teamType,
+	}
+
+	createdTeam, _, err := th.Client.CreateTeam(ctx, team)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create team: %w", err)
+	}
+
+	th.t.Logf("Created team: %s (%s) type=%s", createdTeam.Name, createdTeam.DisplayName, createdTeam.Type)
+	return createdTeam, nil
 }
 
 func (th *TestHelper) importUser(ctx context.Context, importUser *ImportUser, teams map[string]*model.Team, channels map[string]*model.Channel) (*model.User, error) {

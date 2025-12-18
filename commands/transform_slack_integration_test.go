@@ -13,6 +13,8 @@ import (
 	"github.com/mattermost/mmetl/testhelper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
 )
 
 // uniqueTeamName generates a unique team name for testing to avoid conflicts
@@ -360,6 +362,125 @@ func TestTransformSlackE2ETeamConsistency(t *testing.T) {
 
 	janeUser := th.AssertUserExists("jane.smith")
 	th.AssertUserInTeam(team.Id, janeUser.Id)
+}
+
+// TestTransformSlackWithCreateTeamIntegration tests team creation via the --create-team flag
+func TestTransformSlackWithCreateTeamIntegration(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	// Setup Mattermost with testcontainers
+	th := testhelper.SetupHelper(t)
+	defer th.TearDown()
+
+	t.Run("team is created in Mattermost when --create-team flag is set", func(t *testing.T) {
+		tempDir := t.TempDir()
+		slackExportPath := filepath.Join(tempDir, "slack_export.zip")
+		mmExportPath := filepath.Join(tempDir, "mattermost_import.jsonl")
+		teamName := uniqueTeamName("createteam")
+
+		// 1. Create Slack export fixture
+		err := slack.BasicExport().Build(slackExportPath)
+		require.NoError(t, err)
+
+		// 2. Run transform with --create-team flag
+		args := []string{
+			"transform", "slack",
+			"--team", teamName,
+			"--file", slackExportPath,
+			"--output", mmExportPath,
+			"--skip-attachments",
+			"--create-team",
+		}
+
+		c := commands.RootCmd
+		c.SetArgs(args)
+		err = c.Execute()
+		require.NoError(t, err)
+		defer os.Remove("transform-slack.log")
+
+		// 3. Import into Mattermost (no need to pre-create team)
+		t.Log("Importing data with team creation into Mattermost...")
+		err = th.ImportBulkData(mmExportPath)
+		require.NoError(t, err, "import should succeed")
+
+		// 4. Verify team was created in Mattermost
+		t.Log("Verifying team was created in Mattermost...")
+		team := th.AssertTeamExists(teamName)
+		require.NotNil(t, team)
+
+		// Verify team properties
+		assert.Equal(t, teamName, team.Name)
+		// Title case: "myteam" -> "Myteam"
+		caser := cases.Title(language.English)
+		expectedDisplayName := caser.String(teamName)
+		assert.Equal(t, expectedDisplayName, team.DisplayName)
+		// Type "I" means invite-only
+		assert.Equal(t, "I", team.Type)
+
+		// 5. Verify users were imported and added to the team
+		t.Log("Verifying users in team...")
+		johnUser := th.AssertUserExists("john.doe")
+		th.AssertUserInTeam(team.Id, johnUser.Id)
+
+		janeUser := th.AssertUserExists("jane.smith")
+		th.AssertUserInTeam(team.Id, janeUser.Id)
+
+		// 6. Verify channels were created in the team
+		t.Log("Verifying channels in team...")
+		generalChannel := th.AssertChannelExists(teamName, "general")
+		assert.Equal(t, team.Id, generalChannel.TeamId)
+
+		randomChannel := th.AssertChannelExists(teamName, "random")
+		assert.Equal(t, team.Id, randomChannel.TeamId)
+	})
+
+	t.Run("team is not created when --create-team flag is not set", func(t *testing.T) {
+		tempDir := t.TempDir()
+		slackExportPath := filepath.Join(tempDir, "slack_export.zip")
+		mmExportPath := filepath.Join(tempDir, "mattermost_import.jsonl")
+		teamName := uniqueTeamName("nocreateteam")
+
+		// 1. Create Slack export fixture
+		err := slack.BasicExport().Build(slackExportPath)
+		require.NoError(t, err)
+
+		// 2. Run transform WITHOUT --create-team flag
+		args := []string{
+			"transform", "slack",
+			"--team", teamName,
+			"--file", slackExportPath,
+			"--output", mmExportPath,
+			"--skip-attachments",
+			"--create-team=false",
+		}
+
+		c := commands.RootCmd
+		c.SetArgs(args)
+		err = c.Execute()
+		require.NoError(t, err)
+		defer os.Remove("transform-slack.log")
+
+		// 3. Verify no team line in export file
+		lines := readImportLines(t, mmExportPath)
+		teamLine := findLineByType(lines, "team")
+		require.Nil(t, teamLine, "should not have team line in export when flag is not set")
+
+		// 4. Pre-create team and verify import succeeds
+		t.Log("Pre-creating team and importing...")
+		th.CreateTeam(teamName, "Test Team")
+		err = th.ImportBulkData(mmExportPath)
+		require.NoError(t, err, "import should succeed with pre-created team")
+
+		// Verify team properties were NOT changed by import (should match what we created)
+		updatedTeam := th.AssertTeamExists(teamName)
+		assert.Equal(t, "Test Team", updatedTeam.DisplayName, "display name should not be changed by import")
+
+		// Verify users were added to the team
+		johnUser := th.AssertUserExists("john.doe")
+		th.AssertUserInTeam(updatedTeam.Id, johnUser.Id)
+	})
 }
 
 // Note: Helper types (ImportLine, etc.) and functions (readImportLines, etc.)

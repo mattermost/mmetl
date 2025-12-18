@@ -14,6 +14,8 @@ import (
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/v8/channels/app/imports"
 	"github.com/pkg/errors"
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
 )
 
 const (
@@ -136,6 +138,21 @@ func SplitChannelsByMemberSize(channels []SlackChannel, limit int) (regularChann
 		}
 	}
 	return
+}
+
+func GetImportLineFromTeam(teamName string) *imports.LineImportData {
+	caser := cases.Title(language.English)
+	displayName := caser.String(teamName)
+	teamType := "I"
+
+	return &imports.LineImportData{
+		Type: "team",
+		Team: &imports.TeamImportData{
+			Name:        model.NewString(teamName),
+			DisplayName: model.NewString(displayName),
+			Type:        model.NewString(teamType),
+		},
+	}
 }
 
 func GetImportLineFromChannel(team string, channel *IntermediateChannel) *imports.LineImportData {
@@ -352,6 +369,15 @@ func (t *Transformer) ExportVersion(writer io.Writer) error {
 	return ExportWriteLine(writer, versionLine)
 }
 
+func (t *Transformer) ExportTeam(writer io.Writer) error {
+	if !t.CreateTeam {
+		return nil
+	}
+
+	line := GetImportLineFromTeam(t.TeamName)
+	return ExportWriteLine(writer, line)
+}
+
 // valid for open or private, as they export with no members
 func (t *Transformer) ExportChannels(channels []*IntermediateChannel, writer io.Writer) error {
 	for _, channel := range channels {
@@ -418,6 +444,13 @@ func (t *Transformer) Export(outputFilePath string) error {
 	t.Logger.Info("Exporting version")
 	if err := t.ExportVersion(outputFile); err != nil {
 		return err
+	}
+
+	if t.CreateTeam {
+		t.Logger.Info("Exporting team")
+		if err := t.ExportTeam(outputFile); err != nil {
+			return err
+		}
 	}
 
 	t.Logger.Info("Exporting public channels")

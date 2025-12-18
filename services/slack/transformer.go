@@ -4,6 +4,7 @@ import log "github.com/sirupsen/logrus"
 
 type Transformer struct {
 	TeamName     string
+	CreateTeam   bool
 	Intermediate *Intermediate
 	Logger       log.FieldLogger
 }
