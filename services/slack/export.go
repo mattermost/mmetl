@@ -20,6 +20,7 @@ import (
 
 const (
 	POST_MAX_ATTACHMENTS = 5
+	DEFAULT_TEAM_TYPE    = "I" // Invite-only team type
 )
 
 var isValidChannelNameCharacters = regexp.MustCompile(`^[a-zA-Z0-9\-_]+$`).MatchString
@@ -143,14 +144,14 @@ func SplitChannelsByMemberSize(channels []SlackChannel, limit int) (regularChann
 func GetImportLineFromTeam(teamName string) *imports.LineImportData {
 	caser := cases.Title(language.English)
 	displayName := caser.String(teamName)
-	teamType := "I"
+	teamType := DEFAULT_TEAM_TYPE
 
 	return &imports.LineImportData{
 		Type: "team",
 		Team: &imports.TeamImportData{
-			Name:        model.NewString(teamName),
-			DisplayName: model.NewString(displayName),
-			Type:        model.NewString(teamType),
+			Name:        model.NewPointer(teamName),
+			DisplayName: model.NewPointer(displayName),
+			Type:        model.NewPointer(teamType),
 		},
 	}
 }
