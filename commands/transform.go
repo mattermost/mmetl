@@ -49,6 +49,7 @@ func init() {
 	TransformSlackCmd.Flags().BoolP("allow-download", "l", false, "Allows downloading the attachments for the import file")
 	TransformSlackCmd.Flags().BoolP("discard-invalid-props", "p", false, "Skips converting posts with invalid props instead discarding the props themselves")
 	TransformSlackCmd.Flags().Bool("debug", false, "Whether to show debug logs or not")
+	TransformSlackCmd.Flags().Bool("create-team", false, "Creates a team import line in the output file")
 
 	TransformCmd.AddCommand(
 		TransformSlackCmd,
@@ -71,6 +72,7 @@ func transformSlackCmdF(cmd *cobra.Command, args []string) error {
 	allowDownload, _ := cmd.Flags().GetBool("allow-download")
 	discardInvalidProps, _ := cmd.Flags().GetBool("discard-invalid-props")
 	debug, _ := cmd.Flags().GetBool("debug")
+	createTeam, _ := cmd.Flags().GetBool("create-team")
 
 	// convert team name to lowercase since Mattermost expects all team names to be lowercase
 	team = strings.ToLower(team)
@@ -129,6 +131,7 @@ func transformSlackCmdF(cmd *cobra.Command, args []string) error {
 		logger.Info("Debug mode enabled")
 	}
 	slackTransformer := slack.NewTransformer(team, logger)
+	slackTransformer.CreateTeam = createTeam
 
 	slackExport, err := slackTransformer.ParseSlackExportFile(zipReader, skipConvertPosts)
 	if err != nil {

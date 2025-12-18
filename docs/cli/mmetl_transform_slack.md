@@ -27,6 +27,7 @@ mmetl transform slack [flags]
 ```
   -l, --allow-download                Allows downloading the attachments for the import file
   -d, --attachments-dir string        the path for the attachments directory (default "data")
+      --create-team                   Creates a team import line in the output file
       --debug                         Whether to show debug logs or not
       --default-email-domain string   If this flag is provided: When a user's email address is empty, the output's email address will be generated from their username and the provided domain.
   -p, --discard-invalid-props         Skips converting posts with invalid props instead discarding the props themselves

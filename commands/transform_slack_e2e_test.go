@@ -18,11 +18,18 @@ import (
 
 // ImportLine represents a line in the Mattermost import JSONL file
 type ImportLine struct {
-	Type    string         `json:"type"`
-	Version *int           `json:"version,omitempty"`
-	Channel *ChannelImport `json:"channel,omitempty"`
-	User    *UserImport    `json:"user,omitempty"`
-	Post    *PostImport    `json:"post,omitempty"`
+	Type    string          `json:"type"`
+	Version *int            `json:"version,omitempty"`
+	Team    *TeamLineImport `json:"team,omitempty"`
+	Channel *ChannelImport  `json:"channel,omitempty"`
+	User    *UserImport     `json:"user,omitempty"`
+	Post    *PostImport     `json:"post,omitempty"`
+}
+
+type TeamLineImport struct {
+	Name        string `json:"name"`
+	DisplayName string `json:"display_name"`
+	Type        string `json:"type"`
 }
 
 type ChannelImport struct {
@@ -344,6 +351,95 @@ func TestTransformSlackCommand(t *testing.T) {
 		janeChannels := getChannelNamesFromTeam(janeUser.User.Teams[0])
 		assert.Contains(t, janeChannels, "general")
 		assert.NotContains(t, janeChannels, "engineering")
+	})
+
+	t.Run("creates team when --create-team flag is set", func(t *testing.T) {
+		tempDir := t.TempDir()
+		inputFilePath := filepath.Join(tempDir, "test_input.zip")
+		outputFilePath := filepath.Join(tempDir, "test_output.jsonl")
+		defer os.Remove("transform-slack.log")
+
+		err := createSlackExportZip(inputFilePath, defaultChannelsData, defaultUsersData, map[string]string{})
+		require.NoError(t, err)
+
+		args := []string{
+			"transform", "slack",
+			"--team", "myawesometeam",
+			"--file", inputFilePath,
+			"--output", outputFilePath,
+			"--skip-attachments",
+			"--create-team",
+		}
+
+		c := commands.RootCmd
+		c.SetArgs(args)
+		err = c.Execute()
+		require.NoError(t, err)
+
+		lines := readImportLines(t, outputFilePath)
+		require.NotEmpty(t, lines)
+
+		// Verify version is first
+		assert.Equal(t, "version", lines[0].Type)
+
+		// Verify team is second
+		require.GreaterOrEqual(t, len(lines), 2, "should have at least 2 lines")
+		assert.Equal(t, "team", lines[1].Type, "team should be second line")
+
+		teamLine := findLineByType(lines, "team")
+		require.NotNil(t, teamLine, "team line should exist when --create-team is set")
+
+		// Verify team properties
+		require.NotNil(t, teamLine.Team)
+		assert.Equal(t, "myawesometeam", teamLine.Team.Name)
+		assert.Equal(t, "Myawesometeam", teamLine.Team.DisplayName)
+		assert.Equal(t, "I", teamLine.Team.Type)
+
+		// Verify channels and users still exist
+		channels := findAllLinesByType(lines, "channel")
+		assert.Len(t, channels, 2)
+		users := findAllLinesByType(lines, "user")
+		assert.Len(t, users, 2)
+	})
+
+	t.Run("does not create team when --create-team flag is not set", func(t *testing.T) {
+		tempDir := t.TempDir()
+		inputFilePath := filepath.Join(tempDir, "test_input.zip")
+		outputFilePath := filepath.Join(tempDir, "test_output.jsonl")
+		defer os.Remove("transform-slack.log")
+
+		err := createSlackExportZip(inputFilePath, defaultChannelsData, defaultUsersData, map[string]string{})
+		require.NoError(t, err)
+
+		args := []string{
+			"transform", "slack",
+			"--team", "myteam",
+			"--file", inputFilePath,
+			"--output", outputFilePath,
+			"--skip-attachments",
+			"--create-team=false",
+		}
+
+		c := commands.RootCmd
+		c.SetArgs(args)
+		err = c.Execute()
+		require.NoError(t, err)
+
+		lines := readImportLines(t, outputFilePath)
+		require.NotEmpty(t, lines)
+
+		// Verify no team line exists
+		teamLine := findLineByType(lines, "team")
+		assert.Nil(t, teamLine, "team line should not exist when --create-team is not set")
+
+		// Verify version is still first
+		assert.Equal(t, "version", lines[0].Type)
+
+		// Verify other data still exists
+		channels := findAllLinesByType(lines, "channel")
+		assert.Len(t, channels, 2)
+		users := findAllLinesByType(lines, "user")
+		assert.Len(t, users, 2)
 	})
 }
 
