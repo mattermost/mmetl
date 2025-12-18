@@ -82,7 +82,7 @@ func GetPostgresInternalConnStr() string {
 }
 
 // CreateMattermostContainer creates a Mattermost server container connected to the given PostgreSQL database
-func CreateMattermostContainer(ctx context.Context, networkName string) (string, TearDownFunc, error) {
+func CreateMattermostContainer(ctx context.Context, networkName string) (testcontainers.Container, string, TearDownFunc, error) {
 	// Use the internal Docker network address for PostgreSQL
 	postgresConnStr := GetPostgresInternalConnStr()
 
@@ -91,19 +91,20 @@ func CreateMattermostContainer(ctx context.Context, networkName string) (string,
 		ExposedPorts: []string{mattermostPort},
 		Networks:     []string{networkName},
 		Env: map[string]string{
-			"MM_SQLSETTINGS_DRIVERNAME":         "postgres",
-			"MM_SQLSETTINGS_DATASOURCE":         postgresConnStr,
-			"MM_SERVICESETTINGS_SITEURL":        "http://localhost:8065",
-			"MM_SERVICESETTINGS_LISTENADDRESS":  ":8065",
-			"MM_PASSWORDSETTINGS_MINIMUMLENGTH": "5",
-			"MM_TEAMSETTINGS_ENABLEOPENSERVER":  "true",
-			// Disable features that might slow down startup
-			"MM_PLUGINSETTINGS_ENABLE":                    "false",
-			"MM_PLUGINSETTINGS_ENABLEUPLOADS":             "false",
-			"MM_LOGSETTINGS_CONSOLELEVEL":                 "ERROR",
-			"MM_LOGSETTINGS_ENABLEFILE":                   "false",
-			"MM_SERVICESETTINGS_ENABLELOCALMODE":          "false",
+			"MM_SQLSETTINGS_DRIVERNAME":                   "postgres",
+			"MM_SQLSETTINGS_DATASOURCE":                   postgresConnStr,
+			"MM_SERVICESETTINGS_SITEURL":                  "http://localhost:8065",
+			"MM_SERVICESETTINGS_LISTENADDRESS":            ":8065",
+			"MM_PASSWORDSETTINGS_MINIMUMLENGTH":           "5",
+			"MM_TEAMSETTINGS_ENABLEOPENSERVER":            "true",
+			"MM_SERVICESETTINGS_ENABLELOCALMODE":          "true",
+			"MM_SERVICESETTINGS_LOCALMODESOCKETLOCATION":  "/var/tmp/mattermost_local.socket",
 			"MM_SERVICESETTINGS_ENABLEAPICHANNELDELETION": "true",
+			// Disable features that might slow down startup
+			"MM_PLUGINSETTINGS_ENABLE":        "false",
+			"MM_PLUGINSETTINGS_ENABLEUPLOADS": "false",
+			"MM_LOGSETTINGS_CONSOLELEVEL":     "ERROR",
+			"MM_LOGSETTINGS_ENABLEFILE":       "false",
 		},
 		WaitingFor: wait.ForAll(
 			wait.ForListeningPort(nat.Port(mattermostPort)),
@@ -120,7 +121,7 @@ func CreateMattermostContainer(ctx context.Context, networkName string) (string,
 		Started:          true,
 	})
 	if err != nil {
-		return "", nil, errors.Wrap(err, "failed to start mattermost container")
+		return nil, "", nil, errors.Wrap(err, "failed to start mattermost container")
 	}
 
 	tearDown := func(ctx context.Context) error {
@@ -129,15 +130,15 @@ func CreateMattermostContainer(ctx context.Context, networkName string) (string,
 
 	host, err := mattermostContainer.Host(ctx)
 	if err != nil {
-		return "", nil, errors.Wrap(err, "cannot get mattermost host")
+		return nil, "", nil, errors.Wrap(err, "cannot get mattermost host")
 	}
 
 	port, err := mattermostContainer.MappedPort(ctx, nat.Port(mattermostPort))
 	if err != nil {
-		return "", nil, errors.Wrap(err, "cannot get mattermost port")
+		return nil, "", nil, errors.Wrap(err, "cannot get mattermost port")
 	}
 
 	siteURL := fmt.Sprintf("http://%s:%s", host, port.Port())
 
-	return siteURL, tearDown, nil
+	return mattermostContainer, siteURL, tearDown, nil
 }
