@@ -83,12 +83,14 @@ func TestSlackExportBuilder(t *testing.T) {
 		var channels []SlackChannel
 		for _, file := range reader.File {
 			if file.Name == "channels.json" {
-				rc, err := file.Open()
-				require.NoError(t, err)
-				defer rc.Close()
+				func() {
+					rc, err := file.Open()
+					require.NoError(t, err)
+					defer rc.Close()
 
-				err = json.NewDecoder(rc).Decode(&channels)
-				require.NoError(t, err)
+					err = json.NewDecoder(rc).Decode(&channels)
+					require.NoError(t, err)
+				}()
 				break
 			}
 		}
@@ -142,12 +144,14 @@ func TestSlackExportBuilder(t *testing.T) {
 		var users []SlackUser
 		for _, file := range reader.File {
 			if file.Name == "users.json" {
-				rc, err := file.Open()
-				require.NoError(t, err)
-				defer rc.Close()
+				func() {
+					rc, err := file.Open()
+					require.NoError(t, err)
+					defer rc.Close()
 
-				err = json.NewDecoder(rc).Decode(&users)
-				require.NoError(t, err)
+					err = json.NewDecoder(rc).Decode(&users)
+					require.NoError(t, err)
+				}()
 				break
 			}
 		}
@@ -196,12 +200,14 @@ func TestSlackExportBuilder(t *testing.T) {
 		var posts []SlackPost
 		for _, file := range reader.File {
 			if file.Name == "general/2025-01-01.json" {
-				rc, err := file.Open()
-				require.NoError(t, err)
-				defer rc.Close()
+				func() {
+					rc, err := file.Open()
+					require.NoError(t, err)
+					defer rc.Close()
 
-				err = json.NewDecoder(rc).Decode(&posts)
-				require.NoError(t, err)
+					err = json.NewDecoder(rc).Decode(&posts)
+					require.NoError(t, err)
+				}()
 				break
 			}
 		}
@@ -238,15 +244,17 @@ func TestSlackExportBuilder(t *testing.T) {
 		for _, file := range reader.File {
 			if file.Name == "groups.json" {
 				found = true
-				rc, err := file.Open()
-				require.NoError(t, err)
-				defer rc.Close()
+				func() {
+					rc, err := file.Open()
+					require.NoError(t, err)
+					defer rc.Close()
 
-				var channels []SlackChannel
-				err = json.NewDecoder(rc).Decode(&channels)
-				require.NoError(t, err)
-				require.Len(t, channels, 1)
-				assert.Equal(t, "private-team", channels[0].Name)
+					var channels []SlackChannel
+					err = json.NewDecoder(rc).Decode(&channels)
+					require.NoError(t, err)
+					require.Len(t, channels, 1)
+					assert.Equal(t, "private-team", channels[0].Name)
+				}()
 				break
 			}
 		}
@@ -344,12 +352,14 @@ func TestSlackExportBuilder(t *testing.T) {
 		var posts []SlackPost
 		for _, file := range reader.File {
 			if file.Name == "general/2025-01-01.json" {
-				rc, err := file.Open()
-				require.NoError(t, err)
-				defer rc.Close()
+				func() {
+					rc, err := file.Open()
+					require.NoError(t, err)
+					defer rc.Close()
 
-				err = json.NewDecoder(rc).Decode(&posts)
-				require.NoError(t, err)
+					err = json.NewDecoder(rc).Decode(&posts)
+					require.NoError(t, err)
+				}()
 				break
 			}
 		}
@@ -995,12 +1005,14 @@ func TestSlackExportBuilderEdgeCases(t *testing.T) {
 		var parsedPosts []SlackPost
 		for _, file := range reader.File {
 			if file.Name == "general/2025-01-01.json" {
-				rc, err := file.Open()
-				require.NoError(t, err)
-				defer rc.Close()
+				func() {
+					rc, err := file.Open()
+					require.NoError(t, err)
+					defer rc.Close()
 
-				err = json.NewDecoder(rc).Decode(&parsedPosts)
-				require.NoError(t, err)
+					err = json.NewDecoder(rc).Decode(&parsedPosts)
+					require.NoError(t, err)
+				}()
 				break
 			}
 		}

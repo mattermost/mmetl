@@ -2,9 +2,18 @@ package testhelper
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"log"
+	"net/http"
+	"os"
+	"regexp"
+	"sort"
+	"strings"
+	"sync"
 	"time"
 
+	"github.com/blang/semver/v4"
 	"github.com/docker/go-connections/nat"
 	"github.com/pkg/errors"
 	"github.com/testcontainers/testcontainers-go"
@@ -14,12 +23,139 @@ import (
 )
 
 const (
-	dbUser         = "mmuser"
-	dbPassword     = "mostest"
-	dbName         = "mattermost_test"
-	mattermostPort = "8065/tcp"
-	postgresAlias  = "postgres"
+	dbUser                   = "mmuser"
+	dbPassword               = "mostest"
+	dbName                   = "mattermost_test"
+	mattermostPort           = "8065/tcp"
+	postgresAlias            = "postgres"
+	postgresStartupTimeout   = 30 * time.Second
+	mattermostStartupTimeout = 120 * time.Second
+
+	defaultMattermostImage = "mattermost/mattermost-team-edition"
+	defaultMattermostTag   = "10.5"
+	envMattermostImage     = "MMETL_E2E_MATTERMOST_IMAGE"
+	envMattermostVersion   = "MMETL_E2E_MATTERMOST_VERSION"
+	dockerHubTagsURLFmt    = "https://hub.docker.com/v2/repositories/%s/%s/tags/"
 )
+
+var (
+	resolvedMattermostImage string
+	resolveOnce             sync.Once
+)
+
+var semverTagRegexp = regexp.MustCompile(`^\d+\.\d+\.\d+$`)
+
+// dockerHubTagsResponse represents the response from Docker Hub's tag listing API.
+type dockerHubTagsResponse struct {
+	Next    string `json:"next"`
+	Results []struct {
+		Name string `json:"name"`
+	} `json:"results"`
+}
+
+// findHighestStableVersion takes a list of Docker Hub tag names and returns
+// the highest version that matches the strict X.Y.Z semver pattern.
+// Tags like RCs, short tags (e.g. "10.5"), and branch names are excluded.
+func findHighestStableVersion(tagNames []string) (string, error) {
+	var versions []semver.Version
+	for _, tag := range tagNames {
+		if !semverTagRegexp.MatchString(tag) {
+			continue
+		}
+		v, err := semver.Parse(tag)
+		if err != nil {
+			continue
+		}
+		versions = append(versions, v)
+	}
+
+	if len(versions) == 0 {
+		return "", fmt.Errorf("no stable versions found")
+	}
+
+	sort.Slice(versions, func(i, j int) bool {
+		return versions[i].LT(versions[j])
+	})
+
+	return versions[len(versions)-1].String(), nil
+}
+
+// fetchLatestStableTag queries Docker Hub for the given image and returns
+// the highest stable X.Y.Z tag found.
+func fetchLatestStableTag(image string) (string, error) {
+	parts := strings.SplitN(image, "/", 2)
+	if len(parts) != 2 {
+		return "", fmt.Errorf("invalid image name %q: expected namespace/repository", image)
+	}
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	url := fmt.Sprintf(dockerHubTagsURLFmt+"?page_size=100", parts[0], parts[1])
+
+	var allTags []string
+	for url != "" {
+		req, err := http.NewRequest(http.MethodGet, url, nil)
+		if err != nil {
+			return "", errors.Wrap(err, "creating request")
+		}
+
+		resp, err := client.Do(req)
+		if err != nil {
+			return "", errors.Wrap(err, "fetching tags from Docker Hub")
+		}
+
+		var tagsResp dockerHubTagsResponse
+		if err := json.NewDecoder(resp.Body).Decode(&tagsResp); err != nil {
+			resp.Body.Close()
+			return "", errors.Wrap(err, "decoding Docker Hub response")
+		}
+		resp.Body.Close()
+
+		for _, r := range tagsResp.Results {
+			allTags = append(allTags, r.Name)
+		}
+
+		url = tagsResp.Next
+	}
+
+	return findHighestStableVersion(allTags)
+}
+
+// resolveMattermostImage determines the Mattermost container image to use.
+// Resolution priority:
+//  1. MMETL_E2E_MATTERMOST_IMAGE env var (full image:tag)
+//  2. MMETL_E2E_MATTERMOST_VERSION env var (combined with default image name)
+//  3. Auto-resolve latest stable tag from Docker Hub
+//  4. Fall back to defaultMattermostImage:defaultMattermostTag
+func resolveMattermostImage() string {
+	resolveOnce.Do(func() {
+		// 1. Full image override
+		if img := os.Getenv(envMattermostImage); img != "" {
+			resolvedMattermostImage = img
+			log.Printf("mmetl e2e: using Mattermost image from %s: %s", envMattermostImage, resolvedMattermostImage)
+			return
+		}
+
+		// 2. Version override
+		if ver := os.Getenv(envMattermostVersion); ver != "" {
+			resolvedMattermostImage = defaultMattermostImage + ":" + ver
+			log.Printf("mmetl e2e: using Mattermost image from %s: %s", envMattermostVersion, resolvedMattermostImage)
+			return
+		}
+
+		// 3. Auto-resolve from Docker Hub
+		tag, err := fetchLatestStableTag(defaultMattermostImage)
+		if err != nil {
+			log.Printf("mmetl e2e: failed to resolve latest Mattermost tag: %v; falling back to %s:%s", err, defaultMattermostImage, defaultMattermostTag)
+			resolvedMattermostImage = defaultMattermostImage + ":" + defaultMattermostTag
+			return
+		}
+
+		resolvedMattermostImage = defaultMattermostImage + ":" + tag
+		log.Printf("mmetl e2e: resolved Mattermost image: %s", resolvedMattermostImage)
+	})
+
+	return resolvedMattermostImage
+}
 
 // TearDownFunc is a function that cleans up test containers
 type TearDownFunc func(ctx context.Context) error
@@ -55,7 +191,7 @@ func CreatePostgresContainer(ctx context.Context, networkName string) (testconta
 		testcontainers.WithWaitStrategy(
 			wait.ForLog("database system is ready to accept connections").
 				WithOccurrence(2).
-				WithStartupTimeout(30*time.Second),
+				WithStartupTimeout(postgresStartupTimeout),
 		),
 		network.WithNetwork([]string{postgresAlias}, &testcontainers.DockerNetwork{Name: networkName}),
 	)
@@ -87,7 +223,7 @@ func CreateMattermostContainer(ctx context.Context, networkName string) (testcon
 	postgresConnStr := GetPostgresInternalConnStr()
 
 	req := testcontainers.ContainerRequest{
-		Image:        "mattermost/mattermost-team-edition:latest",
+		Image:        resolveMattermostImage(),
 		ExposedPorts: []string{mattermostPort},
 		Networks:     []string{networkName},
 		Env: map[string]string{
@@ -113,7 +249,7 @@ func CreateMattermostContainer(ctx context.Context, networkName string) (testcon
 				WithStatusCodeMatcher(func(status int) bool {
 					return status == 200
 				}),
-		).WithDeadline(120 * time.Second),
+		).WithDeadline(mattermostStartupTimeout),
 	}
 
 	mattermostContainer, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{

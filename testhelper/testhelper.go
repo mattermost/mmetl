@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -16,6 +17,14 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/exec"
+)
+
+const (
+	setupTimeout           = 5 * time.Minute
+	importJobMaxAttempts   = 60
+	importJobPollInterval  = 1 * time.Second
+	defaultPaginationLimit = 1000
+	containerFilePerm      = 0644
 )
 
 // TestHelper provides helper functions and containers for integration testing
@@ -40,7 +49,7 @@ func SetupHelper(t *testing.T) *TestHelper {
 		AdminPassword: "testpassword123",
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), setupTimeout)
 	defer cancel()
 
 	// Create Docker network for container communication
@@ -67,13 +76,13 @@ func SetupHelper(t *testing.T) *TestHelper {
 	th.Client = model.NewAPIv4Client(siteURL)
 
 	// Create initial admin user
-	th.setupAdminUser()
+	th.setupAdminUser(ctx)
 
 	return th
 }
 
 // setupAdminUser creates the initial admin user and logs in
-func (th *TestHelper) setupAdminUser() {
+func (th *TestHelper) setupAdminUser(ctx context.Context) {
 	// Create admin user
 	adminUser := &model.User{
 		Email:    "admin@test.local",
@@ -81,20 +90,20 @@ func (th *TestHelper) setupAdminUser() {
 		Password: th.AdminPassword,
 	}
 
-	createdUser, _, err := th.Client.CreateUser(context.Background(), adminUser)
+	createdUser, _, err := th.Client.CreateUser(ctx, adminUser)
 	require.NoError(th.t, err, "failed to create admin user")
 	th.AdminUser = createdUser
 
 	// Login as admin
-	_, _, err = th.Client.Login(context.Background(), adminUser.Email, th.AdminPassword)
+	_, _, err = th.Client.Login(ctx, adminUser.Email, th.AdminPassword)
 	require.NoError(th.t, err, "failed to login as admin user")
 
 	// Make user a system admin
-	_, err = th.Client.UpdateUserRoles(context.Background(), createdUser.Id, "system_admin system_user")
+	_, err = th.Client.UpdateUserRoles(ctx, createdUser.Id, "system_admin system_user")
 	require.NoError(th.t, err, "failed to make user system admin")
 
 	// Re-login to get admin permissions
-	_, _, err = th.Client.Login(context.Background(), adminUser.Email, th.AdminPassword)
+	_, _, err = th.Client.Login(ctx, adminUser.Email, th.AdminPassword)
 	require.NoError(th.t, err, "failed to re-login as admin user")
 }
 
@@ -110,57 +119,57 @@ func (th *TestHelper) TearDown() {
 }
 
 // CreateUser creates a user in Mattermost and returns the created user
-func (th *TestHelper) CreateUser(username, email string) *model.User {
+func (th *TestHelper) CreateUser(ctx context.Context, username, email string) *model.User {
 	user := &model.User{
 		Email:    email,
 		Username: username,
 		Password: "testpassword123",
 	}
 
-	createdUser, _, err := th.Client.CreateUser(context.Background(), user)
+	createdUser, _, err := th.Client.CreateUser(ctx, user)
 	require.NoError(th.t, err, "failed to create user %s", username)
 
 	return createdUser
 }
 
 // CreateUserWithPassword creates a user with a specific password
-func (th *TestHelper) CreateUserWithPassword(username, email, password string) *model.User {
+func (th *TestHelper) CreateUserWithPassword(ctx context.Context, username, email, password string) *model.User {
 	user := &model.User{
 		Email:    email,
 		Username: username,
 		Password: password,
 	}
 
-	createdUser, _, err := th.Client.CreateUser(context.Background(), user)
+	createdUser, _, err := th.Client.CreateUser(ctx, user)
 	require.NoError(th.t, err, "failed to create user %s", username)
 
 	return createdUser
 }
 
 // DeactivateUser deactivates a user (sets DeleteAt)
-func (th *TestHelper) DeactivateUser(userID string) {
-	_, err := th.Client.DeleteUser(context.Background(), userID)
+func (th *TestHelper) DeactivateUser(ctx context.Context, userID string) {
+	_, err := th.Client.DeleteUser(ctx, userID)
 	require.NoError(th.t, err, "failed to deactivate user %s", userID)
 }
 
 // GetUserByUsername fetches a user by username
-func (th *TestHelper) GetUserByUsername(username string) (*model.User, error) {
-	user, _, err := th.Client.GetUserByUsername(context.Background(), username, "")
+func (th *TestHelper) GetUserByUsername(ctx context.Context, username string) (*model.User, error) {
+	user, _, err := th.Client.GetUserByUsername(ctx, username, "")
 	return user, err
 }
 
 // GetUserByEmail fetches a user by email
-func (th *TestHelper) GetUserByEmail(email string) (*model.User, error) {
-	user, _, err := th.Client.GetUserByEmail(context.Background(), email, "")
+func (th *TestHelper) GetUserByEmail(ctx context.Context, email string) (*model.User, error) {
+	user, _, err := th.Client.GetUserByEmail(ctx, email, "")
 	return user, err
 }
 
 // GetAPIClient returns a new API client for the Mattermost instance
 // This can be used to create clients with different authentication
-func (th *TestHelper) GetAPIClient() *model.Client4 {
+func (th *TestHelper) GetAPIClient(ctx context.Context) *model.Client4 {
 	client := model.NewAPIv4Client(th.SiteURL)
 	// Login as admin
-	_, _, err := client.Login(context.Background(), th.AdminUser.Email, th.AdminPassword)
+	_, _, err := client.Login(ctx, th.AdminUser.Email, th.AdminPassword)
 	require.NoError(th.t, err, "failed to login API client")
 	return client
 }
@@ -168,34 +177,34 @@ func (th *TestHelper) GetAPIClient() *model.Client4 {
 // === Team Management ===
 
 // CreateTeam creates a team in Mattermost and returns the created team
-func (th *TestHelper) CreateTeam(name, displayName string) *model.Team {
+func (th *TestHelper) CreateTeam(ctx context.Context, name, displayName string) *model.Team {
 	team := &model.Team{
 		Name:        name,
 		DisplayName: displayName,
 		Type:        model.TeamOpen,
 	}
 
-	createdTeam, _, err := th.Client.CreateTeam(context.Background(), team)
+	createdTeam, _, err := th.Client.CreateTeam(ctx, team)
 	require.NoError(th.t, err, "failed to create team %s", name)
 
 	return createdTeam
 }
 
 // GetTeam fetches a team by name
-func (th *TestHelper) GetTeam(name string) (*model.Team, error) {
-	team, _, err := th.Client.GetTeamByName(context.Background(), name, "")
+func (th *TestHelper) GetTeam(ctx context.Context, name string) (*model.Team, error) {
+	team, _, err := th.Client.GetTeamByName(ctx, name, "")
 	return team, err
 }
 
 // GetTeamMembers fetches all members of a team
-func (th *TestHelper) GetTeamMembers(teamID string) ([]*model.TeamMember, error) {
-	members, _, err := th.Client.GetTeamMembers(context.Background(), teamID, 0, 1000, "")
+func (th *TestHelper) GetTeamMembers(ctx context.Context, teamID string) ([]*model.TeamMember, error) {
+	members, _, err := th.Client.GetTeamMembers(ctx, teamID, 0, defaultPaginationLimit, "")
 	return members, err
 }
 
 // AddUserToTeam adds a user to a team
-func (th *TestHelper) AddUserToTeam(teamID, userID string) *model.TeamMember {
-	member, _, err := th.Client.AddTeamMember(context.Background(), teamID, userID)
+func (th *TestHelper) AddUserToTeam(ctx context.Context, teamID, userID string) *model.TeamMember {
+	member, _, err := th.Client.AddTeamMember(ctx, teamID, userID)
 	require.NoError(th.t, err, "failed to add user %s to team %s", userID, teamID)
 	return member
 }
@@ -203,26 +212,26 @@ func (th *TestHelper) AddUserToTeam(teamID, userID string) *model.TeamMember {
 // === Channel Management ===
 
 // GetChannel fetches a channel by team ID and channel name
-func (th *TestHelper) GetChannel(teamID, channelName string) (*model.Channel, error) {
-	channel, _, err := th.Client.GetChannelByName(context.Background(), channelName, teamID, "")
+func (th *TestHelper) GetChannel(ctx context.Context, teamID, channelName string) (*model.Channel, error) {
+	channel, _, err := th.Client.GetChannelByName(ctx, channelName, teamID, "")
 	return channel, err
 }
 
 // GetChannelByNameForTeamName fetches a channel by team name and channel name
-func (th *TestHelper) GetChannelByNameForTeamName(teamName, channelName string) (*model.Channel, error) {
-	channel, _, err := th.Client.GetChannelByNameForTeamName(context.Background(), teamName, channelName, "")
+func (th *TestHelper) GetChannelByNameForTeamName(ctx context.Context, teamName, channelName string) (*model.Channel, error) {
+	channel, _, err := th.Client.GetChannelByNameForTeamName(ctx, teamName, channelName, "")
 	return channel, err
 }
 
 // GetChannelPosts fetches posts from a channel
-func (th *TestHelper) GetChannelPosts(channelID string, page, perPage int) (*model.PostList, error) {
-	posts, _, err := th.Client.GetPostsForChannel(context.Background(), channelID, page, perPage, "", false, false)
+func (th *TestHelper) GetChannelPosts(ctx context.Context, channelID string, page, perPage int) (*model.PostList, error) {
+	posts, _, err := th.Client.GetPostsForChannel(ctx, channelID, page, perPage, "", false, false)
 	return posts, err
 }
 
 // GetChannelMembers fetches members of a channel
-func (th *TestHelper) GetChannelMembers(channelID string) (model.ChannelMembers, error) {
-	members, _, err := th.Client.GetChannelMembers(context.Background(), channelID, 0, 1000, "")
+func (th *TestHelper) GetChannelMembers(ctx context.Context, channelID string) (model.ChannelMembers, error) {
+	members, _, err := th.Client.GetChannelMembers(ctx, channelID, 0, defaultPaginationLimit, "")
 	return members, err
 }
 
@@ -230,10 +239,8 @@ func (th *TestHelper) GetChannelMembers(channelID string) (model.ChannelMembers,
 
 // ImportBulkData imports a JSONL file into Mattermost using the real mmctl binary.
 // This uses the actual mmctl import process command to ensure we're testing the documented behavior.
-func (th *TestHelper) ImportBulkData(filePath string) error {
+func (th *TestHelper) ImportBulkData(ctx context.Context, filePath string) error {
 	th.t.Logf("Importing bulk data from: %s", filePath)
-
-	ctx := context.Background()
 
 	// Wrap JSONL in a zip if needed (mmctl requires zip files)
 	importPath := filePath
@@ -252,7 +259,7 @@ func (th *TestHelper) ImportBulkData(filePath string) error {
 	// Copy the import file to the container
 	containerPath := "/tmp/import.zip"
 	th.t.Logf("Copying import file to container at %s", containerPath)
-	err := th.MattermostContainer.CopyFileToContainer(ctx, importPath, containerPath, 0644)
+	err := th.MattermostContainer.CopyFileToContainer(ctx, importPath, containerPath, containerFilePerm)
 	if err != nil {
 		return fmt.Errorf("failed to copy import file to container: %w", err)
 	}
@@ -284,6 +291,11 @@ func (th *TestHelper) ImportBulkData(filePath string) error {
 		return fmt.Errorf("failed to extract job ID from mmctl output: %s", string(output))
 	}
 
+	// Validate job ID format to prevent command injection
+	if !regexp.MustCompile(`^[a-zA-Z0-9]+$`).MatchString(jobID) {
+		return fmt.Errorf("invalid job ID format: %s", jobID)
+	}
+
 	th.t.Logf("Import job created with ID: %s, waiting for completion...", jobID)
 
 	// Poll the job status until it completes
@@ -313,8 +325,11 @@ func extractJobID(output string) string {
 
 // waitForImportJobCompletion polls the import job status until it completes or fails
 func (th *TestHelper) waitForImportJobCompletion(ctx context.Context, jobID string) error {
-	maxAttempts := 60 // 60 attempts with 1 second sleep = 1 minute max wait
-	for i := 0; i < maxAttempts; i++ {
+	deadline := time.After(importJobMaxAttempts * importJobPollInterval)
+	interval := importJobPollInterval
+	const maxInterval = 10 * time.Second
+
+	for {
 		// Execute mmctl import job show command
 		cmd := []string{"/mattermost/bin/mmctl", "import", "job", "show", jobID, "--local"}
 		exitCode, reader, err := th.MattermostContainer.Exec(ctx, cmd, exec.Multiplexed())
@@ -333,7 +348,6 @@ func (th *TestHelper) waitForImportJobCompletion(ctx context.Context, jobID stri
 
 		statusOutput := string(output)
 
-		// Check if job is complete (Status: success or Status: error)
 		if strings.Contains(statusOutput, "Status: success") {
 			th.t.Logf("Import job %s completed successfully", jobID)
 			return nil
@@ -343,49 +357,57 @@ func (th *TestHelper) waitForImportJobCompletion(ctx context.Context, jobID stri
 			return fmt.Errorf("import job failed with status: %s", statusOutput)
 		}
 
-		// Job is still in progress (Status: pending or Status: in_progress)
-		th.t.Logf("Import job %s still in progress, waiting... (attempt %d/%d)", jobID, i+1, maxAttempts)
-		time.Sleep(1 * time.Second)
-	}
+		th.t.Logf("Import job %s still in progress, waiting %v...", jobID, interval)
 
-	return fmt.Errorf("import job %s did not complete within timeout", jobID)
+		select {
+		case <-deadline:
+			return fmt.Errorf("import job %s did not complete within timeout", jobID)
+		case <-time.After(interval):
+		}
+
+		// Exponential backoff
+		interval *= 2
+		if interval > maxInterval {
+			interval = maxInterval
+		}
+	}
 }
 
 // === Verification Helpers ===
 
 // AssertUserExists verifies that a user exists with the given username
-func (th *TestHelper) AssertUserExists(username string) *model.User {
-	user, err := th.GetUserByUsername(username)
+func (th *TestHelper) AssertUserExists(ctx context.Context, username string) *model.User {
+	user, err := th.GetUserByUsername(ctx, username)
 	require.NoError(th.t, err, "user %s should exist", username)
 	require.NotNil(th.t, user, "user %s should not be nil", username)
 	return user
 }
 
 // AssertTeamExists verifies that a team exists with the given name
-func (th *TestHelper) AssertTeamExists(teamName string) *model.Team {
-	team, err := th.GetTeam(teamName)
+func (th *TestHelper) AssertTeamExists(ctx context.Context, teamName string) *model.Team {
+	team, err := th.GetTeam(ctx, teamName)
 	require.NoError(th.t, err, "team %s should exist", teamName)
 	require.NotNil(th.t, team, "team %s should not be nil", teamName)
 	return team
 }
 
 // AssertChannelExists verifies that a channel exists in a team
-func (th *TestHelper) AssertChannelExists(teamName, channelName string) *model.Channel {
+func (th *TestHelper) AssertChannelExists(ctx context.Context, teamName, channelName string) *model.Channel {
 	// First get the team by name
-	team, err := th.GetTeam(teamName)
+	team, err := th.GetTeam(ctx, teamName)
 	require.NoError(th.t, err, "team %s should exist", teamName)
 	require.NotNil(th.t, team, "team %s should not be nil", teamName)
 
 	// Then get the channel by name and team ID
-	channel, err := th.GetChannel(team.Id, channelName)
+	channel, err := th.GetChannel(ctx, team.Id, channelName)
 	require.NoError(th.t, err, "channel %s in team %s should exist", channelName, teamName)
 	require.NotNil(th.t, channel, "channel %s should not be nil", channelName)
 	return channel
 }
 
 // AssertUserInTeam verifies that a user is a member of a team
-func (th *TestHelper) AssertUserInTeam(teamID, userID string) {
-	members, err := th.GetTeamMembers(teamID)
+func (th *TestHelper) AssertUserInTeam(ctx context.Context, teamID, userID string) {
+	members, err := th.GetTeamMembers(ctx, teamID)
 	require.NoError(th.t, err, "failed to get team members")
 
 	found := false
@@ -503,7 +525,7 @@ func isZipFile(filePath string) bool {
 
 // wrapJSONLInZip creates a temporary zip archive containing the JSONL file
 // The JSONL file is added as "import.jsonl" inside the archive
-func wrapJSONLInZip(jsonlPath string) (string, error) {
+func wrapJSONLInZip(jsonlPath string) (zipPath string, retErr error) {
 	// Create a temporary zip file
 	tempFile, err := os.CreateTemp("", "import-*.zip")
 	if err != nil {
@@ -511,14 +533,25 @@ func wrapJSONLInZip(jsonlPath string) (string, error) {
 	}
 	tempPath := tempFile.Name()
 
+	// Clean up on failure
+	defer func() {
+		if retErr != nil {
+			tempFile.Close()
+			os.Remove(tempPath)
+		}
+	}()
+
 	// Create zip writer
 	zipWriter := zip.NewWriter(tempFile)
+	defer func() {
+		if retErr != nil {
+			zipWriter.Close()
+		}
+	}()
 
 	// Open the JSONL file
 	jsonlFile, err := os.Open(jsonlPath)
 	if err != nil {
-		tempFile.Close()
-		os.Remove(tempPath)
 		return "", fmt.Errorf("failed to open JSONL file: %w", err)
 	}
 	defer jsonlFile.Close()
@@ -526,16 +559,12 @@ func wrapJSONLInZip(jsonlPath string) (string, error) {
 	// Get file info for the header
 	info, err := jsonlFile.Stat()
 	if err != nil {
-		tempFile.Close()
-		os.Remove(tempPath)
 		return "", fmt.Errorf("failed to stat JSONL file: %w", err)
 	}
 
 	// Create file header - use the original filename or "import.jsonl"
 	header, err := zip.FileInfoHeader(info)
 	if err != nil {
-		tempFile.Close()
-		os.Remove(tempPath)
 		return "", fmt.Errorf("failed to create zip header: %w", err)
 	}
 	header.Name = filepath.Base(jsonlPath)
@@ -547,22 +576,15 @@ func wrapJSONLInZip(jsonlPath string) (string, error) {
 	// Write the file to the zip
 	writer, err := zipWriter.CreateHeader(header)
 	if err != nil {
-		tempFile.Close()
-		os.Remove(tempPath)
 		return "", fmt.Errorf("failed to create zip entry: %w", err)
 	}
 
-	_, err = io.Copy(writer, jsonlFile)
-	if err != nil {
-		tempFile.Close()
-		os.Remove(tempPath)
+	if _, err = io.Copy(writer, jsonlFile); err != nil {
 		return "", fmt.Errorf("failed to write to zip: %w", err)
 	}
 
-	// Close the zip writer and temp file
+	// Close the zip writer and temp file (order matters: zip before file)
 	if err := zipWriter.Close(); err != nil {
-		tempFile.Close()
-		os.Remove(tempPath)
 		return "", fmt.Errorf("failed to close zip writer: %w", err)
 	}
 
@@ -576,7 +598,7 @@ func wrapJSONLInZip(jsonlPath string) (string, error) {
 
 // ValidateImportFileOrFail validates an import file and fails the test if invalid.
 // Uses the same validation as `mmctl import validate`.
-func (th *TestHelper) ValidateImportFileOrFail(filePath string) *ValidationResult {
+func (th *TestHelper) ValidateImportFileOrFail(ctx context.Context, filePath string) *ValidationResult {
 	result, err := ValidateImportFile(filePath)
 	require.NoError(th.t, err, "failed to validate import file")
 
