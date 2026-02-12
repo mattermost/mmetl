@@ -103,6 +103,11 @@ func fetchLatestStableTag(image string) (string, error) {
 			return "", errors.Wrap(err, "fetching tags from Docker Hub")
 		}
 
+		if resp.StatusCode != http.StatusOK {
+			resp.Body.Close()
+			return "", fmt.Errorf("Docker Hub returned status %d for %s", resp.StatusCode, url)
+		}
+
 		var tagsResp dockerHubTagsResponse
 		if err := json.NewDecoder(resp.Body).Decode(&tagsResp); err != nil {
 			resp.Body.Close()
@@ -206,6 +211,7 @@ func CreatePostgresContainer(ctx context.Context, networkName string) (testconta
 	// Connection string for host access (for debugging)
 	connStr, err := postgresContainer.ConnectionString(ctx, "sslmode=disable")
 	if err != nil {
+		_ = postgresContainer.Terminate(ctx)
 		return nil, "", nil, errors.Wrap(err, "cannot generate connection string for postgres")
 	}
 
@@ -266,11 +272,13 @@ func CreateMattermostContainer(ctx context.Context, networkName string) (testcon
 
 	host, err := mattermostContainer.Host(ctx)
 	if err != nil {
+		_ = mattermostContainer.Terminate(ctx)
 		return nil, "", nil, errors.Wrap(err, "cannot get mattermost host")
 	}
 
 	port, err := mattermostContainer.MappedPort(ctx, nat.Port(mattermostPort))
 	if err != nil {
+		_ = mattermostContainer.Terminate(ctx)
 		return nil, "", nil, errors.Wrap(err, "cannot get mattermost port")
 	}
 

@@ -14,7 +14,7 @@ type SlackChannel struct {
 	Members []string        `json:"members"`
 	Purpose SlackChannelSub `json:"purpose"`
 	Topic   SlackChannelSub `json:"topic"`
-	Type    model.ChannelType
+	Type    model.ChannelType `json:"-"` // Computed, not from JSON
 }
 
 // SlackChannelSub represents a sub-field in Slack channel data (purpose/topic)
