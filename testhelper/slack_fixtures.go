@@ -1,4 +1,4 @@
-package slack
+package testhelper
 
 import (
 	"archive/zip"
@@ -7,72 +7,74 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+
+	"github.com/mattermost/mmetl/services/slack"
 )
 
 // SlackExportBuilder helps construct Slack export ZIP files for testing
 type SlackExportBuilder struct {
-	channels        []SlackChannel
-	privateChannels []SlackChannel
-	groupChannels   []SlackChannel
-	directChannels  []SlackChannel
-	users           []SlackUser
-	posts           map[string][]SlackPost // channel name -> posts
-	skipValidation  bool                   // skip consistency validation (for testing edge cases)
+	channels        []slack.SlackChannel
+	privateChannels []slack.SlackChannel
+	groupChannels   []slack.SlackChannel
+	directChannels  []slack.SlackChannel
+	users           []slack.SlackUser
+	posts           map[string][]slack.SlackPost // channel name -> posts
+	skipValidation  bool                         // skip consistency validation (for testing edge cases)
 }
 
 // NewSlackExportBuilder creates a new builder for Slack exports
 func NewSlackExportBuilder() *SlackExportBuilder {
 	return &SlackExportBuilder{
-		channels:        []SlackChannel{},
-		privateChannels: []SlackChannel{},
-		groupChannels:   []SlackChannel{},
-		directChannels:  []SlackChannel{},
-		users:           []SlackUser{},
-		posts:           make(map[string][]SlackPost),
+		channels:        []slack.SlackChannel{},
+		privateChannels: []slack.SlackChannel{},
+		groupChannels:   []slack.SlackChannel{},
+		directChannels:  []slack.SlackChannel{},
+		users:           []slack.SlackUser{},
+		posts:           make(map[string][]slack.SlackPost),
 	}
 }
 
 // AddChannel adds a public channel to the export
-func (b *SlackExportBuilder) AddChannel(channel SlackChannel) *SlackExportBuilder {
+func (b *SlackExportBuilder) AddChannel(channel slack.SlackChannel) *SlackExportBuilder {
 	b.channels = append(b.channels, channel)
 	return b
 }
 
 // AddPrivateChannel adds a private channel (group) to the export
-func (b *SlackExportBuilder) AddPrivateChannel(channel SlackChannel) *SlackExportBuilder {
+func (b *SlackExportBuilder) AddPrivateChannel(channel slack.SlackChannel) *SlackExportBuilder {
 	b.privateChannels = append(b.privateChannels, channel)
 	return b
 }
 
 // AddGroupChannel adds a group DM (mpim) to the export
-func (b *SlackExportBuilder) AddGroupChannel(channel SlackChannel) *SlackExportBuilder {
+func (b *SlackExportBuilder) AddGroupChannel(channel slack.SlackChannel) *SlackExportBuilder {
 	b.groupChannels = append(b.groupChannels, channel)
 	return b
 }
 
 // AddDirectChannel adds a direct message channel to the export
-func (b *SlackExportBuilder) AddDirectChannel(channel SlackChannel) *SlackExportBuilder {
+func (b *SlackExportBuilder) AddDirectChannel(channel slack.SlackChannel) *SlackExportBuilder {
 	b.directChannels = append(b.directChannels, channel)
 	return b
 }
 
 // AddUser adds a user to the export
-func (b *SlackExportBuilder) AddUser(user SlackUser) *SlackExportBuilder {
+func (b *SlackExportBuilder) AddUser(user slack.SlackUser) *SlackExportBuilder {
 	b.users = append(b.users, user)
 	return b
 }
 
 // AddPost adds a post to a specific channel
-func (b *SlackExportBuilder) AddPost(channelName string, post SlackPost) *SlackExportBuilder {
+func (b *SlackExportBuilder) AddPost(channelName string, post slack.SlackPost) *SlackExportBuilder {
 	if _, ok := b.posts[channelName]; !ok {
-		b.posts[channelName] = []SlackPost{}
+		b.posts[channelName] = []slack.SlackPost{}
 	}
 	b.posts[channelName] = append(b.posts[channelName], post)
 	return b
 }
 
 // AddPosts adds multiple posts to a specific channel
-func (b *SlackExportBuilder) AddPosts(channelName string, posts []SlackPost) *SlackExportBuilder {
+func (b *SlackExportBuilder) AddPosts(channelName string, posts []slack.SlackPost) *SlackExportBuilder {
 	for _, post := range posts {
 		b.AddPost(channelName, post)
 	}
@@ -88,8 +90,8 @@ func (b *SlackExportBuilder) SkipValidation() *SlackExportBuilder {
 }
 
 // allChannels returns all channels from all types (public, private, group, direct)
-func (b *SlackExportBuilder) allChannels() []SlackChannel {
-	all := make([]SlackChannel, 0, len(b.channels)+len(b.privateChannels)+len(b.groupChannels)+len(b.directChannels))
+func (b *SlackExportBuilder) allChannels() []slack.SlackChannel {
+	all := make([]slack.SlackChannel, 0, len(b.channels)+len(b.privateChannels)+len(b.groupChannels)+len(b.directChannels))
 	all = append(all, b.channels...)
 	all = append(all, b.privateChannels...)
 	all = append(all, b.groupChannels...)
@@ -287,62 +289,62 @@ func (b *SlackExportBuilder) createZipFile(outputPath, sourceDir string) error {
 // BasicExport creates a simple export with users and channels (no posts)
 func BasicExport() *SlackExportBuilder {
 	return NewSlackExportBuilder().
-		AddUser(SlackUser{
+		AddUser(slack.SlackUser{
 			Id:       "U001",
 			Username: "john.doe",
 			IsBot:    false,
-			Profile: SlackProfile{
+			Profile: slack.SlackProfile{
 				RealName: "John Doe",
 				Email:    "john.doe@example.com",
 				Title:    "Software Engineer",
 			},
 			Deleted: false,
 		}).
-		AddUser(SlackUser{
+		AddUser(slack.SlackUser{
 			Id:       "U002",
 			Username: "jane.smith",
 			IsBot:    false,
-			Profile: SlackProfile{
+			Profile: slack.SlackProfile{
 				RealName: "Jane Smith",
 				Email:    "jane.smith@example.com",
 				Title:    "Product Manager",
 			},
 			Deleted: false,
 		}).
-		AddChannel(SlackChannel{
+		AddChannel(slack.SlackChannel{
 			Id:      "C001",
 			Name:    "general",
 			Creator: "U001",
 			Members: []string{"U001", "U002"},
-			Purpose: SlackChannelSub{Value: "Company-wide announcements"},
-			Topic:   SlackChannelSub{Value: "Welcome to the team!"},
+			Purpose: slack.SlackChannelSub{Value: "Company-wide announcements"},
+			Topic:   slack.SlackChannelSub{Value: "Welcome to the team!"},
 		}).
-		AddChannel(SlackChannel{
+		AddChannel(slack.SlackChannel{
 			Id:      "C002",
 			Name:    "random",
 			Creator: "U002",
 			Members: []string{"U001", "U002"},
-			Purpose: SlackChannelSub{Value: "Non-work banter"},
-			Topic:   SlackChannelSub{Value: "Water cooler chat"},
+			Purpose: slack.SlackChannelSub{Value: "Non-work banter"},
+			Topic:   slack.SlackChannelSub{Value: "Water cooler chat"},
 		})
 }
 
 // ExportWithPosts creates an export with users, channels, and posts
 func ExportWithPosts() *SlackExportBuilder {
 	return BasicExport().
-		AddPost("general", SlackPost{
+		AddPost("general", slack.SlackPost{
 			User:      "U001",
 			Text:      "Hello everyone!",
 			TimeStamp: "1704067200.000100",
 			Type:      "message",
 		}).
-		AddPost("general", SlackPost{
+		AddPost("general", slack.SlackPost{
 			User:      "U002",
 			Text:      "Welcome to the team, @john.doe!",
 			TimeStamp: "1704067260.000200",
 			Type:      "message",
 		}).
-		AddPost("random", SlackPost{
+		AddPost("random", slack.SlackPost{
 			User:      "U001",
 			Text:      "Anyone up for coffee?",
 			TimeStamp: "1704070800.000300",
@@ -353,21 +355,21 @@ func ExportWithPosts() *SlackExportBuilder {
 // ExportWithThreads creates an export with threaded conversations
 func ExportWithThreads() *SlackExportBuilder {
 	return BasicExport().
-		AddPost("general", SlackPost{
+		AddPost("general", slack.SlackPost{
 			User:      "U001",
 			Text:      "Let's discuss the new feature",
 			TimeStamp: "1704067200.000100",
 			ThreadTS:  "1704067200.000100", // Root of thread
 			Type:      "message",
 		}).
-		AddPost("general", SlackPost{
+		AddPost("general", slack.SlackPost{
 			User:      "U002",
 			Text:      "I think we should prioritize performance",
 			TimeStamp: "1704067260.000200",
 			ThreadTS:  "1704067200.000100", // Reply to thread
 			Type:      "message",
 		}).
-		AddPost("general", SlackPost{
+		AddPost("general", slack.SlackPost{
 			User:      "U001",
 			Text:      "Good point, let's add benchmarks",
 			TimeStamp: "1704067320.000300",
@@ -379,19 +381,19 @@ func ExportWithThreads() *SlackExportBuilder {
 // ExportWithMentions creates an export with user and channel mentions
 func ExportWithMentions() *SlackExportBuilder {
 	return BasicExport().
-		AddPost("general", SlackPost{
+		AddPost("general", slack.SlackPost{
 			User:      "U001",
 			Text:      "Hey <@U002>, can you review my PR?",
 			TimeStamp: "1704067200.000100",
 			Type:      "message",
 		}).
-		AddPost("general", SlackPost{
+		AddPost("general", slack.SlackPost{
 			User:      "U002",
 			Text:      "Sure! Also cc <#C002|random> for visibility",
 			TimeStamp: "1704067260.000200",
 			Type:      "message",
 		}).
-		AddPost("general", SlackPost{
+		AddPost("general", slack.SlackPost{
 			User:      "U001",
 			Text:      "<!here> important announcement!",
 			TimeStamp: "1704067320.000300",
@@ -402,32 +404,32 @@ func ExportWithMentions() *SlackExportBuilder {
 // ExportWithDeletedUser creates an export with a deleted user
 func ExportWithDeletedUser() *SlackExportBuilder {
 	return NewSlackExportBuilder().
-		AddUser(SlackUser{
+		AddUser(slack.SlackUser{
 			Id:       "U001",
 			Username: "john.doe",
 			IsBot:    false,
-			Profile: SlackProfile{
+			Profile: slack.SlackProfile{
 				RealName: "John Doe",
 				Email:    "john.doe@example.com",
 			},
 			Deleted: false,
 		}).
-		AddUser(SlackUser{
+		AddUser(slack.SlackUser{
 			Id:       "U003",
 			Username: "deleted.user",
 			IsBot:    false,
-			Profile: SlackProfile{
+			Profile: slack.SlackProfile{
 				RealName: "Former Employee",
 				Email:    "former@example.com",
 			},
 			Deleted: true,
 		}).
-		AddChannel(SlackChannel{
+		AddChannel(slack.SlackChannel{
 			Id:      "C001",
 			Name:    "general",
 			Creator: "U001",
 			Members: []string{"U001", "U003"},
-			Purpose: SlackChannelSub{Value: "General discussion"},
-			Topic:   SlackChannelSub{Value: ""},
+			Purpose: slack.SlackChannelSub{Value: "General discussion"},
+			Topic:   slack.SlackChannelSub{Value: ""},
 		})
 }
