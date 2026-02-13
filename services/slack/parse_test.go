@@ -18,7 +18,7 @@ func TestSlackConvertPostsMarkup(t *testing.T) {
 	}
 
 	t.Run("Test post not truncated during markdown conversion", func(t *testing.T) {
-		transformer := NewTransformer("test", logrus.New())
+		transformer := NewTransformer("test", TransformOptions{}, logrus.New())
 
 		parsedPosts := transformer.SlackConvertPostsMarkup(posts)
 		post := parsedPosts["channelName"][0]
@@ -51,7 +51,7 @@ func TestSlackConvertUserMentions(t *testing.T) {
 			Username: "user1",
 		},
 	}
-	transformer := NewTransformer("test", logrus.New())
+	transformer := NewTransformer("test", TransformOptions{}, logrus.New())
 
 	for _, testCase := range testCases {
 		posts := map[string][]SlackPost{
