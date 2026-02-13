@@ -105,7 +105,7 @@ func fetchLatestStableTag(image string) (string, error) {
 
 		if resp.StatusCode != http.StatusOK {
 			resp.Body.Close()
-			return "", fmt.Errorf("Docker Hub returned status %d for %s", resp.StatusCode, url)
+			return "", fmt.Errorf("docker hub returned status %d for %s", resp.StatusCode, url)
 		}
 
 		var tagsResp dockerHubTagsResponse

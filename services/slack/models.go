@@ -8,12 +8,12 @@ import (
 
 // SlackChannel represents a Slack channel in the export
 type SlackChannel struct {
-	Id      string          `json:"id"`
-	Name    string          `json:"name"`
-	Creator string          `json:"creator"`
-	Members []string        `json:"members"`
-	Purpose SlackChannelSub `json:"purpose"`
-	Topic   SlackChannelSub `json:"topic"`
+	Id      string            `json:"id"`
+	Name    string            `json:"name"`
+	Creator string            `json:"creator"`
+	Members []string          `json:"members"`
+	Purpose SlackChannelSub   `json:"purpose"`
+	Topic   SlackChannelSub   `json:"topic"`
 	Type    model.ChannelType `json:"-"` // Computed, not from JSON
 }
 
