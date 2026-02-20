@@ -286,8 +286,8 @@ func (b *SlackExportBuilder) createZipFile(outputPath, sourceDir string) error {
 
 // === Convenience builders for common test scenarios ===
 
-// BasicExport creates a simple export with users and channels (no posts)
-func BasicExport() *SlackExportBuilder {
+// SlackBasicExport creates a simple export with users and channels (no posts)
+func SlackBasicExport() *SlackExportBuilder {
 	return NewSlackExportBuilder().
 		AddUser(slack.SlackUser{
 			Id:       "U001",
@@ -331,7 +331,7 @@ func BasicExport() *SlackExportBuilder {
 
 // ExportWithPosts creates an export with users, channels, and posts
 func ExportWithPosts() *SlackExportBuilder {
-	return BasicExport().
+	return SlackBasicExport().
 		AddPost("general", slack.SlackPost{
 			User:      "U001",
 			Text:      "Hello everyone!",
@@ -354,7 +354,7 @@ func ExportWithPosts() *SlackExportBuilder {
 
 // ExportWithThreads creates an export with threaded conversations
 func ExportWithThreads() *SlackExportBuilder {
-	return BasicExport().
+	return SlackBasicExport().
 		AddPost("general", slack.SlackPost{
 			User:      "U001",
 			Text:      "Let's discuss the new feature",
@@ -380,7 +380,7 @@ func ExportWithThreads() *SlackExportBuilder {
 
 // ExportWithMentions creates an export with user and channel mentions
 func ExportWithMentions() *SlackExportBuilder {
-	return BasicExport().
+	return SlackBasicExport().
 		AddPost("general", slack.SlackPost{
 			User:      "U001",
 			Text:      "Hey <@U002>, can you review my PR?",

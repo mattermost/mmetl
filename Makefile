@@ -8,6 +8,7 @@ BUILD_VERSION ?= $(shell git ls-remote --tags --refs https://github.com/mattermo
 LDFLAGS += -X "github.com/mattermost/mmetl/commands.BuildHash=$(BUILD_HASH)"
 LDFLAGS += -X "github.com/mattermost/mmetl/commands.Version=$(BUILD_VERSION)"
 BUILD_COMMAND ?= go build -ldflags '$(LDFLAGS)'
+GO_TEST_FLAGS ?=
 
 all: build
 
@@ -71,7 +72,7 @@ gofmt:
 
 test:
 	@echo Running tests
-	$(GO) test -race -v $(GO_PACKAGES) -count=1
+	$(GO) test -race -v $(GO_PACKAGES) -count=1 ${GO_TEST_FLAGS}
 
 check-style: golangci-lint
 

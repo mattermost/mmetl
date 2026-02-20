@@ -379,7 +379,7 @@ func TestSlackExportBuilderCanBeParsedByTransformer(t *testing.T) {
 		tempDir := t.TempDir()
 		outputPath := filepath.Join(tempDir, "export.zip")
 
-		err := BasicExport().Build(outputPath)
+		err := SlackBasicExport().Build(outputPath)
 		require.NoError(t, err)
 
 		// Open the zip file with the transformer
