@@ -11,9 +11,24 @@ import (
 
 	"github.com/mattermost/mmetl/commands"
 	"github.com/mattermost/mmetl/testhelper"
+	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// resetCobraFlags recursively resets all flags in a command tree to their
+// default values. This prevents flag state from leaking between subtests
+// when reusing a global cobra.Command.
+func resetCobraFlags(cmd *cobra.Command) {
+	cmd.Flags().VisitAll(func(f *pflag.Flag) {
+		_ = f.Value.Set(f.DefValue)
+		f.Changed = false
+	})
+	for _, sub := range cmd.Commands() {
+		resetCobraFlags(sub)
+	}
+}
 
 // uniqueTeamName generates a unique team name for testing to avoid conflicts
 // Mattermost has reserved paths like "posts", "files", "api", etc.
@@ -62,6 +77,7 @@ func TestTransformSlackE2E(t *testing.T) {
 		}
 
 		c := commands.RootCmd
+		resetCobraFlags(c)
 		c.SetArgs(args)
 		err = c.Execute()
 		require.NoError(t, err, "transform command should succeed")
@@ -82,7 +98,7 @@ func TestTransformSlackE2E(t *testing.T) {
 		err = th.ImportBulkData(ctx, mmExportPath)
 		require.NoError(t, err, "import should succeed")
 
-		// 5. Verify users were created in Mattermost
+		// 6. Verify users were created in Mattermost
 		t.Log("Verifying users in Mattermost...")
 		johnUser := th.AssertUserExists(ctx, "john.doe")
 		assert.Equal(t, "john.doe@example.com", johnUser.Email, "john.doe should have correct email")
@@ -96,7 +112,7 @@ func TestTransformSlackE2E(t *testing.T) {
 		assert.Equal(t, "Smith", janeUser.LastName, "jane.smith should have correct last name")
 		assert.Equal(t, "Product Manager", janeUser.Position, "jane.smith should have correct position")
 
-		// 6. Verify channels were created in Mattermost
+		// 7. Verify channels were created in Mattermost
 		t.Log("Verifying channels in Mattermost...")
 		generalChannel := th.AssertChannelExists(ctx, teamName, "general")
 		assert.Equal(t, "Company-wide announcements", generalChannel.Purpose)
@@ -106,12 +122,12 @@ func TestTransformSlackE2E(t *testing.T) {
 		assert.Equal(t, "Non-work banter", randomChannel.Purpose)
 		assert.Equal(t, "Water cooler chat", randomChannel.Header)
 
-		// 7. Verify users are members of the team
+		// 8. Verify users are members of the team
 		t.Log("Verifying team memberships...")
 		th.AssertUserInTeam(ctx, team.Id, johnUser.Id)
 		th.AssertUserInTeam(ctx, team.Id, janeUser.Id)
 
-		// 8. Verify users are members of channels
+		// 9. Verify users are members of channels
 		t.Log("Verifying channel memberships...")
 		generalMembers, err := th.GetChannelMembers(ctx, generalChannel.Id)
 		require.NoError(t, err)
@@ -154,6 +170,7 @@ func TestTransformSlackE2E(t *testing.T) {
 		}
 
 		c := commands.RootCmd
+		resetCobraFlags(c)
 		c.SetArgs(args)
 		err = c.Execute()
 		require.NoError(t, err)
@@ -230,6 +247,7 @@ func TestTransformSlackE2E(t *testing.T) {
 		}
 
 		c := commands.RootCmd
+		resetCobraFlags(c)
 		c.SetArgs(args)
 		err = c.Execute()
 		require.NoError(t, err)
@@ -288,6 +306,7 @@ func TestTransformSlackE2E(t *testing.T) {
 		}
 
 		c := commands.RootCmd
+		resetCobraFlags(c)
 		c.SetArgs(args)
 		err = c.Execute()
 		require.NoError(t, err)
@@ -343,6 +362,7 @@ func TestTransformSlackE2ETeamConsistency(t *testing.T) {
 	}
 
 	c := commands.RootCmd
+	resetCobraFlags(c)
 	c.SetArgs(args)
 	err = c.Execute()
 	require.NoError(t, err)
