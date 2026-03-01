@@ -26,6 +26,9 @@ func init() {
 	RootCmd.AddCommand(VersionCmd)
 }
 
+// getVersion returns the version string, preferring the value set via ldflags,
+// falling back to the module version from Go's build info (e.g. when installed
+// via `go install`), and defaulting to "dev" for local development builds.
 func getVersion() string {
 	if Version != "" {
 		return Version
@@ -38,6 +41,9 @@ func getVersion() string {
 	return "dev"
 }
 
+// getBuildHash returns the build hash, preferring the value set via ldflags,
+// falling back to the VCS revision from Go's build info, and defaulting to
+// "dev mode" for local development builds.
 func getBuildHash() string {
 	if BuildHash != "" {
 		return BuildHash
