@@ -5,13 +5,14 @@ package commands
 
 import (
 	"fmt"
+	"runtime/debug"
 
 	"github.com/spf13/cobra"
 )
 
 var (
-	BuildHash = "dev mode"
-	Version   = "0.1.0"
+	BuildHash = ""
+	Version   = ""
 )
 
 var VersionCmd = &cobra.Command{
@@ -25,6 +26,34 @@ func init() {
 	RootCmd.AddCommand(VersionCmd)
 }
 
+func getVersion() string {
+	if Version != "" {
+		return Version
+	}
+
+	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" && info.Main.Version != "(devel)" {
+		return info.Main.Version
+	}
+
+	return "dev"
+}
+
+func getBuildHash() string {
+	if BuildHash != "" {
+		return BuildHash
+	}
+
+	if info, ok := debug.ReadBuildInfo(); ok {
+		for _, setting := range info.Settings {
+			if setting.Key == "vcs.revision" {
+				return setting.Value
+			}
+		}
+	}
+
+	return "dev mode"
+}
+
 func versionCmdF(cmd *cobra.Command, args []string) {
-	fmt.Println("mmetl " + Version + " -- " + BuildHash)
+	fmt.Println("mmetl " + getVersion() + " -- " + getBuildHash())
 }
