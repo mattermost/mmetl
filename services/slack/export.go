@@ -6,7 +6,6 @@ import (
 	"log"
 	"math"
 	"os"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -19,16 +18,6 @@ import (
 const (
 	POST_MAX_ATTACHMENTS = 5
 )
-
-var isValidChannelNameCharacters = regexp.MustCompile(`^[a-zA-Z0-9\-_]+$`).MatchString
-
-func truncateRunes(s string, i int) string {
-	runes := []rune(s)
-	if len(runes) > i {
-		return string(runes[:i])
-	}
-	return s
-}
 
 // splitTextIntoChunks splits text into multiple chunks, each within the rune limit.
 // It tries to split on word boundaries (spaces) or line breaks when possible.

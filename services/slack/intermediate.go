@@ -15,139 +15,45 @@ import (
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/text/unicode/norm"
+
+	"github.com/mattermost/mmetl/services/intermediate"
 )
 
 const attachmentsInternal = "bulk-export-attachments"
 
+// exitFunc is the function called for fatal errors. Overridable in tests.
 var exitFunc func(code int) = os.Exit
 
-type IntermediateChannel struct {
-	Id               string            `json:"id"`
-	OriginalName     string            `json:"original_name"`
-	Name             string            `json:"name"`
-	DisplayName      string            `json:"display_name"`
-	Members          []string          `json:"members"`
-	MembersUsernames []string          `json:"members_usernames"`
-	Purpose          string            `json:"purpose"`
-	Header           string            `json:"header"`
-	Topic            string            `json:"topic"`
-	Type             model.ChannelType `json:"type"`
+// isValidChannelNameCharacters delegates to the shared package validator.
+// Kept here for backward compatibility with tests in this package.
+var isValidChannelNameCharacters = intermediate.IsValidChannelNameCharacters
+
+// Type aliases for backward compatibility — all types are now defined in the
+// shared intermediate package and re-exported here.
+type IntermediateChannel = intermediate.IntermediateChannel
+type IntermediateUser = intermediate.IntermediateUser
+type IntermediateReaction = intermediate.IntermediateReaction
+type IntermediatePost = intermediate.IntermediatePost
+type Intermediate = intermediate.Intermediate
+
+// syncExitFunc synchronises the slack-package exitFunc with the shared package's
+// ExitFunc so that both packages use the same override in tests.
+func init() {
+	// Wire the shared package ExitFunc so that Sanitise calls use the same func.
+	// The slack package tests override exitFunc; we need to propagate that override
+	// into the shared package. We do this by shadowing Sanitise calls through wrappers.
+	//
+	// Actually, the shared package's Sanitise calls intermediate.ExitFunc directly,
+	// so we need to keep the two in sync. The simplest approach: override
+	// intermediate.ExitFunc here too. But since tests override exitFunc AFTER init(),
+	// we use a trampoline approach — see slackExitFuncTrampoline.
+	intermediate.ExitFunc = slackExitFuncTrampoline
 }
 
-func (c *IntermediateChannel) Sanitise(logger log.FieldLogger) {
-	if c.Type == model.ChannelTypeDirect {
-		return
-	}
-
-	c.Name = strings.Trim(c.Name, "_-")
-	if len(c.Name) > model.ChannelNameMaxLength {
-		logger.Warnf("Channel %s handle exceeds the maximum length. It will be truncated when imported.", c.DisplayName)
-		c.Name = c.Name[0:model.ChannelNameMaxLength]
-	}
-	if len(c.Name) == 1 {
-		c.Name = "slack-channel-" + c.Name
-	}
-	if !isValidChannelNameCharacters(c.Name) {
-		c.Name = strings.ToLower(c.Id)
-	}
-
-	c.DisplayName = strings.Trim(c.DisplayName, "_-")
-	if utf8.RuneCountInString(c.DisplayName) > model.ChannelDisplayNameMaxRunes {
-		logger.Warnf("Channel %s display name exceeds the maximum length. It will be truncated when imported.", c.DisplayName)
-		c.DisplayName = truncateRunes(c.DisplayName, model.ChannelDisplayNameMaxRunes)
-	}
-	if len(c.DisplayName) == 1 {
-		c.DisplayName = "slack-channel-" + c.DisplayName
-	}
-
-	if utf8.RuneCountInString(c.Purpose) > model.ChannelPurposeMaxRunes {
-		logger.Warnf("Channel %s purpose exceeds the maximum length. It will be truncated when imported.", c.DisplayName)
-		c.Purpose = truncateRunes(c.Purpose, model.ChannelPurposeMaxRunes)
-	}
-
-	if utf8.RuneCountInString(c.Header) > model.ChannelHeaderMaxRunes {
-		logger.Warnf("Channel %s header exceeds the maximum length. It will be truncated when imported.", c.DisplayName)
-		c.Header = truncateRunes(c.Header, model.ChannelHeaderMaxRunes)
-	}
-}
-
-type IntermediateUser struct {
-	Id          string   `json:"id"`
-	Username    string   `json:"username"`
-	FirstName   string   `json:"first_name"`
-	LastName    string   `json:"last_name"`
-	Position    string   `json:"position"`
-	Email       string   `json:"email"`
-	Password    string   `json:"password"`
-	Memberships []string `json:"memberships"`
-	DeleteAt    int64    `json:"delete_at"`
-	IsBot       bool     `json:"is_bot"`
-	DisplayName string   `json:"display_name"`
-}
-
-func (u *IntermediateUser) Sanitise(logger log.FieldLogger, defaultEmailDomain string, skipEmptyEmails bool) {
-	logger.Debugf("TransformUsers: Sanitise: IntermediateUser receiver: %+v", u)
-
-	if u.Email == "" {
-		if skipEmptyEmails {
-			logger.Warnf("User %s does not have an email address in the Slack export. Using blank email address due to --skip-empty-emails flag.", u.Username)
-			return
-		}
-
-		if defaultEmailDomain != "" {
-			u.Email = u.Username + "@" + defaultEmailDomain
-			logger.Warnf("User %s does not have an email address in the Slack export. Used %s as a placeholder. The user should update their email address once logged in to the system.", u.Username, u.Email)
-		} else {
-			msg := fmt.Sprintf("User %s does not have an email address in the Slack export. Please provide an email domain through the --default-email-domain flag, to assign this user's email address. Alternatively, use the --skip-empty-emails flag to set the user's email to an empty string.", u.Username)
-			logger.Error(msg)
-			fmt.Println(msg)
-			exitFunc(1)
-		}
-	}
-
-	if utf8.RuneCountInString(u.FirstName) > model.UserFirstNameMaxRunes {
-		logger.Warnf("User %s first name exceeds the maximum length. It will be truncated when imported.", u.Username)
-		u.FirstName = truncateRunes(u.FirstName, model.UserFirstNameMaxRunes)
-	}
-
-	if utf8.RuneCountInString(u.LastName) > model.UserLastNameMaxRunes {
-		logger.Warnf("User %s last name exceeds the maximum length. It will be truncated when imported.", u.Username)
-		u.LastName = truncateRunes(u.LastName, model.UserLastNameMaxRunes)
-	}
-
-	if utf8.RuneCountInString(u.Position) > model.UserPositionMaxRunes {
-		logger.Warnf("User %s position exceeds the maximum length. It will be truncated when imported.", u.Username)
-		u.Position = truncateRunes(u.Position, model.UserPositionMaxRunes)
-	}
-}
-
-type IntermediateReaction struct {
-	User      string `json:"user"`
-	EmojiName string `json:"emoji_name"`
-	CreateAt  int64  `json:"create_at"`
-}
-
-type IntermediatePost struct {
-	User           string                  `json:"user"`
-	Channel        string                  `json:"channel"`
-	Message        string                  `json:"message"`
-	Props          model.StringInterface   `json:"props"`
-	CreateAt       int64                   `json:"create_at"`
-	Type           string                  `json:"type"`
-	Attachments    []string                `json:"attachments"`
-	Replies        []*IntermediatePost     `json:"replies"`
-	Reactions      []*IntermediateReaction `json:"reactions"`
-	IsDirect       bool                    `json:"is_direct"`
-	ChannelMembers []string                `json:"channel_members"`
-}
-
-type Intermediate struct {
-	PublicChannels  []*IntermediateChannel       `json:"public_channels"`
-	PrivateChannels []*IntermediateChannel       `json:"private_channels"`
-	GroupChannels   []*IntermediateChannel       `json:"group_channels"`
-	DirectChannels  []*IntermediateChannel       `json:"direct_channels"`
-	UsersById       map[string]*IntermediateUser `json:"users"`
-	Posts           []*IntermediatePost          `json:"posts"`
+// slackExitFuncTrampoline delegates to the slack-package exitFunc so that test
+// overrides of exitFunc are honoured in Sanitise calls made from this package.
+func slackExitFuncTrampoline(code int) {
+	exitFunc(code)
 }
 
 func (t *Transformer) TransformUsers(users []SlackUser, skipEmptyEmails bool, defaultEmailDomain string) {
@@ -381,18 +287,18 @@ func AddPostToThreads(original SlackPost, post *IntermediatePost, threads map[st
 	threads[original.TimeStamp] = post
 }
 
-func buildChannelsByOriginalNameMap(intermediate *Intermediate) map[string]*IntermediateChannel {
+func buildChannelsByOriginalNameMap(inter *Intermediate) map[string]*IntermediateChannel {
 	channelsByName := map[string]*IntermediateChannel{}
-	for _, channel := range intermediate.PublicChannels {
+	for _, channel := range inter.PublicChannels {
 		channelsByName[channel.OriginalName] = channel
 	}
-	for _, channel := range intermediate.PrivateChannels {
+	for _, channel := range inter.PrivateChannels {
 		channelsByName[channel.OriginalName] = channel
 	}
-	for _, channel := range intermediate.GroupChannels {
+	for _, channel := range inter.GroupChannels {
 		channelsByName[channel.OriginalName] = channel
 	}
-	for _, channel := range intermediate.DirectChannels {
+	for _, channel := range inter.DirectChannels {
 		channelsByName[channel.OriginalName] = channel
 	}
 	return channelsByName
