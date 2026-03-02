@@ -12,6 +12,7 @@ import (
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 
+	"github.com/mattermost/mmetl/services/rocketchat"
 	"github.com/mattermost/mmetl/services/slack"
 )
 
@@ -50,13 +51,141 @@ func init() {
 	TransformSlackCmd.Flags().BoolP("discard-invalid-props", "p", false, "Skips converting posts with invalid props instead discarding the props themselves")
 	TransformSlackCmd.Flags().Bool("debug", false, "Whether to show debug logs or not")
 
+	TransformRocketChatCmd.Flags().StringP("team", "t", "", "an existing team in Mattermost to import the data into")
+	if err := TransformRocketChatCmd.MarkFlagRequired("team"); err != nil {
+		panic(err)
+	}
+	TransformRocketChatCmd.Flags().StringP("dump-dir", "d", "", "path to the mongodump output directory (containing .bson files)")
+	if err := TransformRocketChatCmd.MarkFlagRequired("dump-dir"); err != nil {
+		panic(err)
+	}
+	TransformRocketChatCmd.Flags().StringP("output", "o", "bulk-export.jsonl", "the output path")
+	TransformRocketChatCmd.Flags().String("attachments-dir", "data", "the path for the attachments directory")
+	TransformRocketChatCmd.Flags().String("uploads-dir", "", "path to Rocket.Chat FileSystem uploads directory (if not using GridFS)")
+	TransformRocketChatCmd.Flags().BoolP("skip-attachments", "a", false, "Skips extracting file attachments")
+	TransformRocketChatCmd.Flags().Bool("skip-empty-emails", false, "Ignore empty email addresses from the import file. Note that this results in invalid data.")
+	TransformRocketChatCmd.Flags().String("default-email-domain", "", "If this flag is provided: When a user's email address is empty, the output's email address will be generated from their username and the provided domain.")
+	TransformRocketChatCmd.Flags().Bool("skip-team-export", false, "Skip writing the team line to the output. Use when importing into an existing Mattermost team.")
+	TransformRocketChatCmd.Flags().Bool("debug", false, "Whether to show debug logs or not")
+
 	TransformCmd.AddCommand(
 		TransformSlackCmd,
+		TransformRocketChatCmd,
 	)
 
 	RootCmd.AddCommand(
 		TransformCmd,
 	)
+}
+
+var TransformRocketChatCmd = &cobra.Command{
+	Use:     "rocketchat",
+	Short:   "Transforms a Rocket.Chat mongodump export.",
+	Long:    "Transforms a Rocket.Chat mongodump directory into a Mattermost export JSONL file.",
+	Example: "  transform rocketchat --team myteam --dump-dir /backup/meteor --output mm_export.jsonl",
+	Args:    cobra.NoArgs,
+	RunE:    transformRocketChatCmdF,
+}
+
+func transformRocketChatCmdF(cmd *cobra.Command, args []string) error {
+	team, _ := cmd.Flags().GetString("team")
+	dumpDir, _ := cmd.Flags().GetString("dump-dir")
+	outputFilePath, _ := cmd.Flags().GetString("output")
+	attachmentsDir, _ := cmd.Flags().GetString("attachments-dir")
+	uploadsDir, _ := cmd.Flags().GetString("uploads-dir")
+	skipAttachments, _ := cmd.Flags().GetBool("skip-attachments")
+	skipEmptyEmails, _ := cmd.Flags().GetBool("skip-empty-emails")
+	defaultEmailDomain, _ := cmd.Flags().GetString("default-email-domain")
+	skipTeamExport, _ := cmd.Flags().GetBool("skip-team-export")
+	debug, _ := cmd.Flags().GetBool("debug")
+
+	team = strings.ToLower(team)
+
+	logger := log.New()
+	logFile, err := os.OpenFile("transform-rocketchat.log", os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0666)
+	if err != nil {
+		return err
+	}
+	defer logFile.Close()
+	logger.SetOutput(logFile)
+	logger.SetFormatter(customLogFormatter)
+	logger.SetReportCaller(true)
+
+	if debug {
+		logger.Level = log.DebugLevel
+		logger.Info("Debug mode enabled")
+	}
+
+	parsed, err := rocketchat.ParseDump(dumpDir, logger)
+	if err != nil {
+		return err
+	}
+
+	transformer := rocketchat.NewTransformer(team, logger)
+	transformer.SkipTeamExport = skipTeamExport
+
+	users := make([]rocketchat.RocketChatUser, 0, len(parsed.UsersByID))
+	for _, u := range parsed.UsersByID {
+		users = append(users, *u)
+	}
+	transformer.TransformUsers(users, skipEmptyEmails, defaultEmailDomain)
+
+	rooms := make([]rocketchat.RocketChatRoom, 0, len(parsed.RoomsByID))
+	for _, r := range parsed.RoomsByID {
+		rooms = append(rooms, *r)
+	}
+	transformer.TransformChannels(rooms)
+
+	subs := make([]rocketchat.RocketChatSubscription, 0)
+	for _, subList := range parsed.SubscriptionsByRoomID {
+		for _, s := range subList {
+			subs = append(subs, *s)
+		}
+	}
+	transformer.TransformSubscriptions(subs)
+
+	msgs := make([]rocketchat.RocketChatMessage, 0)
+	for _, msgList := range parsed.MessagesByRoomID {
+		for _, m := range msgList {
+			msgs = append(msgs, *m)
+		}
+	}
+	// Pass nil for uploads when skipping attachments so no attachment paths are
+	// written into the JSONL (the files won't be in the zip either).
+	var uploadsForTransform map[string]*rocketchat.RocketChatUpload
+	if !skipAttachments {
+		uploadsForTransform = parsed.UploadsByID
+	}
+	transformer.TransformMessages(msgs, uploadsForTransform)
+
+	if !skipAttachments {
+		chunksFilePath := path.Join(dumpDir, "rocketchat_uploads.chunks.bson")
+		var gridfsChunks map[string][]rocketchat.GridFSChunk
+		if _, err := os.Stat(chunksFilePath); err == nil {
+			gridfsChunks, err = rocketchat.LoadGridFSChunks(chunksFilePath)
+			if err != nil {
+				logger.Warnf("Failed to load GridFS chunks: %v", err)
+			}
+		}
+
+		attachmentsOutput := path.Join(attachmentsDir, "bulk-export-attachments")
+		if err := rocketchat.ExtractAttachments(parsed.UploadsByID, gridfsChunks, attachmentsOutput, uploadsDir, logger); err != nil {
+			return err
+		}
+	}
+
+	if err := transformer.Export(outputFilePath); err != nil {
+		return err
+	}
+
+	logger.Infof("Transformation succeeded! Users: %d, Public channels: %d, Private channels: %d, Posts: %d",
+		len(transformer.Intermediate.UsersById),
+		len(transformer.Intermediate.PublicChannels),
+		len(transformer.Intermediate.PrivateChannels),
+		len(transformer.Intermediate.Posts),
+	)
+
+	return nil
 }
 
 func transformSlackCmdF(cmd *cobra.Command, args []string) error {
