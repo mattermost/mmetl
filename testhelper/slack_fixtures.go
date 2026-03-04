@@ -254,6 +254,9 @@ func (b *SlackExportBuilder) createZipFile(outputPath, sourceDir string) error {
 			return err
 		}
 
+		// Normalize to forward slashes for ZIP spec compliance
+		relPath = filepath.ToSlash(relPath)
+
 		if info.IsDir() {
 			// For directories, add trailing slash
 			_, createErr := archive.Create(relPath + "/")

@@ -360,6 +360,8 @@ func (th *TestHelper) waitForImportJobCompletion(ctx context.Context, jobID stri
 		th.t.Logf("Import job %s still in progress, waiting %v...", jobID, interval)
 
 		select {
+		case <-ctx.Done():
+			return fmt.Errorf("context cancelled while waiting for import job %s: %w", jobID, ctx.Err())
 		case <-deadline:
 			return fmt.Errorf("import job %s did not complete within timeout", jobID)
 		case <-time.After(interval):

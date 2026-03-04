@@ -229,9 +229,10 @@ func CreateMattermostContainer(ctx context.Context, networkName string) (testcon
 	postgresConnStr := GetPostgresInternalConnStr()
 
 	req := testcontainers.ContainerRequest{
-		Image:        resolveMattermostImage(),
-		ExposedPorts: []string{mattermostPort},
-		Networks:     []string{networkName},
+		Image:         resolveMattermostImage(),
+		ImagePlatform: "linux/amd64",
+		ExposedPorts:  []string{mattermostPort},
+		Networks:      []string{networkName},
 		Env: map[string]string{
 			"MM_SQLSETTINGS_DRIVERNAME":                   "postgres",
 			"MM_SQLSETTINGS_DATASOURCE":                   postgresConnStr,
