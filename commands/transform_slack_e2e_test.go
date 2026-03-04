@@ -642,7 +642,7 @@ func TestTransformSlackE2EBotImport(t *testing.T) {
 				continue
 			}
 			var importLine map[string]json.RawMessage
-			err := json.Unmarshal([]byte(line), &importLine)
+			err = json.Unmarshal([]byte(line), &importLine)
 			require.NoError(t, err)
 
 			if string(importLine["type"]) != `"bot"` {
