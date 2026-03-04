@@ -433,3 +433,98 @@ func ExportWithDeletedUser() *SlackExportBuilder {
 			Topic:   slack.SlackChannelSub{Value: ""},
 		})
 }
+
+// ExportWithBots creates an export with regular users and bot users
+func ExportWithBots() *SlackExportBuilder {
+	return NewSlackExportBuilder().
+		AddUser(slack.SlackUser{
+			Id:       "U001",
+			Username: "john.doe",
+			Profile: slack.SlackProfile{
+				RealName: "John Doe",
+				Email:    "john.doe@example.com",
+				Title:    "Software Engineer",
+			},
+		}).
+		AddUser(slack.SlackUser{
+			Id:       "U002",
+			Username: "deploybot",
+			IsBot:    true,
+			Profile: slack.SlackProfile{
+				BotID:    "B001",
+				RealName: "Deploy Bot",
+				Title:    "Handles deployments",
+			},
+		}).
+		AddUser(slack.SlackUser{
+			Id:       "U003",
+			Username: "alertbot",
+			IsBot:    true,
+			Profile: slack.SlackProfile{
+				BotID:    "B002",
+				RealName: "Alert Bot",
+			},
+		}).
+		AddChannel(slack.SlackChannel{
+			Id:      "C001",
+			Name:    "general",
+			Creator: "U001",
+			Members: []string{"U001"},
+			Purpose: slack.SlackChannelSub{Value: "General discussion"},
+			Topic:   slack.SlackChannelSub{Value: "Welcome!"},
+		})
+}
+
+// ExportWithBotPosts creates an export with bot users and their posts
+func ExportWithBotPosts() *SlackExportBuilder {
+	return ExportWithBots().
+		AddPost("general", slack.SlackPost{
+			User:      "U001",
+			Text:      "Starting the deploy",
+			TimeStamp: "1704067200.000100",
+			Type:      "message",
+		}).
+		AddPost("general", slack.SlackPost{
+			BotId:     "B001",
+			Text:      "Deployment started for v2.0.0",
+			TimeStamp: "1704067260.000200",
+			Type:      "message",
+			SubType:   "bot_message",
+		}).
+		AddPost("general", slack.SlackPost{
+			BotId:     "B002",
+			Text:      "Alert: CPU usage above 90%",
+			TimeStamp: "1704067320.000300",
+			Type:      "message",
+			SubType:   "bot_message",
+		})
+}
+
+// ExportWithDeletedBot creates an export with a deleted (deactivated) bot user
+func ExportWithDeletedBot() *SlackExportBuilder {
+	return NewSlackExportBuilder().
+		AddUser(slack.SlackUser{
+			Id:       "U001",
+			Username: "john.doe",
+			Profile: slack.SlackProfile{
+				RealName: "John Doe",
+				Email:    "john.doe@example.com",
+			},
+		}).
+		AddUser(slack.SlackUser{
+			Id:       "U002",
+			Username: "oldbot",
+			IsBot:    true,
+			Deleted:  true,
+			Profile: slack.SlackProfile{
+				BotID:    "B003",
+				RealName: "Old Bot",
+			},
+		}).
+		AddChannel(slack.SlackChannel{
+			Id:      "C001",
+			Name:    "general",
+			Creator: "U001",
+			Members: []string{"U001"},
+		})
+}

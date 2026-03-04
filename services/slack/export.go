@@ -205,6 +205,24 @@ func GetImportLineFromUser(user *IntermediateUser, team string) *imports.LineImp
 	}
 }
 
+func GetImportLineFromBot(user *IntermediateUser, owner string) *imports.LineImportData {
+	var deleteAt *int64
+	if user.DeleteAt > 0 {
+		deleteAt = model.NewPointer(user.DeleteAt)
+	}
+
+	return &imports.LineImportData{
+		Type: "bot",
+		Bot: &imports.BotImportData{
+			Username:    model.NewPointer(user.Username),
+			DisplayName: model.NewPointer(user.DisplayName),
+			Description: model.NewPointer(user.Position),
+			Owner:       model.NewPointer(owner),
+			DeleteAt:    deleteAt,
+		},
+	}
+}
+
 func GetAttachmentImportDataFromPaths(paths []string) []imports.AttachmentImportData {
 	attachments := []imports.AttachmentImportData{}
 	for _, path := range paths {
@@ -381,20 +399,37 @@ func (t *Transformer) ExportDirectChannels(channels []*IntermediateChannel, writ
 	return nil
 }
 
-func (t *Transformer) ExportUsers(writer io.Writer) error {
+func (t *Transformer) ExportUsers(writer io.Writer, botOwner string) error {
 	// Collect users from map and sort them by username for deterministic output
 	users := make([]*IntermediateUser, 0, len(t.Intermediate.UsersById))
+	bots := make([]*IntermediateUser, 0)
 	for _, user := range t.Intermediate.UsersById {
-		users = append(users, user)
+		if user.IsBot {
+			bots = append(bots, user)
+		} else {
+			users = append(users, user)
+		}
 	}
 
 	// Sort by username to ensure consistent ordering
 	sort.Slice(users, func(i, j int) bool {
 		return users[i].Username < users[j].Username
 	})
+	sort.Slice(bots, func(i, j int) bool {
+		return bots[i].Username < bots[j].Username
+	})
 
+	// Write regular users first (bot owner must exist before bots)
 	for _, user := range users {
 		line := GetImportLineFromUser(user, t.TeamName)
+		if err := ExportWriteLine(writer, line); err != nil {
+			return err
+		}
+	}
+
+	// Write bots after users
+	for _, bot := range bots {
+		line := GetImportLineFromBot(bot, botOwner)
 		if err := ExportWriteLine(writer, line); err != nil {
 			return err
 		}
@@ -413,7 +448,7 @@ func (t *Transformer) ExportPosts(writer io.Writer) error {
 	return nil
 }
 
-func (t *Transformer) Export(outputFilePath string) error {
+func (t *Transformer) Export(outputFilePath string, botOwner string) error {
 	outputFile, err := os.Create(outputFilePath)
 	if err != nil {
 		return err
@@ -436,7 +471,7 @@ func (t *Transformer) Export(outputFilePath string) error {
 	}
 
 	t.Logger.Info("Exporting users")
-	if err := t.ExportUsers(outputFile); err != nil {
+	if err := t.ExportUsers(outputFile, botOwner); err != nil {
 		return err
 	}
 

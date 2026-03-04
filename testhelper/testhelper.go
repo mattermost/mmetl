@@ -420,6 +420,30 @@ func (th *TestHelper) AssertUserInTeam(ctx context.Context, teamID, userID strin
 	require.True(th.t, found, "user %s should be a member of team %s", userID, teamID)
 }
 
+// === Bot Management ===
+
+// GetBotByUsername fetches a bot by first finding the user, then getting the bot record.
+// Returns nil if the user doesn't exist or isn't a bot.
+func (th *TestHelper) GetBotByUsername(ctx context.Context, username string) (*model.Bot, error) {
+	user, err := th.GetUserByUsername(ctx, username)
+	if err != nil {
+		return nil, err
+	}
+	if user == nil {
+		return nil, nil
+	}
+	bot, _, err := th.Client.GetBotIncludeDeleted(ctx, user.Id, "")
+	return bot, err
+}
+
+// AssertBotExists verifies that a bot exists with the given username and returns the bot
+func (th *TestHelper) AssertBotExists(ctx context.Context, username string) *model.Bot {
+	bot, err := th.GetBotByUsername(ctx, username)
+	require.NoError(th.t, err, "bot %s should exist", username)
+	require.NotNil(th.t, bot, "bot %s should not be nil", username)
+	return bot
+}
+
 // === Import File Validation using mmctl importer package ===
 
 // ValidationResult contains the results of validating an import file.

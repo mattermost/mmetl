@@ -81,6 +81,8 @@ type IntermediateUser struct {
 	Password    string   `json:"password"`
 	Memberships []string `json:"memberships"`
 	DeleteAt    int64    `json:"delete_at"`
+	IsBot       bool     `json:"is_bot"`
+	DisplayName string   `json:"display_name"`
 }
 
 func (u *IntermediateUser) Sanitise(logger log.FieldLogger, defaultEmailDomain string, skipEmptyEmails bool) {
@@ -186,9 +188,13 @@ func (t *Transformer) TransformUsers(users []SlackUser, skipEmptyEmails bool, de
 
 		if user.IsBot {
 			newUser.Id = user.Profile.BotID
+			newUser.IsBot = true
+			newUser.DisplayName = user.Profile.RealName
 		}
 
-		newUser.Sanitise(t.Logger, defaultEmailDomain, skipEmptyEmails)
+		if !newUser.IsBot {
+			newUser.Sanitise(t.Logger, defaultEmailDomain, skipEmptyEmails)
+		}
 		resultUsers[newUser.Id] = newUser
 		t.Logger.Debugf("Slack user with email %s and password %s has been imported.", newUser.Email, newUser.Password)
 	}
@@ -254,6 +260,9 @@ func (t *Transformer) PopulateUserMemberships() {
 	t.Logger.Info("Populating user memberships")
 
 	for userId, user := range t.Intermediate.UsersById {
+		if user.IsBot {
+			continue
+		}
 		memberships := []string{}
 		for _, channel := range t.Intermediate.PublicChannels {
 			for _, memberId := range channel.Members {
@@ -480,6 +489,17 @@ func (t *Transformer) CreateIntermediateUser(userID string) {
 	}
 	t.Intermediate.UsersById[userID] = newUser
 	t.Logger.Warnf("Created a new user because the original user was missing from the import files. user=%s", userID)
+}
+
+func (t *Transformer) CreateIntermediateBotUser(userID string) {
+	newUser := &IntermediateUser{
+		Id:          userID,
+		Username:    strings.ToLower(userID),
+		DisplayName: "Unknown Bot",
+		IsBot:       true,
+	}
+	t.Intermediate.UsersById[userID] = newUser
+	t.Logger.Warnf("Created a new bot user because the original bot was missing from the import files. bot_id=%s", userID)
 }
 
 func (t *Transformer) CreateAndAddPostToThreads(post SlackPost, threads map[string]*IntermediatePost, timestamps map[int64]bool, channel *IntermediateChannel) {
@@ -718,7 +738,7 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 
 				author := t.Intermediate.UsersById[post.BotId]
 				if author == nil {
-					t.CreateIntermediateUser(post.BotId)
+					t.CreateIntermediateBotUser(post.BotId)
 					author = t.Intermediate.UsersById[post.BotId]
 				}
 
