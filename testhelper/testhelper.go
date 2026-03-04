@@ -543,8 +543,9 @@ func wrapJSONLInZip(jsonlPath string) (zipPath string, retErr error) {
 
 	// Create zip writer
 	zipWriter := zip.NewWriter(tempFile)
+	zipWriterClosed := false
 	defer func() {
-		if retErr != nil {
+		if retErr != nil && !zipWriterClosed {
 			zipWriter.Close()
 		}
 	}()
@@ -587,6 +588,7 @@ func wrapJSONLInZip(jsonlPath string) (zipPath string, retErr error) {
 	if err := zipWriter.Close(); err != nil {
 		return "", fmt.Errorf("failed to close zip writer: %w", err)
 	}
+	zipWriterClosed = true
 
 	if err := tempFile.Close(); err != nil {
 		os.Remove(tempPath)
