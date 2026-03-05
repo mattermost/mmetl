@@ -21,8 +21,7 @@ import (
 
 const (
 	setupTimeout           = 5 * time.Minute
-	importJobMaxAttempts   = 60
-	importJobPollInterval  = 1 * time.Second
+	importJobTimeout       = 60 * time.Second
 	defaultPaginationLimit = 1000
 	containerFilePerm      = 0644
 )
@@ -328,8 +327,8 @@ func extractJobID(output string) string {
 
 // waitForImportJobCompletion polls the import job status until it completes or fails
 func (th *TestHelper) waitForImportJobCompletion(ctx context.Context, jobID string) error {
-	deadline := time.After(importJobMaxAttempts * importJobPollInterval)
-	interval := importJobPollInterval
+	deadline := time.After(importJobTimeout)
+	interval := 1 * time.Second
 	const maxInterval = 10 * time.Second
 
 	for {
