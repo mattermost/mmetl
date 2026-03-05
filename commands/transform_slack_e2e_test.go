@@ -2,6 +2,8 @@ package commands_test
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -31,11 +33,18 @@ func resetCobraFlags(cmd *cobra.Command) {
 	}
 }
 
-// uniqueTeamName generates a unique team name for testing to avoid conflicts
-// Mattermost has reserved paths like "posts", "files", "api", etc.
-// Use a "t" prefix to ensure team names don't conflict with reserved URLs
+const transformLogFile = "transform-slack.log"
+
+// uniqueTeamName generates a unique team name for testing to avoid conflicts.
+// Uses crypto/rand for sufficient entropy to prevent collisions in parallel CI,
+// falling back to time-based naming if crypto/rand fails.
+// The "t" prefix ensures team names don't conflict with Mattermost reserved URLs.
 func uniqueTeamName(prefix string) string {
-	return fmt.Sprintf("t%s%d", prefix, time.Now().UnixNano()%10000)
+	b := make([]byte, 4)
+	if _, err := rand.Read(b); err != nil {
+		return fmt.Sprintf("t%s%d", prefix, time.Now().UnixNano())
+	}
+	return fmt.Sprintf("t%s%s", prefix, hex.EncodeToString(b))
 }
 
 // TestTransformSlackE2E tests the full end-to-end flow:
@@ -51,6 +60,7 @@ func TestTransformSlackE2E(t *testing.T) {
 	// Setup Mattermost with testcontainers
 	th := testhelper.SetupHelper(t)
 	defer th.TearDown()
+	t.Cleanup(func() { os.Remove(transformLogFile) })
 
 	t.Run("basic import creates users and channels in Mattermost", func(t *testing.T) {
 		ctx := context.Background()
@@ -82,7 +92,6 @@ func TestTransformSlackE2E(t *testing.T) {
 		c.SetArgs(args)
 		err = c.Execute()
 		require.NoError(t, err, "transform command should succeed")
-		defer os.Remove("transform-slack.log")
 
 		// Verify output file was created
 		_, err = os.Stat(mmExportPath)
@@ -175,7 +184,6 @@ func TestTransformSlackE2E(t *testing.T) {
 		c.SetArgs(args)
 		err = c.Execute()
 		require.NoError(t, err)
-		defer os.Remove("transform-slack.log")
 
 		// 4. Import into Mattermost
 		t.Log("Importing data with posts into Mattermost...")
@@ -252,7 +260,6 @@ func TestTransformSlackE2E(t *testing.T) {
 		c.SetArgs(args)
 		err = c.Execute()
 		require.NoError(t, err)
-		defer os.Remove("transform-slack.log")
 
 		// 4. Import into Mattermost
 		t.Log("Importing data with mentions into Mattermost...")
@@ -311,7 +318,6 @@ func TestTransformSlackE2E(t *testing.T) {
 		c.SetArgs(args)
 		err = c.Execute()
 		require.NoError(t, err)
-		defer os.Remove("transform-slack.log")
 
 		// 4. Import into Mattermost
 		t.Log("Importing data with deleted user into Mattermost...")
@@ -339,6 +345,7 @@ func TestTransformSlackE2ETeamConsistency(t *testing.T) {
 	ctx := context.Background()
 	th := testhelper.SetupHelper(t)
 	defer th.TearDown()
+	t.Cleanup(func() { os.Remove(transformLogFile) })
 
 	teamName := uniqueTeamName("consist")
 	tempDir := t.TempDir()
@@ -367,7 +374,6 @@ func TestTransformSlackE2ETeamConsistency(t *testing.T) {
 	c.SetArgs(args)
 	err = c.Execute()
 	require.NoError(t, err)
-	defer os.Remove("transform-slack.log")
 
 	// Import into Mattermost
 	err = th.ImportBulkData(ctx, mmExportPath)

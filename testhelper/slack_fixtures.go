@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/mattermost/mmetl/services/slack"
 )
@@ -107,13 +108,15 @@ func (b *SlackExportBuilder) validate() error {
 		userIDs[user.Id] = true
 	}
 
+	allCh := b.allChannels()
+
 	channelNames := make(map[string]bool)
-	for _, channel := range b.allChannels() {
+	for _, channel := range allCh {
 		channelNames[channel.Name] = true
 	}
 
 	// Validate channel creators and members reference existing users
-	for _, channel := range b.allChannels() {
+	for _, channel := range allCh {
 		if channel.Creator != "" && !userIDs[channel.Creator] {
 			return fmt.Errorf("channel %q references non-existent creator user %q", channel.Name, channel.Creator)
 		}
@@ -197,6 +200,10 @@ func (b *SlackExportBuilder) Build(outputPath string) error {
 	// Write posts for each channel in channel-name/date.json format
 	for channelName, posts := range b.posts {
 		channelDir := filepath.Join(tempDir, channelName)
+		// Guard against path traversal via malformed channel names
+		if rel, err := filepath.Rel(tempDir, channelDir); err != nil || strings.HasPrefix(rel, "..") {
+			return fmt.Errorf("channel name %q results in path traversal", channelName)
+		}
 		if err := os.MkdirAll(channelDir, 0755); err != nil {
 			return fmt.Errorf("failed to create channel dir %s: %w", channelName, err)
 		}
@@ -253,8 +260,7 @@ func (b *SlackExportBuilder) createZipFile(outputPath, sourceDir string) error {
 		if err != nil {
 			return err
 		}
-
-		// Normalize to forward slashes for ZIP spec compliance
+		// ZIP spec requires forward slashes regardless of OS
 		relPath = filepath.ToSlash(relPath)
 
 		if info.IsDir() {

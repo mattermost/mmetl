@@ -21,8 +21,7 @@ import (
 
 const (
 	setupTimeout           = 5 * time.Minute
-	importJobMaxAttempts   = 60
-	importJobPollInterval  = 1 * time.Second
+	importJobTimeout       = 60 * time.Second
 	defaultPaginationLimit = 1000
 	containerFilePerm      = 0644
 )
@@ -48,6 +47,7 @@ func SetupHelper(t *testing.T) *TestHelper {
 		tearDowns:     make([]TearDownFunc, 0),
 		AdminPassword: "testpassword123",
 	}
+	t.Cleanup(th.TearDown)
 
 	ctx, cancel := context.WithTimeout(context.Background(), setupTimeout)
 	defer cancel()
@@ -59,10 +59,10 @@ func SetupHelper(t *testing.T) *TestHelper {
 	t.Logf("Docker network created: %s", dockerNet.Name)
 
 	// Create PostgreSQL container
-	_, postgresConnStr, postgresTearDown, err := CreatePostgresContainer(ctx, dockerNet.Name)
+	_, _, postgresTearDown, err := CreatePostgresContainer(ctx, dockerNet.Name)
 	require.NoError(t, err, "failed to create postgres container")
 	th.tearDowns = append(th.tearDowns, postgresTearDown)
-	t.Logf("PostgreSQL started with connection string: %s", postgresConnStr)
+	t.Log("PostgreSQL container started")
 
 	// Create Mattermost container
 	mattermostContainer, siteURL, mattermostTearDown, err := CreateMattermostContainer(ctx, dockerNet.Name)
@@ -107,7 +107,8 @@ func (th *TestHelper) setupAdminUser(ctx context.Context) {
 	require.NoError(th.t, err, "failed to re-login as admin user")
 }
 
-// TearDown cleans up all containers
+// TearDown cleans up all containers. It is idempotent and safe to call
+// multiple times (e.g. via t.Cleanup and an explicit defer).
 func (th *TestHelper) TearDown() {
 	ctx := context.Background()
 	// Tear down in reverse order
@@ -116,6 +117,7 @@ func (th *TestHelper) TearDown() {
 			th.t.Logf("Error during teardown: %v", err)
 		}
 	}
+	th.tearDowns = nil
 }
 
 // CreateUser creates a user in Mattermost and returns the created user
@@ -325,8 +327,8 @@ func extractJobID(output string) string {
 
 // waitForImportJobCompletion polls the import job status until it completes or fails
 func (th *TestHelper) waitForImportJobCompletion(ctx context.Context, jobID string) error {
-	deadline := time.After(importJobMaxAttempts * importJobPollInterval)
-	interval := importJobPollInterval
+	deadline := time.After(importJobTimeout)
+	interval := 1 * time.Second
 	const maxInterval = 10 * time.Second
 
 	for {
@@ -531,7 +533,9 @@ func ValidateImportFile(filePath string) (*ValidationResult, error) {
 	return result, nil
 }
 
-// isZipFile checks if a file is a valid ZIP archive by reading its magic bytes
+// isZipFile checks if a file is a valid ZIP archive by reading its magic bytes.
+// It validates the full 4-byte signature to avoid false positives from files
+// that happen to start with "PK" but are not ZIP archives.
 func isZipFile(filePath string) bool {
 	file, err := os.Open(filePath)
 	if err != nil {
@@ -539,14 +543,22 @@ func isZipFile(filePath string) bool {
 	}
 	defer file.Close()
 
-	// ZIP files start with PK (0x50 0x4B)
 	header := make([]byte, 4)
 	_, err = file.Read(header)
 	if err != nil {
 		return false
 	}
 
-	return header[0] == 0x50 && header[1] == 0x4B
+	// Check for valid ZIP signatures (all start with PK 0x50 0x4B):
+	//   PK\x03\x04 — local file header
+	//   PK\x05\x06 — end of central directory (empty archive)
+	//   PK\x07\x08 — spanned archive
+	if header[0] != 0x50 || header[1] != 0x4B {
+		return false
+	}
+	return (header[2] == 0x03 && header[3] == 0x04) ||
+		(header[2] == 0x05 && header[3] == 0x06) ||
+		(header[2] == 0x07 && header[3] == 0x08)
 }
 
 // wrapJSONLInZip creates a temporary zip archive containing the JSONL file
@@ -569,8 +581,9 @@ func wrapJSONLInZip(jsonlPath string) (zipPath string, retErr error) {
 
 	// Create zip writer
 	zipWriter := zip.NewWriter(tempFile)
+	zipWriterClosed := false
 	defer func() {
-		if retErr != nil {
+		if retErr != nil && !zipWriterClosed {
 			zipWriter.Close()
 		}
 	}()
@@ -613,6 +626,7 @@ func wrapJSONLInZip(jsonlPath string) (zipPath string, retErr error) {
 	if err := zipWriter.Close(); err != nil {
 		return "", fmt.Errorf("failed to close zip writer: %w", err)
 	}
+	zipWriterClosed = true
 
 	if err := tempFile.Close(); err != nil {
 		os.Remove(tempPath)

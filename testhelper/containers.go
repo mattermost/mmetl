@@ -91,8 +91,9 @@ func fetchLatestStableTag(image string) (string, error) {
 	client := &http.Client{Timeout: 10 * time.Second}
 	url := fmt.Sprintf(dockerHubTagsURLFmt+"?page_size=100", parts[0], parts[1])
 
+	const maxPages = 5
 	var allTags []string
-	for url != "" {
+	for page := 0; url != "" && page < maxPages; page++ {
 		req, err := http.NewRequest(http.MethodGet, url, nil)
 		if err != nil {
 			return "", errors.Wrap(err, "creating request")
@@ -198,7 +199,7 @@ func CreatePostgresContainer(ctx context.Context, networkName string) (testconta
 				WithOccurrence(2).
 				WithStartupTimeout(postgresStartupTimeout),
 		),
-		network.WithNetwork([]string{postgresAlias}, &testcontainers.DockerNetwork{Name: networkName}),
+		network.WithNetworkName([]string{postgresAlias}, networkName),
 	)
 	if err != nil {
 		return nil, "", nil, errors.Wrap(err, "failed to start postgres container")
@@ -229,13 +230,16 @@ func CreateMattermostContainer(ctx context.Context, networkName string) (testcon
 	postgresConnStr := GetPostgresInternalConnStr()
 
 	req := testcontainers.ContainerRequest{
-		Image:         resolveMattermostImage(),
-		ImagePlatform: "linux/amd64",
-		ExposedPorts:  []string{mattermostPort},
-		Networks:      []string{networkName},
+		Image:        resolveMattermostImage(),
+		ExposedPorts: []string{mattermostPort},
+		Networks:     []string{networkName},
 		Env: map[string]string{
-			"MM_SQLSETTINGS_DRIVERNAME":                   "postgres",
-			"MM_SQLSETTINGS_DATASOURCE":                   postgresConnStr,
+			"MM_SQLSETTINGS_DRIVERNAME": "postgres",
+			"MM_SQLSETTINGS_DATASOURCE": postgresConnStr,
+			// SiteURL is set to the container-internal address because the
+			// host-mapped port is not known until after the container starts.
+			// This only affects Mattermost's self-referential links (e.g. email
+			// notifications), which are not exercised by these tests.
 			"MM_SERVICESETTINGS_SITEURL":                  "http://localhost:8065",
 			"MM_SERVICESETTINGS_LISTENADDRESS":            ":8065",
 			"MM_PASSWORDSETTINGS_MINIMUMLENGTH":           "5",

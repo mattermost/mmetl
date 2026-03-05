@@ -901,7 +901,7 @@ func TestTransformerHandlesInconsistentExports(t *testing.T) {
 		assert.Equal(t, "Deleted", missingMember.FirstName)
 	})
 
-	t.Run("handles posts and reactions from multiple missing users", func(t *testing.T) {
+	t.Run("handles posts from multiple missing users", func(t *testing.T) {
 		tempDir := t.TempDir()
 		outputPath := filepath.Join(tempDir, "export.zip")
 
