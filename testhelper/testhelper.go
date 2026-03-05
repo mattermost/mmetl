@@ -508,7 +508,9 @@ func ValidateImportFile(filePath string) (*ValidationResult, error) {
 	return result, nil
 }
 
-// isZipFile checks if a file is a valid ZIP archive by reading its magic bytes
+// isZipFile checks if a file is a valid ZIP archive by reading its magic bytes.
+// It validates the full 4-byte signature to avoid false positives from files
+// that happen to start with "PK" but are not ZIP archives.
 func isZipFile(filePath string) bool {
 	file, err := os.Open(filePath)
 	if err != nil {
@@ -516,14 +518,22 @@ func isZipFile(filePath string) bool {
 	}
 	defer file.Close()
 
-	// ZIP files start with PK (0x50 0x4B)
 	header := make([]byte, 4)
 	_, err = file.Read(header)
 	if err != nil {
 		return false
 	}
 
-	return header[0] == 0x50 && header[1] == 0x4B
+	// Check for valid ZIP signatures (all start with PK 0x50 0x4B):
+	//   PK\x03\x04 — local file header
+	//   PK\x05\x06 — end of central directory (empty archive)
+	//   PK\x07\x08 — spanned archive
+	if header[0] != 0x50 || header[1] != 0x4B {
+		return false
+	}
+	return (header[2] == 0x03 && header[3] == 0x04) ||
+		(header[2] == 0x05 && header[3] == 0x06) ||
+		(header[2] == 0x07 && header[3] == 0x08)
 }
 
 // wrapJSONLInZip creates a temporary zip archive containing the JSONL file
