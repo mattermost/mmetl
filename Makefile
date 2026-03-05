@@ -72,7 +72,7 @@ gofmt:
 
 test:
 	@echo Running tests
-	$(GO) test -race -v $(GO_PACKAGES) -count=1 ${GO_TEST_FLAGS}
+	$(GO) test -race -v $(GO_PACKAGES) -count=1 $(GO_TEST_FLAGS)
 
 check-style: golangci-lint
 
