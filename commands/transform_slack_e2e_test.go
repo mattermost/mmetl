@@ -703,7 +703,7 @@ func TestTransformSlackE2EBotImport(t *testing.T) {
 		require.NotNil(t, team)
 
 		// Run transform with a --bot-owner that does not exist in Mattermost
-		fakeOwner := "fake_user_non_existant"
+		fakeOwner := "fake_user_non_existent"
 		args := []string{
 			"transform", "slack",
 			"--team", teamName,
