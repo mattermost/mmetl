@@ -91,8 +91,9 @@ func fetchLatestStableTag(image string) (string, error) {
 	client := &http.Client{Timeout: 10 * time.Second}
 	url := fmt.Sprintf(dockerHubTagsURLFmt+"?page_size=100", parts[0], parts[1])
 
+	const maxPages = 5
 	var allTags []string
-	for url != "" {
+	for page := 0; url != "" && page < maxPages; page++ {
 		req, err := http.NewRequest(http.MethodGet, url, nil)
 		if err != nil {
 			return "", errors.Wrap(err, "creating request")
