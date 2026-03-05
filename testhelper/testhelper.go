@@ -48,6 +48,7 @@ func SetupHelper(t *testing.T) *TestHelper {
 		tearDowns:     make([]TearDownFunc, 0),
 		AdminPassword: "testpassword123",
 	}
+	t.Cleanup(th.TearDown)
 
 	ctx, cancel := context.WithTimeout(context.Background(), setupTimeout)
 	defer cancel()
@@ -107,7 +108,8 @@ func (th *TestHelper) setupAdminUser(ctx context.Context) {
 	require.NoError(th.t, err, "failed to re-login as admin user")
 }
 
-// TearDown cleans up all containers
+// TearDown cleans up all containers. It is idempotent and safe to call
+// multiple times (e.g. via t.Cleanup and an explicit defer).
 func (th *TestHelper) TearDown() {
 	ctx := context.Background()
 	// Tear down in reverse order
@@ -116,6 +118,7 @@ func (th *TestHelper) TearDown() {
 			th.t.Logf("Error during teardown: %v", err)
 		}
 	}
+	th.tearDowns = nil
 }
 
 // CreateUser creates a user in Mattermost and returns the created user
