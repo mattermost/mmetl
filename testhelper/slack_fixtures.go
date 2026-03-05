@@ -253,6 +253,8 @@ func (b *SlackExportBuilder) createZipFile(outputPath, sourceDir string) error {
 		if err != nil {
 			return err
 		}
+		// ZIP spec requires forward slashes regardless of OS
+		relPath = filepath.ToSlash(relPath)
 
 		if info.IsDir() {
 			// For directories, add trailing slash
