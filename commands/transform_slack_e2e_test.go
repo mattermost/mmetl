@@ -2,12 +2,13 @@ package commands_test
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/mattermost/mmetl/commands"
 	"github.com/mattermost/mmetl/testhelper"
@@ -30,11 +31,13 @@ func resetCobraFlags(cmd *cobra.Command) {
 	}
 }
 
-// uniqueTeamName generates a unique team name for testing to avoid conflicts
-// Mattermost has reserved paths like "posts", "files", "api", etc.
-// Use a "t" prefix to ensure team names don't conflict with reserved URLs
+// uniqueTeamName generates a unique team name for testing to avoid conflicts.
+// Uses crypto/rand for sufficient entropy to prevent collisions in parallel CI.
+// The "t" prefix ensures team names don't conflict with Mattermost reserved URLs.
 func uniqueTeamName(prefix string) string {
-	return fmt.Sprintf("t%s%d", prefix, time.Now().UnixNano()%10000)
+	b := make([]byte, 4)
+	_, _ = rand.Read(b)
+	return fmt.Sprintf("t%s%s", prefix, hex.EncodeToString(b))
 }
 
 // TestTransformSlackE2E tests the full end-to-end flow:
