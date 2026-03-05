@@ -49,6 +49,7 @@ func init() {
 	TransformSlackCmd.Flags().BoolP("allow-download", "l", false, "Allows downloading the attachments for the import file")
 	TransformSlackCmd.Flags().BoolP("discard-invalid-props", "p", false, "Skips converting posts with invalid props instead discarding the props themselves")
 	TransformSlackCmd.Flags().Bool("debug", false, "Whether to show debug logs or not")
+	TransformSlackCmd.Flags().String("bot-owner", "", "Username of the Mattermost user who will own all imported bots. Required if the Slack export contains bot users.")
 
 	TransformCmd.AddCommand(
 		TransformSlackCmd,
@@ -71,6 +72,7 @@ func transformSlackCmdF(cmd *cobra.Command, args []string) error {
 	allowDownload, _ := cmd.Flags().GetBool("allow-download")
 	discardInvalidProps, _ := cmd.Flags().GetBool("discard-invalid-props")
 	debug, _ := cmd.Flags().GetBool("debug")
+	botOwner, _ := cmd.Flags().GetString("bot-owner")
 
 	// convert team name to lowercase since Mattermost expects all team names to be lowercase
 	team = strings.ToLower(team)
@@ -140,7 +142,20 @@ func transformSlackCmdF(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if err = slackTransformer.Export(outputFilePath); err != nil {
+	// Validate that --bot-owner is provided if there are bot users
+	hasBots := false
+	for _, user := range slackTransformer.Intermediate.UsersById {
+		if user.IsBot {
+			hasBots = true
+			break
+		}
+	}
+	botOwner = strings.TrimSpace(botOwner)
+	if hasBots && botOwner == "" {
+		return fmt.Errorf("the Slack export contains bot users but --bot-owner was not specified. Please provide the username of a Mattermost user who will own the imported bots")
+	}
+
+	if err = slackTransformer.Export(outputFilePath, botOwner); err != nil {
 		return err
 	}
 

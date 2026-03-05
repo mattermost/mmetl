@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -391,4 +392,350 @@ func TestTransformSlackE2ETeamConsistency(t *testing.T) {
 
 	janeUser := th.AssertUserExists(ctx, "jane.smith")
 	th.AssertUserInTeam(ctx, team.Id, janeUser.Id)
+}
+
+// TestTransformSlackE2EBotImport tests the bot import functionality end-to-end
+func TestTransformSlackE2EBotImport(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	th := testhelper.SetupHelper(t)
+	defer th.TearDown()
+
+	t.Run("bot users are imported as Mattermost bots with correct properties", func(t *testing.T) {
+		ctx := context.Background()
+		tempDir := t.TempDir()
+		slackExportPath := filepath.Join(tempDir, "slack_export.zip")
+		mmExportPath := filepath.Join(tempDir, "mattermost_import.jsonl")
+		teamName := uniqueTeamName("bots")
+
+		// 1. Create Slack export with bots
+		err := testhelper.ExportWithBots().Build(slackExportPath)
+		require.NoError(t, err, "failed to create Slack export fixture")
+
+		// 2. Create team and ensure the bot owner (admin) exists
+		team := th.CreateTeam(ctx, teamName, "Bots E2E Team")
+		require.NotNil(t, team)
+
+		// 3. Run transform with --bot-owner pointing to the admin user
+		args := []string{
+			"transform", "slack",
+			"--team", teamName,
+			"--file", slackExportPath,
+			"--output", mmExportPath,
+			"--skip-attachments",
+			"--bot-owner", "admin",
+		}
+
+		c := commands.RootCmd
+		resetCobraFlags(c)
+		c.SetArgs(args)
+		err = c.Execute()
+		require.NoError(t, err, "transform command should succeed")
+		defer os.Remove(transformLogFile)
+
+		// 4. Import into Mattermost
+		t.Log("Importing data with bots into Mattermost...")
+		err = th.ImportBulkData(ctx, mmExportPath)
+		require.NoError(t, err, "import should succeed")
+
+		// 5. Verify the regular user was created correctly
+		t.Log("Verifying regular user in Mattermost...")
+		johnUser := th.AssertUserExists(ctx, "john.doe")
+		assert.Equal(t, "john.doe@example.com", johnUser.Email)
+		assert.Equal(t, "John", johnUser.FirstName)
+		assert.Equal(t, "Doe", johnUser.LastName)
+
+		// 6. Verify bot users were created as proper Mattermost bots
+		t.Log("Verifying bots in Mattermost...")
+		deployBot := th.AssertBotExists(ctx, "deploybot")
+		assert.Equal(t, "Deploy Bot", deployBot.DisplayName)
+		assert.Equal(t, int64(0), deployBot.DeleteAt, "active bot should not be deleted")
+
+		alertBot := th.AssertBotExists(ctx, "alertbot")
+		assert.Equal(t, "Alert Bot", alertBot.DisplayName)
+		assert.Equal(t, int64(0), alertBot.DeleteAt, "active bot should not be deleted")
+
+		// 7. Verify the bot owner is the admin user
+		assert.Equal(t, th.AdminUser.Id, deployBot.OwnerId, "bot owner should be the admin user")
+		assert.Equal(t, th.AdminUser.Id, alertBot.OwnerId, "bot owner should be the admin user")
+
+		// 8. Verify bot users have IsBot flag set on their user records
+		deployBotUser := th.AssertUserExists(ctx, "deploybot")
+		assert.True(t, deployBotUser.IsBot, "deploybot user should have IsBot=true")
+
+		alertBotUser := th.AssertUserExists(ctx, "alertbot")
+		assert.True(t, alertBotUser.IsBot, "alertbot user should have IsBot=true")
+
+		// 9. Verify the regular user is NOT a bot
+		assert.False(t, johnUser.IsBot, "john.doe should not be a bot")
+
+		// 10. Verify the channel was created
+		th.AssertChannelExists(ctx, teamName, "general")
+	})
+
+	t.Run("bot posts are correctly attributed to bot users", func(t *testing.T) {
+		ctx := context.Background()
+		tempDir := t.TempDir()
+		slackExportPath := filepath.Join(tempDir, "slack_export.zip")
+		mmExportPath := filepath.Join(tempDir, "mattermost_import.jsonl")
+		teamName := uniqueTeamName("botposts")
+
+		// 1. Create Slack export with bot posts
+		err := testhelper.ExportWithBotPosts().Build(slackExportPath)
+		require.NoError(t, err)
+
+		// 2. Create team
+		team := th.CreateTeam(ctx, teamName, "Bot Posts E2E Team")
+		require.NotNil(t, team)
+
+		// 3. Run transform
+		args := []string{
+			"transform", "slack",
+			"--team", teamName,
+			"--file", slackExportPath,
+			"--output", mmExportPath,
+			"--skip-attachments",
+			"--bot-owner", "admin",
+		}
+
+		c := commands.RootCmd
+		resetCobraFlags(c)
+		c.SetArgs(args)
+		err = c.Execute()
+		require.NoError(t, err)
+		defer os.Remove(transformLogFile)
+
+		// 4. Import into Mattermost
+		err = th.ImportBulkData(ctx, mmExportPath)
+		require.NoError(t, err, "import should succeed")
+
+		// 5. Verify posts in the channel
+		t.Log("Verifying bot posts in Mattermost...")
+		generalChannel := th.AssertChannelExists(ctx, teamName, "general")
+
+		posts, err := th.GetChannelPosts(ctx, generalChannel.Id, 0, 100)
+		require.NoError(t, err)
+		require.NotEmpty(t, posts.Order, "should have posts in general channel")
+
+		// 6. Verify we can find all three posts
+		var foundDeploy, foundHuman, foundAlert bool
+		for _, postID := range posts.Order {
+			post := posts.Posts[postID]
+			if strings.Contains(post.Message, "Starting the deploy") {
+				foundHuman = true
+			}
+			if strings.Contains(post.Message, "Deployment started for v2.0.0") {
+				foundDeploy = true
+				// Verify the post is attributed to the bot user
+				deployBotUser := th.AssertUserExists(ctx, "deploybot")
+				assert.Equal(t, deployBotUser.Id, post.UserId, "deploy post should be attributed to deploybot user")
+			}
+			if strings.Contains(post.Message, "Alert: CPU usage above 90%") {
+				foundAlert = true
+				// Verify the post is attributed to the alert bot user
+				alertBotUser := th.AssertUserExists(ctx, "alertbot")
+				assert.Equal(t, alertBotUser.Id, post.UserId, "alert post should be attributed to alertbot user")
+			}
+		}
+		assert.True(t, foundHuman, "should find human post")
+		assert.True(t, foundDeploy, "should find deploy bot post")
+		assert.True(t, foundAlert, "should find alert bot post")
+	})
+
+	t.Run("transform fails without --bot-owner when bots exist", func(t *testing.T) {
+		tempDir := t.TempDir()
+		slackExportPath := filepath.Join(tempDir, "slack_export.zip")
+		mmExportPath := filepath.Join(tempDir, "mattermost_import.jsonl")
+		teamName := uniqueTeamName("noowner")
+
+		// Create Slack export with bots
+		err := testhelper.ExportWithBots().Build(slackExportPath)
+		require.NoError(t, err)
+
+		// Run transform WITHOUT --bot-owner
+		args := []string{
+			"transform", "slack",
+			"--team", teamName,
+			"--file", slackExportPath,
+			"--output", mmExportPath,
+			"--skip-attachments",
+		}
+
+		c := commands.RootCmd
+		resetCobraFlags(c)
+		c.SetArgs(args)
+		err = c.Execute()
+		defer os.Remove(transformLogFile)
+
+		// Should fail with a clear error about --bot-owner
+		require.Error(t, err, "transform should fail without --bot-owner when bots exist")
+		assert.Contains(t, err.Error(), "bot-owner", "error should mention --bot-owner flag")
+	})
+
+	t.Run("transform succeeds without --bot-owner when no bots exist", func(t *testing.T) {
+		tempDir := t.TempDir()
+		slackExportPath := filepath.Join(tempDir, "slack_export.zip")
+		mmExportPath := filepath.Join(tempDir, "mattermost_import.jsonl")
+		teamName := uniqueTeamName("nobots")
+
+		// Create Slack export WITHOUT bots
+		err := testhelper.SlackBasicExport().Build(slackExportPath)
+		require.NoError(t, err)
+
+		// Run transform without --bot-owner (should be fine since no bots)
+		args := []string{
+			"transform", "slack",
+			"--team", teamName,
+			"--file", slackExportPath,
+			"--output", mmExportPath,
+			"--skip-attachments",
+		}
+
+		c := commands.RootCmd
+		resetCobraFlags(c)
+		c.SetArgs(args)
+		err = c.Execute()
+		defer os.Remove(transformLogFile)
+
+		require.NoError(t, err, "transform should succeed without --bot-owner when no bots exist")
+	})
+
+	t.Run("deleted bot produces correct delete_at in export and imports successfully", func(t *testing.T) {
+		ctx := context.Background()
+		tempDir := t.TempDir()
+		slackExportPath := filepath.Join(tempDir, "slack_export.zip")
+		mmExportPath := filepath.Join(tempDir, "mattermost_import.jsonl")
+		teamName := uniqueTeamName("delbot")
+
+		// Create Slack export with a deleted bot
+		err := testhelper.ExportWithDeletedBot().Build(slackExportPath)
+		require.NoError(t, err)
+
+		// Create team
+		team := th.CreateTeam(ctx, teamName, "Deleted Bot E2E Team")
+		require.NotNil(t, team)
+
+		// Run transform
+		args := []string{
+			"transform", "slack",
+			"--team", teamName,
+			"--file", slackExportPath,
+			"--output", mmExportPath,
+			"--skip-attachments",
+			"--bot-owner", "admin",
+		}
+
+		c := commands.RootCmd
+		resetCobraFlags(c)
+		c.SetArgs(args)
+		err = c.Execute()
+		require.NoError(t, err)
+		defer os.Remove(transformLogFile)
+
+		// Verify the generated JSONL contains a bot line with delete_at set.
+		// Note: Mattermost's importBot server function does not currently honor
+		// delete_at, so we verify the export file content rather than server state.
+		// See: https://github.com/mattermost/mattermost/blob/master/server/channels/app/import_functions.go#L835-L930
+		exportData, err := os.ReadFile(mmExportPath)
+		require.NoError(t, err)
+
+		var foundBotLine bool
+		for _, line := range strings.Split(string(exportData), "\n") {
+			if line == "" {
+				continue
+			}
+			var importLine map[string]json.RawMessage
+			err = json.Unmarshal([]byte(line), &importLine)
+			require.NoError(t, err)
+
+			if string(importLine["type"]) != `"bot"` {
+				continue
+			}
+
+			var botData struct {
+				Username string `json:"username"`
+				DeleteAt *int64 `json:"delete_at"`
+			}
+			err = json.Unmarshal(importLine["bot"], &botData)
+			require.NoError(t, err)
+
+			if botData.Username == "oldbot" {
+				foundBotLine = true
+				require.NotNil(t, botData.DeleteAt, "deleted bot should have delete_at in export")
+				assert.NotEqual(t, int64(0), *botData.DeleteAt, "delete_at should be non-zero")
+			}
+		}
+		assert.True(t, foundBotLine, "should find oldbot in export JSONL")
+
+		// Also verify the import succeeds (Mattermost accepts the file without errors)
+		err = th.ImportBulkData(ctx, mmExportPath)
+		require.NoError(t, err, "import should succeed")
+
+		// Bot should exist in Mattermost (even though delete_at is not applied server-side)
+		th.AssertBotExists(ctx, "oldbot")
+	})
+
+	// Mattermost's importBot resolves --bot-owner by username. When the owner
+	// username doesn't exist, the import still succeeds silently — the server
+	// assumes the owner is a plugin and stores the raw username string as the
+	// bot's OwnerId (instead of a resolved user ID). This means a typo in
+	// --bot-owner won't cause an import failure, but the bots will have an
+	// unresolvable owner. This test documents that behaviour so we notice if
+	// the server-side semantics ever change.
+	t.Run("import succeeds with non-existent bot owner username", func(t *testing.T) {
+		th := testhelper.SetupHelper(t)
+		defer th.TearDown()
+
+		ctx := context.Background()
+		tempDir := t.TempDir()
+		slackExportPath := filepath.Join(tempDir, "slack_export.zip")
+		mmExportPath := filepath.Join(tempDir, "mattermost_import.jsonl")
+		teamName := uniqueTeamName("badowner")
+
+		// Create Slack export with bots
+		err := testhelper.ExportWithBots().Build(slackExportPath)
+		require.NoError(t, err)
+
+		// Create team
+		team := th.CreateTeam(ctx, teamName, "Bad Owner E2E Team")
+		require.NotNil(t, team)
+
+		// Run transform with a --bot-owner that does not exist in Mattermost
+		fakeOwner := "fake_user_non_existent"
+		args := []string{
+			"transform", "slack",
+			"--team", teamName,
+			"--file", slackExportPath,
+			"--output", mmExportPath,
+			"--skip-attachments",
+			"--bot-owner", fakeOwner,
+		}
+
+		c := commands.RootCmd
+		resetCobraFlags(c)
+		c.SetArgs(args)
+		err = c.Execute()
+		require.NoError(t, err, "transform should succeed regardless of owner existence")
+		defer os.Remove(transformLogFile)
+
+		// Import succeeds even though the owner username doesn't exist
+		err = th.ImportBulkData(ctx, mmExportPath)
+		require.NoError(t, err, "import should succeed even with non-existent bot owner")
+
+		// Bots should still be created with correct properties
+		deployBot := th.AssertBotExists(ctx, "deploybot")
+		assert.Equal(t, "Deploy Bot", deployBot.DisplayName)
+
+		alertBot := th.AssertBotExists(ctx, "alertbot")
+		assert.Equal(t, "Alert Bot", alertBot.DisplayName)
+
+		// OwnerId is the raw username string (plugin-owner fallback),
+		// not a resolved user ID
+		assert.Equal(t, fakeOwner, deployBot.OwnerId,
+			"bot owner should be the raw username string when the user doesn't exist")
+		assert.Equal(t, fakeOwner, alertBot.OwnerId,
+			"bot owner should be the raw username string when the user doesn't exist")
+	})
 }

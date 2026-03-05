@@ -959,6 +959,156 @@ func TestTransformerHandlesInconsistentExports(t *testing.T) {
 	})
 }
 
+func TestSlackExportBuilderBotFixtures(t *testing.T) {
+	logger := logrus.New()
+	logger.SetLevel(logrus.DebugLevel)
+
+	t.Run("ExportWithBots can be parsed and contains bot users", func(t *testing.T) {
+		tempDir := t.TempDir()
+		outputPath := filepath.Join(tempDir, "export.zip")
+
+		err := ExportWithBots().Build(outputPath)
+		require.NoError(t, err)
+
+		file, err := os.Open(outputPath)
+		require.NoError(t, err)
+		defer file.Close()
+
+		info, err := file.Stat()
+		require.NoError(t, err)
+
+		reader, err := zip.NewReader(file, info.Size())
+		require.NoError(t, err)
+
+		transformer := &slack.Transformer{
+			TeamName: "testteam",
+			Logger:   logger,
+		}
+
+		export, err := transformer.ParseSlackExportFile(reader, true)
+		require.NoError(t, err)
+
+		require.Len(t, export.Users, 3)
+
+		var regularUsers, botUsers []slack.SlackUser
+		for _, user := range export.Users {
+			if user.IsBot {
+				botUsers = append(botUsers, user)
+			} else {
+				regularUsers = append(regularUsers, user)
+			}
+		}
+
+		assert.Len(t, regularUsers, 1, "should have 1 regular user")
+		assert.Len(t, botUsers, 2, "should have 2 bot users")
+
+		assert.Equal(t, "john.doe", regularUsers[0].Username)
+
+		// Verify bot properties
+		botIDs := make(map[string]slack.SlackUser)
+		for _, bot := range botUsers {
+			botIDs[bot.Profile.BotID] = bot
+		}
+
+		deployBot, ok := botIDs["B001"]
+		require.True(t, ok, "should have Deploy Bot (B001)")
+		assert.Equal(t, "deploybot", deployBot.Username)
+		assert.Equal(t, "Deploy Bot", deployBot.Profile.RealName)
+		assert.Equal(t, "Handles deployments", deployBot.Profile.Title)
+
+		alertBot, ok := botIDs["B002"]
+		require.True(t, ok, "should have Alert Bot (B002)")
+		assert.Equal(t, "alertbot", alertBot.Username)
+		assert.Equal(t, "Alert Bot", alertBot.Profile.RealName)
+	})
+
+	t.Run("ExportWithBotPosts can be parsed and contains bot posts", func(t *testing.T) {
+		tempDir := t.TempDir()
+		outputPath := filepath.Join(tempDir, "export.zip")
+
+		err := ExportWithBotPosts().Build(outputPath)
+		require.NoError(t, err)
+
+		file, err := os.Open(outputPath)
+		require.NoError(t, err)
+		defer file.Close()
+
+		info, err := file.Stat()
+		require.NoError(t, err)
+
+		reader, err := zip.NewReader(file, info.Size())
+		require.NoError(t, err)
+
+		transformer := &slack.Transformer{
+			TeamName: "testteam",
+			Logger:   logger,
+		}
+
+		export, err := transformer.ParseSlackExportFile(reader, true)
+		require.NoError(t, err)
+
+		require.Contains(t, export.Posts, "general")
+		posts := export.Posts["general"]
+		require.Len(t, posts, 3)
+
+		// First post is from a regular user
+		assert.Equal(t, "U001", posts[0].User)
+		assert.Equal(t, "Starting the deploy", posts[0].Text)
+
+		// Second post is a bot message
+		assert.Equal(t, "B001", posts[1].BotId)
+		assert.Equal(t, "bot_message", posts[1].SubType)
+		assert.Equal(t, "Deployment started for v2.0.0", posts[1].Text)
+
+		// Third post is also a bot message
+		assert.Equal(t, "B002", posts[2].BotId)
+		assert.Equal(t, "bot_message", posts[2].SubType)
+		assert.Equal(t, "Alert: CPU usage above 90%", posts[2].Text)
+	})
+
+	t.Run("ExportWithDeletedBot can be parsed and contains deleted bot", func(t *testing.T) {
+		tempDir := t.TempDir()
+		outputPath := filepath.Join(tempDir, "export.zip")
+
+		err := ExportWithDeletedBot().Build(outputPath)
+		require.NoError(t, err)
+
+		file, err := os.Open(outputPath)
+		require.NoError(t, err)
+		defer file.Close()
+
+		info, err := file.Stat()
+		require.NoError(t, err)
+
+		reader, err := zip.NewReader(file, info.Size())
+		require.NoError(t, err)
+
+		transformer := &slack.Transformer{
+			TeamName: "testteam",
+			Logger:   logger,
+		}
+
+		export, err := transformer.ParseSlackExportFile(reader, true)
+		require.NoError(t, err)
+
+		require.Len(t, export.Users, 2)
+
+		var deletedBot *slack.SlackUser
+		for i := range export.Users {
+			if export.Users[i].IsBot && export.Users[i].Deleted {
+				deletedBot = &export.Users[i]
+				break
+			}
+		}
+
+		require.NotNil(t, deletedBot, "should have a deleted bot user")
+		assert.Equal(t, "oldbot", deletedBot.Username)
+		assert.Equal(t, "B003", deletedBot.Profile.BotID)
+		assert.Equal(t, "Old Bot", deletedBot.Profile.RealName)
+		assert.True(t, deletedBot.Deleted)
+	})
+}
+
 func TestSlackExportBuilderEdgeCases(t *testing.T) {
 	t.Run("empty export creates valid zip", func(t *testing.T) {
 		tempDir := t.TempDir()

@@ -81,6 +81,8 @@ type IntermediateUser struct {
 	Password    string   `json:"password"`
 	Memberships []string `json:"memberships"`
 	DeleteAt    int64    `json:"delete_at"`
+	IsBot       bool     `json:"is_bot"`
+	DisplayName string   `json:"display_name"`
 }
 
 func (u *IntermediateUser) Sanitise(logger log.FieldLogger, defaultEmailDomain string, skipEmptyEmails bool) {
@@ -172,25 +174,33 @@ func (t *Transformer) TransformUsers(users []SlackUser, skipEmptyEmails bool, de
 		t.Logger.Debugf("TransformUsers: SlackUser.Profile struct: %+v", user.Profile)
 
 		newUser := &IntermediateUser{
-			Id:        user.Id,
-			Username:  user.Username,
-			FirstName: firstName,
-			LastName:  lastName,
-			Position:  user.Profile.Title,
-			Email:     user.Profile.Email,
-			Password:  model.NewId(),
-			DeleteAt:  deleteAt,
+			Id:          user.Id,
+			Username:    user.Username,
+			FirstName:   firstName,
+			LastName:    lastName,
+			DisplayName: user.Profile.RealName,
+			Position:    user.Profile.Title,
+			Email:       user.Profile.Email,
+			Password:    model.NewId(),
+			DeleteAt:    deleteAt,
 		}
 
 		t.Logger.Debugf("TransformUsers: newUser IntermediateUser struct: %+v", newUser)
 
 		if user.IsBot {
-			newUser.Id = user.Profile.BotID
+			if user.Profile.BotID != "" {
+				newUser.Id = user.Profile.BotID
+			} else {
+				t.Logger.Warnf("Bot user %s has no BotID in profile, falling back to user ID %s", user.Username, user.Id)
+			}
+			newUser.IsBot = true
 		}
 
-		newUser.Sanitise(t.Logger, defaultEmailDomain, skipEmptyEmails)
+		if !newUser.IsBot {
+			newUser.Sanitise(t.Logger, defaultEmailDomain, skipEmptyEmails)
+		}
 		resultUsers[newUser.Id] = newUser
-		t.Logger.Debugf("Slack user with email %s and password %s has been imported.", newUser.Email, newUser.Password)
+		t.Logger.Debugf("Slack user with username %s has been imported.", newUser.Username)
 	}
 
 	t.Intermediate.UsersById = resultUsers
@@ -254,6 +264,9 @@ func (t *Transformer) PopulateUserMemberships() {
 	t.Logger.Info("Populating user memberships")
 
 	for userId, user := range t.Intermediate.UsersById {
+		if user.IsBot {
+			continue
+		}
 		memberships := []string{}
 		for _, channel := range t.Intermediate.PublicChannels {
 			for _, memberId := range channel.Members {
@@ -482,6 +495,17 @@ func (t *Transformer) CreateIntermediateUser(userID string) {
 	t.Logger.Warnf("Created a new user because the original user was missing from the import files. user=%s", userID)
 }
 
+func (t *Transformer) CreateIntermediateBotUser(userID string) {
+	newUser := &IntermediateUser{
+		Id:          userID,
+		Username:    strings.ToLower(userID),
+		DisplayName: "Unknown Bot",
+		IsBot:       true,
+	}
+	t.Intermediate.UsersById[userID] = newUser
+	t.Logger.Warnf("Created a new bot user because the original bot was missing from the import files. bot_id=%s", userID)
+}
+
 func (t *Transformer) CreateAndAddPostToThreads(post SlackPost, threads map[string]*IntermediatePost, timestamps map[int64]bool, channel *IntermediateChannel) {
 	author := t.Intermediate.UsersById[post.User]
 	if author == nil {
@@ -645,6 +669,54 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 
 		for _, post := range channelPosts {
 			switch {
+			// bot message (checked first since bots can have any subtype)
+			case post.IsBotMessage():
+				botId := post.BotId
+				if botId == "" {
+					// Some Slack exports have subtype "bot_message" but no BotId.
+					// Fall back to User field, then BotUsername, then generate a placeholder.
+					switch {
+					case post.User != "":
+						botId = post.User
+					case post.BotUsername != "":
+						botId = post.BotUsername
+					default:
+						botId = "unknown-bot-" + post.TimeStamp
+					}
+				}
+
+				author := t.Intermediate.UsersById[botId]
+				if author == nil {
+					t.CreateIntermediateBotUser(botId)
+					author = t.Intermediate.UsersById[botId]
+				}
+
+				newPost := &IntermediatePost{
+					User:      author.Username,
+					Channel:   channel.Name,
+					Message:   post.Text,
+					Reactions: t.getReactionsFromPost(post),
+					CreateAt:  SlackConvertTimeStamp(post.TimeStamp),
+				}
+
+				t.AddFilesToPost(&post, skipAttachments, slackExport, attachmentsDir, newPost, allowDownload)
+
+				if len(post.Attachments) > 0 {
+					props, propsB := t.AddAttachmentsToPost(&post, newPost)
+					if utf8.RuneCount(propsB) <= model.PostPropsMaxRunes {
+						newPost.Props = props
+					} else {
+						if discardInvalidProps {
+							t.Logger.Warn("Unable to import the post as props exceed the maximum character count. Skipping as --discard-invalid-props is enabled.")
+							continue
+						} else {
+							t.Logger.Warn("Unable to add the props to post as they exceed the maximum character count.")
+						}
+					}
+				}
+
+				AddPostToThreads(post, newPost, threads, channel, timestamps)
+
 			// plain message that can have files attached
 			case post.IsPlainMessage():
 				if post.User == "" {
@@ -702,48 +774,6 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 					Message:   post.Comment.Comment,
 					Reactions: t.getReactionsFromPost(post),
 					CreateAt:  SlackConvertTimeStamp(post.TimeStamp),
-				}
-
-				AddPostToThreads(post, newPost, threads, channel, timestamps)
-
-			// bot message
-			case post.IsBotMessage():
-				if post.BotId == "" {
-					if post.User == "" {
-						t.Logger.Warn("Unable to import the message as the user field is missing.")
-						continue
-					}
-					post.BotId = post.User
-				}
-
-				author := t.Intermediate.UsersById[post.BotId]
-				if author == nil {
-					t.CreateIntermediateUser(post.BotId)
-					author = t.Intermediate.UsersById[post.BotId]
-				}
-
-				newPost := &IntermediatePost{
-					User:      author.Username,
-					Channel:   channel.Name,
-					Message:   post.Text,
-					Reactions: t.getReactionsFromPost(post),
-					CreateAt:  SlackConvertTimeStamp(post.TimeStamp),
-				}
-
-				t.AddFilesToPost(&post, skipAttachments, slackExport, attachmentsDir, newPost, allowDownload)
-
-				if len(post.Attachments) > 0 {
-					props, propsB := t.AddAttachmentsToPost(&post, newPost)
-					if utf8.RuneCount(propsB) <= model.PostPropsMaxRunes {
-						newPost.Props = props
-					} else {
-						if discardInvalidProps {
-							t.Logger.Warn("Unable to import the post as props exceed the maximum character count. Skipping as --discard-invalid-props is enabled.")
-							continue
-						} else {
-							t.Logger.Warn("Unable to add the props to post as they exceed the maximum character count.")
-						}
-					}
 				}
 
 				AddPostToThreads(post, newPost, threads, channel, timestamps)
