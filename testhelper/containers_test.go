@@ -82,6 +82,4 @@ func TestFetchLatestStableTag(t *testing.T) {
 	v, err := semver.Parse(tag)
 	require.NoError(t, err, "result %q should be valid semver", tag)
 	assert.True(t, v.GTE(semver.MustParse("10.0.0")), "expected version >= 10.0.0, got %s", tag)
-
-	t.Logf("resolved latest stable tag: %s", tag)
 }
