@@ -840,7 +840,7 @@ func TestTransformerHandlesInconsistentExports(t *testing.T) {
 		reader, err := zip.NewReader(file, info.Size())
 		require.NoError(t, err)
 
-		transformer := slack.NewTransformer("testteam", logger)
+		transformer := slack.NewTransformer("testteam", slack.TransformOptions{}, logger)
 
 		export, err := transformer.ParseSlackExportFile(reader, true)
 		require.NoError(t, err)
@@ -885,7 +885,7 @@ func TestTransformerHandlesInconsistentExports(t *testing.T) {
 		reader, err := zip.NewReader(file, info.Size())
 		require.NoError(t, err)
 
-		transformer := slack.NewTransformer("testteam", logger)
+		transformer := slack.NewTransformer("testteam", slack.TransformOptions{}, logger)
 
 		export, err := transformer.ParseSlackExportFile(reader, true)
 		require.NoError(t, err)
@@ -942,7 +942,7 @@ func TestTransformerHandlesInconsistentExports(t *testing.T) {
 		reader, err := zip.NewReader(file, info.Size())
 		require.NoError(t, err)
 
-		transformer := slack.NewTransformer("testteam", logger)
+		transformer := slack.NewTransformer("testteam", slack.TransformOptions{}, logger)
 
 		export, err := transformer.ParseSlackExportFile(reader, true)
 		require.NoError(t, err)

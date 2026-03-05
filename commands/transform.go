@@ -48,6 +48,7 @@ func init() {
 	TransformSlackCmd.Flags().String("default-email-domain", "", "If this flag is provided: When a user's email address is empty, the output's email address will be generated from their username and the provided domain.")
 	TransformSlackCmd.Flags().BoolP("allow-download", "l", false, "Allows downloading the attachments for the import file")
 	TransformSlackCmd.Flags().BoolP("discard-invalid-props", "p", false, "Skips converting posts with invalid props instead discarding the props themselves")
+	TransformSlackCmd.Flags().Bool("create-team", false, "If set, a team entry will be included in the resulting export")
 	TransformSlackCmd.Flags().Bool("debug", false, "Whether to show debug logs or not")
 
 	TransformCmd.AddCommand(
@@ -70,6 +71,7 @@ func transformSlackCmdF(cmd *cobra.Command, args []string) error {
 	defaultEmailDomain, _ := cmd.Flags().GetString("default-email-domain")
 	allowDownload, _ := cmd.Flags().GetBool("allow-download")
 	discardInvalidProps, _ := cmd.Flags().GetBool("discard-invalid-props")
+	createTeam, _ := cmd.Flags().GetBool("create-team")
 	debug, _ := cmd.Flags().GetBool("debug")
 
 	// convert team name to lowercase since Mattermost expects all team names to be lowercase
@@ -128,7 +130,9 @@ func transformSlackCmdF(cmd *cobra.Command, args []string) error {
 		logger.Level = log.DebugLevel
 		logger.Info("Debug mode enabled")
 	}
-	slackTransformer := slack.NewTransformer(team, logger)
+	slackTransformer := slack.NewTransformer(team, slack.TransformOptions{
+		CreateTeam: createTeam,
+	}, logger)
 
 	slackExport, err := slackTransformer.ParseSlackExportFile(zipReader, skipConvertPosts)
 	if err != nil {

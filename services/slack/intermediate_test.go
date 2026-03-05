@@ -75,7 +75,7 @@ func TestIntermediateChannelSanitise(t *testing.T) {
 }
 
 func TestTransformPublicChannels(t *testing.T) {
-	slackTransformer := NewTransformer("test", log.New())
+	slackTransformer := NewTransformer("test", TransformOptions{}, log.New())
 	slackTransformer.Intermediate.UsersById = map[string]*IntermediateUser{"m1": {}, "m2": {}, "m3": {}}
 
 	publicChannels := []SlackChannel{
@@ -134,7 +134,7 @@ func TestTransformPublicChannels(t *testing.T) {
 }
 
 func TestTransformPublicChannelsWithAnInvalidMember(t *testing.T) {
-	slackTransformer := NewTransformer("test", log.New())
+	slackTransformer := NewTransformer("test", TransformOptions{}, log.New())
 	slackTransformer.Intermediate.UsersById = map[string]*IntermediateUser{"m1": {}, "m2": {}}
 
 	publicChannels := []SlackChannel{
@@ -193,7 +193,7 @@ func TestTransformPublicChannelsWithAnInvalidMember(t *testing.T) {
 }
 
 func TestTransformPrivateChannels(t *testing.T) {
-	slackTransformer := NewTransformer("test", log.New())
+	slackTransformer := NewTransformer("test", TransformOptions{}, log.New())
 	slackTransformer.Intermediate.UsersById = map[string]*IntermediateUser{"m1": {}, "m2": {}, "m3": {}}
 
 	privateChannels := []SlackChannel{
@@ -252,7 +252,7 @@ func TestTransformPrivateChannels(t *testing.T) {
 }
 
 func TestTransformChannelsPreservesDisplayName(t *testing.T) {
-	slackTransformer := NewTransformer("test", log.New())
+	slackTransformer := NewTransformer("test", TransformOptions{}, log.New())
 	slackTransformer.Intermediate.UsersById = map[string]*IntermediateUser{"m1": {}, "m2": {}}
 
 	channels := []SlackChannel{
@@ -300,7 +300,7 @@ func TestTransformChannelsPreservesDisplayName(t *testing.T) {
 }
 
 func TestTransformBigGroupChannels(t *testing.T) {
-	slackTransformer := NewTransformer("test", log.New())
+	slackTransformer := NewTransformer("test", TransformOptions{}, log.New())
 	slackTransformer.Intermediate.UsersById = map[string]*IntermediateUser{"m1": {}, "m2": {}, "m3": {}, "m4": {}, "m5": {}, "m6": {}, "m7": {}, "m8": {}, "m9": {}}
 	channelMembers := []string{"m1", "m2", "m3", "m4", "m5", "m6", "m7", "m8", "m9"}
 
@@ -372,7 +372,7 @@ func TestTransformBigGroupChannels(t *testing.T) {
 }
 
 func TestTransformRegularGroupChannels(t *testing.T) {
-	slackTransformer := NewTransformer("test", log.New())
+	slackTransformer := NewTransformer("test", TransformOptions{}, log.New())
 	slackTransformer.Intermediate.UsersById = map[string]*IntermediateUser{"m1": {}, "m2": {}, "m3": {}}
 
 	regularGroupChannels := []SlackChannel{
@@ -430,7 +430,7 @@ func TestTransformRegularGroupChannels(t *testing.T) {
 }
 
 func TestTransformDirectChannels(t *testing.T) {
-	slackTransformer := NewTransformer("test", log.New())
+	slackTransformer := NewTransformer("test", TransformOptions{}, log.New())
 	slackTransformer.Intermediate.UsersById = map[string]*IntermediateUser{"m1": {}, "m2": {}, "m3": {}}
 
 	directChannels := []SlackChannel{
@@ -464,7 +464,7 @@ func TestTransformDirectChannels(t *testing.T) {
 }
 
 func TestTransformChannelWithOneValidMember(t *testing.T) {
-	slackTransformer := NewTransformer("test", log.New())
+	slackTransformer := NewTransformer("test", TransformOptions{}, log.New())
 	slackTransformer.Intermediate.UsersById = map[string]*IntermediateUser{"m1": {}}
 
 	t.Run("A direct channel with only one valid member should not be transformed", func(t *testing.T) {
@@ -712,7 +712,7 @@ func TestTransformUsers(t *testing.T) {
 	id2 := "id2"
 	id3 := "id3"
 
-	slackTransformer := NewTransformer("test", log.New())
+	slackTransformer := NewTransformer("test", TransformOptions{}, log.New())
 	users := []SlackUser{
 		{
 			Id:       id1,
@@ -765,7 +765,7 @@ func TestDeleteAt(t *testing.T) {
 	id3 := "id3"
 	id4 := "id4"
 
-	slackTransformer := NewTransformer("test", log.New())
+	slackTransformer := NewTransformer("test", TransformOptions{}, log.New())
 	activeUsers := []SlackUser{
 		{
 			Id:       id1,
@@ -823,7 +823,7 @@ func TestDeleteAt(t *testing.T) {
 }
 
 func TestPopulateUserMemberships(t *testing.T) {
-	slackTransformer := NewTransformer("test", log.New())
+	slackTransformer := NewTransformer("test", TransformOptions{}, log.New())
 
 	slackTransformer.Intermediate = &Intermediate{
 		UsersById: map[string]*IntermediateUser{"id1": {}, "id2": {}, "id3": {}},
@@ -853,7 +853,7 @@ func TestPopulateUserMemberships(t *testing.T) {
 }
 
 func TestPopulateChannelMemberships(t *testing.T) {
-	slackTransformer := NewTransformer("test", log.New())
+	slackTransformer := NewTransformer("test", TransformOptions{}, log.New())
 
 	c1 := IntermediateChannel{
 		Name:    "c1",
@@ -936,7 +936,7 @@ func TestAddPostToThreads(t *testing.T) {
 
 func TestTransformPosts(t *testing.T) {
 	t.Run("huddle threads are converted to posts", func(t *testing.T) {
-		slackTransformer := NewTransformer("test", log.New())
+		slackTransformer := NewTransformer("test", TransformOptions{}, log.New())
 		slackTransformer.Intermediate.UsersById = map[string]*IntermediateUser{"m1": {Username: "m1"}, "m2": {Username: "m2"}}
 		slackTransformer.Intermediate.PublicChannels = []*IntermediateChannel{
 			{
@@ -998,7 +998,7 @@ func TestTransformPosts(t *testing.T) {
 	})
 
 	t.Run("reactions are imported", func(t *testing.T) {
-		slackTransformer := NewTransformer("test", log.New())
+		slackTransformer := NewTransformer("test", TransformOptions{}, log.New())
 		slackTransformer.Intermediate.UsersById = map[string]*IntermediateUser{"m1": {Username: "m1"}, "m2": {Username: "m2"}}
 		slackTransformer.Intermediate.PublicChannels = []*IntermediateChannel{
 			{
@@ -1056,7 +1056,7 @@ func TestTransformPosts(t *testing.T) {
 	})
 
 	t.Run("long posts are split into thread replies", func(t *testing.T) {
-		slackTransformer := NewTransformer("test", log.New())
+		slackTransformer := NewTransformer("test", TransformOptions{}, log.New())
 		slackTransformer.Intermediate.UsersById = map[string]*IntermediateUser{"m1": {Username: "m1"}}
 		slackTransformer.Intermediate.PublicChannels = []*IntermediateChannel{
 			{
@@ -1100,7 +1100,7 @@ func TestTransformPosts(t *testing.T) {
 	})
 
 	t.Run("very long main post gets split into root post and multiple replies", func(t *testing.T) {
-		slackTransformer := NewTransformer("test", log.New())
+		slackTransformer := NewTransformer("test", TransformOptions{}, log.New())
 		slackTransformer.Intermediate.UsersById = map[string]*IntermediateUser{"m1": {Username: "m1"}}
 		slackTransformer.Intermediate.PublicChannels = []*IntermediateChannel{
 			{
@@ -1181,7 +1181,7 @@ func TestTransformPosts(t *testing.T) {
 	})
 
 	t.Run("very long reply to main post gets split into multiple replies to same root", func(t *testing.T) {
-		slackTransformer := NewTransformer("test", log.New())
+		slackTransformer := NewTransformer("test", TransformOptions{}, log.New())
 		slackTransformer.Intermediate.UsersById = map[string]*IntermediateUser{
 			"m1": {Username: "m1"},
 			"m2": {Username: "m2"},
@@ -1302,7 +1302,7 @@ func TestTransformPosts(t *testing.T) {
 	})
 
 	t.Run("replies are properly ordered by CreateAt after splitting", func(t *testing.T) {
-		slackTransformer := NewTransformer("test", log.New())
+		slackTransformer := NewTransformer("test", TransformOptions{}, log.New())
 		slackTransformer.Intermediate.UsersById = map[string]*IntermediateUser{
 			"m1": {Username: "m1"},
 			"m2": {Username: "m2"},
