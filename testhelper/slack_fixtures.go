@@ -107,13 +107,15 @@ func (b *SlackExportBuilder) validate() error {
 		userIDs[user.Id] = true
 	}
 
+	allCh := b.allChannels()
+
 	channelNames := make(map[string]bool)
-	for _, channel := range b.allChannels() {
+	for _, channel := range allCh {
 		channelNames[channel.Name] = true
 	}
 
 	// Validate channel creators and members reference existing users
-	for _, channel := range b.allChannels() {
+	for _, channel := range allCh {
 		if channel.Creator != "" && !userIDs[channel.Creator] {
 			return fmt.Errorf("channel %q references non-existent creator user %q", channel.Name, channel.Creator)
 		}
