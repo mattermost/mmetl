@@ -60,10 +60,10 @@ func SetupHelper(t *testing.T) *TestHelper {
 	t.Logf("Docker network created: %s", dockerNet.Name)
 
 	// Create PostgreSQL container
-	_, postgresConnStr, postgresTearDown, err := CreatePostgresContainer(ctx, dockerNet.Name)
+	_, _, postgresTearDown, err := CreatePostgresContainer(ctx, dockerNet.Name)
 	require.NoError(t, err, "failed to create postgres container")
 	th.tearDowns = append(th.tearDowns, postgresTearDown)
-	t.Logf("PostgreSQL started with connection string: %s", postgresConnStr)
+	t.Log("PostgreSQL container started")
 
 	// Create Mattermost container
 	mattermostContainer, siteURL, mattermostTearDown, err := CreateMattermostContainer(ctx, dockerNet.Name)
