@@ -235,6 +235,10 @@ func CreateMattermostContainer(ctx context.Context, networkName string) (testcon
 		Env: map[string]string{
 			"MM_SQLSETTINGS_DRIVERNAME":                   "postgres",
 			"MM_SQLSETTINGS_DATASOURCE":                   postgresConnStr,
+			// SiteURL is set to the container-internal address because the
+			// host-mapped port is not known until after the container starts.
+			// This only affects Mattermost's self-referential links (e.g. email
+			// notifications), which are not exercised by these tests.
 			"MM_SERVICESETTINGS_SITEURL":                  "http://localhost:8065",
 			"MM_SERVICESETTINGS_LISTENADDRESS":            ":8065",
 			"MM_PASSWORDSETTINGS_MINIMUMLENGTH":           "5",
