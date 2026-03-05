@@ -200,7 +200,7 @@ func (t *Transformer) TransformUsers(users []SlackUser, skipEmptyEmails bool, de
 			newUser.Sanitise(t.Logger, defaultEmailDomain, skipEmptyEmails)
 		}
 		resultUsers[newUser.Id] = newUser
-		t.Logger.Debugf("Slack user with email %s has been imported.", newUser.Email)
+		t.Logger.Debugf("Slack user with username %s has been imported.", newUser.Username)
 	}
 
 	t.Intermediate.UsersById = resultUsers
