@@ -198,7 +198,7 @@ func CreatePostgresContainer(ctx context.Context, networkName string) (testconta
 				WithOccurrence(2).
 				WithStartupTimeout(postgresStartupTimeout),
 		),
-		network.WithNetwork([]string{postgresAlias}, &testcontainers.DockerNetwork{Name: networkName}),
+		network.WithNetworkName([]string{postgresAlias}, networkName),
 	)
 	if err != nil {
 		return nil, "", nil, errors.Wrap(err, "failed to start postgres container")
