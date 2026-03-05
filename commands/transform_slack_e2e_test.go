@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mmetl/commands"
 	"github.com/mattermost/mmetl/testhelper"
 	"github.com/spf13/cobra"
@@ -675,5 +676,64 @@ func TestTransformSlackE2EBotImport(t *testing.T) {
 
 		// Bot should exist in Mattermost (even though delete_at is not applied server-side)
 		th.AssertBotExists(ctx, "oldbot")
+	})
+
+	// Mattermost's importBot resolves --bot-owner by username. When the owner
+	// username doesn't exist, the import still succeeds silently — the server
+	// assumes the owner is a plugin and stores the raw username string as the
+	// bot's OwnerId (instead of a resolved user ID). This means a typo in
+	// --bot-owner won't cause an import failure, but the bots will have an
+	// unresolvable owner. This test documents that behaviour so we notice if
+	// the server-side semantics ever change.
+	t.Run("import succeeds with non-existent bot owner username", func(t *testing.T) {
+		ctx := context.Background()
+		tempDir := t.TempDir()
+		slackExportPath := filepath.Join(tempDir, "slack_export.zip")
+		mmExportPath := filepath.Join(tempDir, "mattermost_import.jsonl")
+		teamName := uniqueTeamName("badowner")
+
+		// Create Slack export with bots
+		err := testhelper.ExportWithBots().Build(slackExportPath)
+		require.NoError(t, err)
+
+		// Create team
+		team := th.CreateTeam(ctx, teamName, "Bad Owner E2E Team")
+		require.NotNil(t, team)
+
+		// Run transform with a --bot-owner that does not exist in Mattermost
+		fakeOwner := "fake_user_" + model.NewId()
+		args := []string{
+			"transform", "slack",
+			"--team", teamName,
+			"--file", slackExportPath,
+			"--output", mmExportPath,
+			"--skip-attachments",
+			"--bot-owner", fakeOwner,
+		}
+
+		c := commands.RootCmd
+		resetCobraFlags(c)
+		c.SetArgs(args)
+		err = c.Execute()
+		require.NoError(t, err, "transform should succeed regardless of owner existence")
+		defer os.Remove(transformLogFile)
+
+		// Import succeeds even though the owner username doesn't exist
+		err = th.ImportBulkData(ctx, mmExportPath)
+		require.NoError(t, err, "import should succeed even with non-existent bot owner")
+
+		// Bots should still be created with correct properties
+		deployBot := th.AssertBotExists(ctx, "deploybot")
+		assert.Equal(t, "Deploy Bot", deployBot.DisplayName)
+
+		alertBot := th.AssertBotExists(ctx, "alertbot")
+		assert.Equal(t, "Alert Bot", alertBot.DisplayName)
+
+		// OwnerId is the raw username string (plugin-owner fallback),
+		// not a resolved user ID
+		assert.Equal(t, fakeOwner, deployBot.OwnerId,
+			"bot owner should be the raw username string when the user doesn't exist")
+		assert.Equal(t, fakeOwner, alertBot.OwnerId,
+			"bot owner should be the raw username string when the user doesn't exist")
 	})
 }
