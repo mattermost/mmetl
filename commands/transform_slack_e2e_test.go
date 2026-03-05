@@ -12,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mmetl/commands"
 	"github.com/mattermost/mmetl/testhelper"
 	"github.com/spf13/cobra"
@@ -686,6 +685,9 @@ func TestTransformSlackE2EBotImport(t *testing.T) {
 	// unresolvable owner. This test documents that behaviour so we notice if
 	// the server-side semantics ever change.
 	t.Run("import succeeds with non-existent bot owner username", func(t *testing.T) {
+		th := testhelper.SetupHelper(t)
+		defer th.TearDown()
+
 		ctx := context.Background()
 		tempDir := t.TempDir()
 		slackExportPath := filepath.Join(tempDir, "slack_export.zip")
@@ -701,7 +703,7 @@ func TestTransformSlackE2EBotImport(t *testing.T) {
 		require.NotNil(t, team)
 
 		// Run transform with a --bot-owner that does not exist in Mattermost
-		fakeOwner := "fake_user_" + model.NewId()
+		fakeOwner := "fake_user_non_existant"
 		args := []string{
 			"transform", "slack",
 			"--team", teamName,

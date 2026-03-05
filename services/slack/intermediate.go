@@ -671,10 +671,24 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 			switch {
 			// bot message (checked first since bots can have any subtype)
 			case post.IsBotMessage():
-				author := t.Intermediate.UsersById[post.BotId]
+				botId := post.BotId
+				if botId == "" {
+					// Some Slack exports have subtype "bot_message" but no BotId.
+					// Fall back to User field, then BotUsername, then generate a placeholder.
+					switch {
+					case post.User != "":
+						botId = post.User
+					case post.BotUsername != "":
+						botId = post.BotUsername
+					default:
+						botId = "unknown-bot-" + post.TimeStamp
+					}
+				}
+
+				author := t.Intermediate.UsersById[botId]
 				if author == nil {
-					t.CreateIntermediateBotUser(post.BotId)
-					author = t.Intermediate.UsersById[post.BotId]
+					t.CreateIntermediateBotUser(botId)
+					author = t.Intermediate.UsersById[botId]
 				}
 
 				newPost := &IntermediatePost{
