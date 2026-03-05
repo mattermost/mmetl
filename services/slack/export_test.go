@@ -8,6 +8,83 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestSlackConvertChannelName(t *testing.T) {
+	testCases := []struct {
+		Name           string
+		ChannelName    string
+		ChannelId      string
+		ExpectedResult string
+	}{
+		{
+			Name:           "Name with leading dash is trimmed",
+			ChannelName:    "-boolean",
+			ChannelId:      "C001",
+			ExpectedResult: "boolean",
+		},
+		{
+			Name:           "Name with leading and trailing dashes is trimmed",
+			ChannelName:    "--test--",
+			ChannelId:      "C002",
+			ExpectedResult: "test",
+		},
+		{
+			Name:           "Name with leading underscores is trimmed",
+			ChannelName:    "__hidden",
+			ChannelId:      "C003",
+			ExpectedResult: "hidden",
+		},
+		{
+			Name:           "Single character after trim gets prefixed",
+			ChannelName:    "-a-",
+			ChannelId:      "C004",
+			ExpectedResult: "slack-channel-a",
+		},
+		{
+			Name:           "Name that is only dashes falls back to channel ID",
+			ChannelName:    "---",
+			ChannelId:      "C005",
+			ExpectedResult: "c005",
+		},
+		{
+			Name:           "Valid name is returned as-is",
+			ChannelName:    "general",
+			ChannelId:      "C006",
+			ExpectedResult: "general",
+		},
+		{
+			Name:           "Name with invalid characters falls back to channel ID",
+			ChannelName:    "my channel!",
+			ChannelId:      "C007",
+			ExpectedResult: "c007",
+		},
+		{
+			Name:           "Uppercase name is lowercased",
+			ChannelName:    "MyChannel",
+			ChannelId:      "C008",
+			ExpectedResult: "mychannel",
+		},
+		{
+			Name:           "Mixed case name is lowercased",
+			ChannelName:    "General-Discussion",
+			ChannelId:      "C009",
+			ExpectedResult: "general-discussion",
+		},
+		{
+			Name:           "Single uppercase character after trim is lowercased with prefix",
+			ChannelName:    "-A-",
+			ChannelId:      "C010",
+			ExpectedResult: "slack-channel-a",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.Name, func(t *testing.T) {
+			result := SlackConvertChannelName(tc.ChannelName, tc.ChannelId)
+			require.Equal(t, tc.ExpectedResult, result)
+		})
+	}
+}
+
 func TestSlackConvertTimeStamp(t *testing.T) {
 	testCases := []struct {
 		Name           string

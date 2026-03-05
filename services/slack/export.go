@@ -116,11 +116,11 @@ func SlackConvertTimeStamp(ts string) int64 {
 func SlackConvertChannelName(channelName string, channelId string) string {
 	newName := strings.Trim(channelName, "_-")
 	if len(newName) == 1 {
-		return "slack-channel-" + newName
+		return strings.ToLower("slack-channel-" + newName)
 	}
 
 	if isValidChannelNameCharacters(newName) {
-		return newName
+		return strings.ToLower(newName)
 	}
 	return strings.ToLower(channelId)
 }
