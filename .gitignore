@@ -13,5 +13,8 @@ tmp
 # IDE and editor files
 .idea
 
+# Locally installed tools
+tools/
+
 # OS files
 .DS_Store

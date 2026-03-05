@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mattermost/mmetl/commands"
 	"github.com/mattermost/mmetl/testhelper"
@@ -34,11 +35,14 @@ func resetCobraFlags(cmd *cobra.Command) {
 const transformLogFile = "transform-slack.log"
 
 // uniqueTeamName generates a unique team name for testing to avoid conflicts.
-// Uses crypto/rand for sufficient entropy to prevent collisions in parallel CI.
+// Uses crypto/rand for sufficient entropy to prevent collisions in parallel CI,
+// falling back to time-based naming if crypto/rand fails.
 // The "t" prefix ensures team names don't conflict with Mattermost reserved URLs.
 func uniqueTeamName(prefix string) string {
 	b := make([]byte, 4)
-	_, _ = rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		return fmt.Sprintf("t%s%d", prefix, time.Now().UnixNano())
+	}
 	return fmt.Sprintf("t%s%s", prefix, hex.EncodeToString(b))
 }
 
