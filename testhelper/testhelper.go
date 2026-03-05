@@ -427,7 +427,7 @@ func (th *TestHelper) AssertUserInTeam(ctx context.Context, teamID, userID strin
 // === Bot Management ===
 
 // GetBotByUsername fetches a bot by first finding the user, then getting the bot record.
-// Returns nil if the user doesn't exist or isn't a bot.
+// Returns an error if the user lookup or bot lookup fails (e.g., user not found, not a bot).
 func (th *TestHelper) GetBotByUsername(ctx context.Context, username string) (*model.Bot, error) {
 	user, err := th.GetUserByUsername(ctx, username)
 	if err != nil {

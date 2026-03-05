@@ -150,6 +150,7 @@ func transformSlackCmdF(cmd *cobra.Command, args []string) error {
 			break
 		}
 	}
+	botOwner = strings.TrimSpace(botOwner)
 	if hasBots && botOwner == "" {
 		return fmt.Errorf("the Slack export contains bot users but --bot-owner was not specified. Please provide the username of a Mattermost user who will own the imported bots")
 	}

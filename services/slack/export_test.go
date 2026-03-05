@@ -366,7 +366,7 @@ func TestGetImportLineFromBot(t *testing.T) {
 		assert.Equal(t, "mybot", *line.Bot.Username)
 		assert.Equal(t, "My Bot", *line.Bot.DisplayName)
 		assert.Equal(t, "admin", *line.Bot.Owner)
-		assert.Equal(t, "Bot Description", *line.Bot.Description)
+		assert.Nil(t, line.Bot.Description)
 		assert.Nil(t, line.Bot.DeleteAt)
 		assert.Nil(t, line.User)
 	})

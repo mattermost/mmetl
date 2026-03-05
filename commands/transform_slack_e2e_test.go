@@ -433,7 +433,7 @@ func TestTransformSlackE2EBotImport(t *testing.T) {
 		c.SetArgs(args)
 		err = c.Execute()
 		require.NoError(t, err, "transform command should succeed")
-		defer os.Remove("transform-slack.log")
+		defer os.Remove(transformLogFile)
 
 		// 4. Import into Mattermost
 		t.Log("Importing data with bots into Mattermost...")
@@ -451,7 +451,6 @@ func TestTransformSlackE2EBotImport(t *testing.T) {
 		t.Log("Verifying bots in Mattermost...")
 		deployBot := th.AssertBotExists(ctx, "deploybot")
 		assert.Equal(t, "Deploy Bot", deployBot.DisplayName)
-		assert.Equal(t, "Handles deployments", deployBot.Description)
 		assert.Equal(t, int64(0), deployBot.DeleteAt, "active bot should not be deleted")
 
 		alertBot := th.AssertBotExists(ctx, "alertbot")
@@ -506,7 +505,7 @@ func TestTransformSlackE2EBotImport(t *testing.T) {
 		c.SetArgs(args)
 		err = c.Execute()
 		require.NoError(t, err)
-		defer os.Remove("transform-slack.log")
+		defer os.Remove(transformLogFile)
 
 		// 4. Import into Mattermost
 		err = th.ImportBulkData(ctx, mmExportPath)
@@ -568,7 +567,7 @@ func TestTransformSlackE2EBotImport(t *testing.T) {
 		resetCobraFlags(c)
 		c.SetArgs(args)
 		err = c.Execute()
-		defer os.Remove("transform-slack.log")
+		defer os.Remove(transformLogFile)
 
 		// Should fail with a clear error about --bot-owner
 		require.Error(t, err, "transform should fail without --bot-owner when bots exist")
@@ -598,7 +597,7 @@ func TestTransformSlackE2EBotImport(t *testing.T) {
 		resetCobraFlags(c)
 		c.SetArgs(args)
 		err = c.Execute()
-		defer os.Remove("transform-slack.log")
+		defer os.Remove(transformLogFile)
 
 		require.NoError(t, err, "transform should succeed without --bot-owner when no bots exist")
 	})
@@ -633,7 +632,7 @@ func TestTransformSlackE2EBotImport(t *testing.T) {
 		c.SetArgs(args)
 		err = c.Execute()
 		require.NoError(t, err)
-		defer os.Remove("transform-slack.log")
+		defer os.Remove(transformLogFile)
 
 		// Verify the generated JSONL contains a bot line with delete_at set.
 		// Note: Mattermost's importBot server function does not currently honor

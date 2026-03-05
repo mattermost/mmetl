@@ -216,7 +216,6 @@ func GetImportLineFromBot(user *IntermediateUser, owner string) *imports.LineImp
 		Bot: &imports.BotImportData{
 			Username:    model.NewPointer(user.Username),
 			DisplayName: model.NewPointer(user.DisplayName),
-			Description: model.NewPointer(user.Position),
 			Owner:       model.NewPointer(owner),
 			DeleteAt:    deleteAt,
 		},
@@ -428,6 +427,9 @@ func (t *Transformer) ExportUsers(writer io.Writer, botOwner string) error {
 	}
 
 	// Write bots after users
+	if len(bots) > 0 && botOwner == "" {
+		return errors.New("cannot export bots without a bot owner: please provide the --bot-owner flag")
+	}
 	for _, bot := range bots {
 		line := GetImportLineFromBot(bot, botOwner)
 		if err := ExportWriteLine(writer, line); err != nil {

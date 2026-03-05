@@ -103,7 +103,7 @@ func (p *SlackPost) IsFileComment() bool {
 
 // IsBotMessage returns true if the post is from a bot
 func (p *SlackPost) IsBotMessage() bool {
-	return p.Type == "message" && (p.SubType == "bot_message" || p.SubType == "tombstone")
+	return p.Type == "message" && p.BotId != ""
 }
 
 // IsJoinLeaveMessage returns true if the post is a join/leave message

@@ -1024,6 +1024,34 @@ func TestTransformBotUsers(t *testing.T) {
 		assert.True(t, botUser.IsBot)
 		assert.NotZero(t, botUser.DeleteAt)
 	})
+
+	t.Run("Bot with empty BotID falls back to user ID", func(t *testing.T) {
+		slackTransformer := NewTransformer("test", log.New())
+		users := []SlackUser{
+			{
+				Id:       "U003",
+				Username: "emptyidbot",
+				IsBot:    true,
+				Profile: SlackProfile{
+					BotID:    "",
+					RealName: "Empty ID Bot",
+				},
+			},
+		}
+
+		slackTransformer.TransformUsers(users, false, "")
+
+		// Should be stored under user ID, not empty string
+		botUser := slackTransformer.Intermediate.UsersById["U003"]
+		require.NotNil(t, botUser)
+		assert.True(t, botUser.IsBot)
+		assert.Equal(t, "U003", botUser.Id)
+		assert.Equal(t, "Empty ID Bot", botUser.DisplayName)
+
+		// Ensure no entry at the empty-string key
+		_, exists := slackTransformer.Intermediate.UsersById[""]
+		assert.False(t, exists, "should not have an entry with empty string key")
+	})
 }
 
 func TestCreateIntermediateBotUser(t *testing.T) {
