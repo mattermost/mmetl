@@ -1,10 +1,12 @@
 package rocketchat
 
 import (
+	"fmt"
 	"os"
 	"testing"
 	"time"
 
+	"github.com/mattermost/mattermost/server/public/model"
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -37,7 +39,7 @@ func TestTransformUsers(t *testing.T) {
 			},
 		}
 
-		tr.TransformUsers(users, false, "")
+		tr.transformUsers(users, false, "")
 
 		require.Len(t, tr.Intermediate.UsersById, 1)
 		u := tr.Intermediate.UsersById["u1"]
@@ -55,7 +57,7 @@ func TestTransformUsers(t *testing.T) {
 		users := []RocketChatUser{
 			{ID: "u1", Username: "bob", Name: "Bob James Smith", Emails: []RCEmail{{Address: "b@b.com"}}, Active: true, Type: "user"},
 		}
-		tr.TransformUsers(users, false, "")
+		tr.transformUsers(users, false, "")
 		u := tr.Intermediate.UsersById["u1"]
 		require.NotNil(t, u)
 		assert.Equal(t, "Bob", u.FirstName)
@@ -67,7 +69,7 @@ func TestTransformUsers(t *testing.T) {
 		users := []RocketChatUser{
 			{ID: "u1", Username: "admin", Name: "Admin User", Emails: []RCEmail{{Address: "admin@example.com"}}, Active: true, Roles: []string{"admin"}, Type: "user"},
 		}
-		tr.TransformUsers(users, false, "")
+		tr.transformUsers(users, false, "")
 		// User should be transformed (role mapping is informational — not stored in IntermediateUser itself)
 		require.NotNil(t, tr.Intermediate.UsersById["u1"])
 	})
@@ -77,7 +79,7 @@ func TestTransformUsers(t *testing.T) {
 		users := []RocketChatUser{
 			{ID: "u1", Username: "inactive", Name: "Inactive User", Emails: []RCEmail{{Address: "i@i.com"}}, Active: false, Type: "user"},
 		}
-		tr.TransformUsers(users, false, "")
+		tr.transformUsers(users, false, "")
 		u := tr.Intermediate.UsersById["u1"]
 		require.NotNil(t, u)
 		assert.NotZero(t, u.DeleteAt)
@@ -88,7 +90,7 @@ func TestTransformUsers(t *testing.T) {
 		users := []RocketChatUser{
 			{ID: "u1", Username: "noemail", Name: "No Email", Emails: nil, Active: true, Type: "user"},
 		}
-		tr.TransformUsers(users, false, "example.org")
+		tr.transformUsers(users, false, "example.org")
 		u := tr.Intermediate.UsersById["u1"]
 		require.NotNil(t, u)
 		assert.Equal(t, "noemail@example.org", u.Email)
@@ -99,7 +101,7 @@ func TestTransformUsers(t *testing.T) {
 		users := []RocketChatUser{
 			{ID: "u1", Username: "noemail", Name: "No Email", Emails: nil, Active: true, Type: "user"},
 		}
-		tr.TransformUsers(users, true, "")
+		tr.transformUsers(users, true, "")
 		u := tr.Intermediate.UsersById["u1"]
 		require.NotNil(t, u)
 		assert.Equal(t, "", u.Email)
@@ -111,7 +113,7 @@ func TestTransformUsers(t *testing.T) {
 			{ID: "b1", Username: "bot", Name: "My Bot", Type: "bot"},
 			{ID: "u1", Username: "human", Name: "Human User", Emails: []RCEmail{{Address: "h@h.com"}}, Active: true, Type: "user"},
 		}
-		tr.TransformUsers(users, false, "")
+		tr.transformUsers(users, false, "")
 		assert.Len(t, tr.Intermediate.UsersById, 1)
 		assert.Nil(t, tr.Intermediate.UsersById["b1"])
 		assert.NotNil(t, tr.Intermediate.UsersById["u1"])
@@ -130,7 +132,7 @@ func TestTransformChannels(t *testing.T) {
 		rooms := []RocketChatRoom{
 			{ID: "r1", Type: "c", Name: "general", FName: "General", Description: &desc},
 		}
-		tr.TransformChannels(rooms)
+		tr.transformChannels(rooms)
 		require.Len(t, tr.Intermediate.PublicChannels, 1)
 		ch := tr.Intermediate.PublicChannels[0]
 		assert.Equal(t, "general", ch.Name)
@@ -143,7 +145,7 @@ func TestTransformChannels(t *testing.T) {
 		rooms := []RocketChatRoom{
 			{ID: "r1", Type: "p", Name: "secret"},
 		}
-		tr.TransformChannels(rooms)
+		tr.transformChannels(rooms)
 		require.Len(t, tr.Intermediate.PrivateChannels, 1)
 	})
 
@@ -157,7 +159,7 @@ func TestTransformChannels(t *testing.T) {
 		rooms := []RocketChatRoom{
 			{ID: "r1", Type: "d", UIDs: []string{"u1", "u2"}, Usernames: []string{"alice", "bob"}},
 		}
-		tr.TransformChannels(rooms)
+		tr.transformChannels(rooms)
 		require.Len(t, tr.Intermediate.DirectChannels, 1)
 		assert.Equal(t, []string{"alice", "bob"}, tr.Intermediate.DirectChannels[0].MembersUsernames)
 	})
@@ -172,23 +174,109 @@ func TestTransformChannels(t *testing.T) {
 		rooms := []RocketChatRoom{
 			{ID: "r1", Type: "d", UIDs: []string{"u1", "u2", "u3"}, Usernames: []string{"alice", "bob", "carol"}},
 		}
-		tr.TransformChannels(rooms)
+		tr.transformChannels(rooms)
 		require.Len(t, tr.Intermediate.GroupChannels, 1)
 		assert.Equal(t, []string{"alice", "bob", "carol"}, tr.Intermediate.GroupChannels[0].MembersUsernames)
 	})
 
-	t.Run("direct channel with unknown member (e.g. rocket.cat) is skipped", func(t *testing.T) {
+	t.Run("direct channel with unknown member gets placeholder user and is included", func(t *testing.T) {
 		tr := NewTransformer("test", newLogger())
 		tr.Intermediate.UsersById = map[string]*intermediate.IntermediateUser{
 			"u1": {Id: "u1", Username: "alice"},
-			// "bot1" / "rocket.cat" is intentionally absent
+			// "bot1" / "rocket.cat" is intentionally absent — should become a placeholder
 		}
 		rooms := []RocketChatRoom{
 			{ID: "r1", Type: "d", UIDs: []string{"u1", "bot1"}, Usernames: []string{"alice", "rocket.cat"}},
 		}
-		tr.TransformChannels(rooms)
+		tr.transformChannels(rooms)
+
+		// Room must be imported, not dropped.
+		require.Len(t, tr.Intermediate.DirectChannels, 1)
+		assert.False(t, tr.skippedRoomIDs["r1"])
+
+		// A placeholder user must have been created for bot1, using the known username.
+		placeholder := tr.Intermediate.UsersById["bot1"]
+		require.NotNil(t, placeholder)
+		assert.Equal(t, "rocket.cat", placeholder.Username)
+
+		// Both members must appear in the channel.
+		assert.Equal(t, []string{"alice", "rocket.cat"}, tr.Intermediate.DirectChannels[0].MembersUsernames)
+	})
+
+	t.Run("single-member DM is skipped", func(t *testing.T) {
+		tr := NewTransformer("test", newLogger())
+		tr.Intermediate.UsersById = map[string]*intermediate.IntermediateUser{
+			"u1": {Id: "u1", Username: "alice"},
+		}
+		rooms := []RocketChatRoom{
+			{ID: "r1", Type: "d", UIDs: []string{"u1"}, Usernames: []string{"alice"}},
+		}
+		tr.transformChannels(rooms)
 		assert.Empty(t, tr.Intermediate.DirectChannels)
 		assert.True(t, tr.skippedRoomIDs["r1"])
+	})
+
+	t.Run("empty room name falls back to ID for OriginalName", func(t *testing.T) {
+		tr := NewTransformer("test", newLogger())
+		rooms := []RocketChatRoom{
+			{ID: "room-id-123", Type: "c", Name: ""},
+		}
+		tr.transformChannels(rooms)
+		require.Len(t, tr.Intermediate.PublicChannels, 1)
+		assert.Equal(t, "room-id-123", tr.Intermediate.PublicChannels[0].OriginalName)
+	})
+
+	t.Run("room name with spaces is slugified", func(t *testing.T) {
+		tr := NewTransformer("test", newLogger())
+		rooms := []RocketChatRoom{
+			{ID: "r1", Type: "c", Name: "General Discussion"},
+		}
+		tr.transformChannels(rooms)
+		require.Len(t, tr.Intermediate.PublicChannels, 1)
+		assert.Equal(t, "general-discussion", tr.Intermediate.PublicChannels[0].Name)
+	})
+
+	t.Run("group DM at exactly ChannelGroupMaxUsers members stays as group", func(t *testing.T) {
+		tr := NewTransformer("test", newLogger())
+		uids := make([]string, model.ChannelGroupMaxUsers)
+		usernames := make([]string, model.ChannelGroupMaxUsers)
+		users := make(map[string]*intermediate.IntermediateUser, model.ChannelGroupMaxUsers)
+		for i := 0; i < model.ChannelGroupMaxUsers; i++ {
+			uid := fmt.Sprintf("u%d", i+1)
+			username := fmt.Sprintf("user%d", i+1)
+			users[uid] = &intermediate.IntermediateUser{Id: uid, Username: username}
+			uids[i] = uid
+			usernames[i] = username
+		}
+		tr.Intermediate.UsersById = users
+		rooms := []RocketChatRoom{
+			{ID: "r1", Type: "d", UIDs: uids, Usernames: usernames},
+		}
+		tr.transformChannels(rooms)
+		require.Len(t, tr.Intermediate.GroupChannels, 1)
+		assert.Empty(t, tr.Intermediate.PrivateChannels)
+	})
+
+	t.Run("group DM exceeding ChannelGroupMaxUsers converts to private channel", func(t *testing.T) {
+		tr := NewTransformer("test", newLogger())
+		count := model.ChannelGroupMaxUsers + 1
+		uids := make([]string, count)
+		usernames := make([]string, count)
+		users := make(map[string]*intermediate.IntermediateUser, count)
+		for i := 0; i < count; i++ {
+			uid := fmt.Sprintf("u%d", i+1)
+			username := fmt.Sprintf("user%d", i+1)
+			users[uid] = &intermediate.IntermediateUser{Id: uid, Username: username}
+			uids[i] = uid
+			usernames[i] = username
+		}
+		tr.Intermediate.UsersById = users
+		rooms := []RocketChatRoom{
+			{ID: "r1", Type: "d", Name: "big-group", UIDs: uids, Usernames: usernames},
+		}
+		tr.transformChannels(rooms)
+		assert.Empty(t, tr.Intermediate.GroupChannels)
+		require.Len(t, tr.Intermediate.PrivateChannels, 1)
 	})
 
 	t.Run("encrypted room is skipped", func(t *testing.T) {
@@ -196,7 +284,7 @@ func TestTransformChannels(t *testing.T) {
 		rooms := []RocketChatRoom{
 			{ID: "r1", Type: "c", Name: "encrypted-room", Encrypted: true},
 		}
-		tr.TransformChannels(rooms)
+		tr.transformChannels(rooms)
 		assert.Empty(t, tr.Intermediate.PublicChannels)
 		assert.True(t, tr.skippedRoomIDs["r1"])
 	})
@@ -206,7 +294,7 @@ func TestTransformChannels(t *testing.T) {
 		rooms := []RocketChatRoom{
 			{ID: "r1", Type: "p", Name: "discussion", ParentRID: "parent-room-id"},
 		}
-		tr.TransformChannels(rooms)
+		tr.transformChannels(rooms)
 		assert.Empty(t, tr.Intermediate.PrivateChannels)
 		assert.True(t, tr.skippedRoomIDs["r1"])
 	})
@@ -216,7 +304,7 @@ func TestTransformChannels(t *testing.T) {
 		rooms := []RocketChatRoom{
 			{ID: "r1", Type: "c", Name: "nodesc", Description: nil},
 		}
-		tr.TransformChannels(rooms)
+		tr.transformChannels(rooms)
 		require.Len(t, tr.Intermediate.PublicChannels, 1)
 		assert.Equal(t, "", tr.Intermediate.PublicChannels[0].Purpose)
 	})
@@ -226,7 +314,7 @@ func TestTransformChannels(t *testing.T) {
 		rooms := []RocketChatRoom{
 			{ID: "r1", Type: "c", Name: "My-Channel-Name"},
 		}
-		tr.TransformChannels(rooms)
+		tr.transformChannels(rooms)
 		require.Len(t, tr.Intermediate.PublicChannels, 1)
 		// Name should be lowercased
 		assert.Equal(t, "my-channel-name", tr.Intermediate.PublicChannels[0].Name)
@@ -249,7 +337,7 @@ func TestTransformSubscriptions(t *testing.T) {
 		subs := []RocketChatSubscription{
 			{RoomID: "r1", User: RCMessageUser{ID: "u1", Username: "alice"}},
 		}
-		tr.TransformSubscriptions(subs)
+		tr.transformSubscriptions(subs)
 		assert.Contains(t, tr.Intermediate.PublicChannels[0].Members, "u1")
 		assert.Contains(t, tr.Intermediate.UsersById["u1"].Memberships, "general")
 	})
@@ -263,7 +351,7 @@ func TestTransformSubscriptions(t *testing.T) {
 		subs := []RocketChatSubscription{
 			{RoomID: "r1", User: RCMessageUser{ID: "unknown"}},
 		}
-		tr.TransformSubscriptions(subs)
+		tr.transformSubscriptions(subs)
 		assert.Empty(t, tr.Intermediate.PublicChannels[0].Members)
 	})
 
@@ -276,7 +364,7 @@ func TestTransformSubscriptions(t *testing.T) {
 		subs := []RocketChatSubscription{
 			{RoomID: "dm-room", User: RCMessageUser{ID: "u1"}},
 		}
-		tr.TransformSubscriptions(subs) // should not panic
+		tr.transformSubscriptions(subs) // should not panic
 		assert.Empty(t, tr.Intermediate.UsersById["u1"].Memberships)
 	})
 
@@ -292,7 +380,7 @@ func TestTransformSubscriptions(t *testing.T) {
 			{RoomID: "r1", User: RCMessageUser{ID: "u1", Username: "alice"}},
 			{RoomID: "r1", User: RCMessageUser{ID: "u1", Username: "alice"}},
 		}
-		tr.TransformSubscriptions(subs)
+		tr.transformSubscriptions(subs)
 		assert.Len(t, tr.Intermediate.PublicChannels[0].Members, 1)
 		assert.Len(t, tr.Intermediate.UsersById["u1"].Memberships, 1)
 	})
@@ -316,7 +404,7 @@ func TestTransformMessages(t *testing.T) {
 		messages := []RocketChatMessage{
 			{ID: "m1", RoomID: "r1", User: RCMessageUser{ID: "u1", Username: "alice"}, Message: "Hello!", Timestamp: now},
 		}
-		tr.TransformMessages(messages, nil)
+		tr.transformMessages(messages, nil)
 		require.Len(t, tr.Intermediate.Posts, 1)
 		p := tr.Intermediate.Posts[0]
 		assert.Equal(t, "alice", p.User)
@@ -345,7 +433,7 @@ func TestTransformMessages(t *testing.T) {
 			User: RCMessageUser{ID: "u2", Username: "bob"}, Message: "Reply",
 			Timestamp: now.Add(time.Second), ThreadID: "root",
 		}
-		tr.TransformMessages([]RocketChatMessage{root, reply}, nil)
+		tr.transformMessages([]RocketChatMessage{root, reply}, nil)
 		require.Len(t, tr.Intermediate.Posts, 1)
 		assert.Equal(t, "Root", tr.Intermediate.Posts[0].Message)
 		require.Len(t, tr.Intermediate.Posts[0].Replies, 1)
@@ -371,7 +459,7 @@ func TestTransformMessages(t *testing.T) {
 				},
 			},
 		}
-		tr.TransformMessages(messages, nil)
+		tr.transformMessages(messages, nil)
 		require.Len(t, tr.Intermediate.Posts, 1)
 		p := tr.Intermediate.Posts[0]
 		require.Len(t, p.Reactions, 3)
@@ -394,7 +482,7 @@ func TestTransformMessages(t *testing.T) {
 		messages := []RocketChatMessage{
 			{ID: "m1", RoomID: "r1", User: RCMessageUser{ID: "u1", Username: "alice"}, Type: "uj", Timestamp: now},
 		}
-		tr.TransformMessages(messages, nil)
+		tr.transformMessages(messages, nil)
 		require.Len(t, tr.Intermediate.Posts, 1)
 		assert.Equal(t, "system_join_channel", tr.Intermediate.Posts[0].Type)
 	})
@@ -410,7 +498,7 @@ func TestTransformMessages(t *testing.T) {
 		messages := []RocketChatMessage{
 			{ID: "m1", RoomID: "r1", User: RCMessageUser{ID: "u1", Username: "alice"}, Type: "message_pinned", Timestamp: now},
 		}
-		tr.TransformMessages(messages, nil)
+		tr.transformMessages(messages, nil)
 		assert.Empty(t, tr.Intermediate.Posts)
 	})
 
@@ -423,7 +511,7 @@ func TestTransformMessages(t *testing.T) {
 		messages := []RocketChatMessage{
 			{ID: "m1", RoomID: "r1", User: RCMessageUser{ID: "u1", Username: "alice"}, Type: "discussion-created", Timestamp: now},
 		}
-		tr.TransformMessages(messages, nil)
+		tr.transformMessages(messages, nil)
 		assert.Empty(t, tr.Intermediate.Posts)
 	})
 
@@ -437,7 +525,7 @@ func TestTransformMessages(t *testing.T) {
 		messages := []RocketChatMessage{
 			{ID: "m1", RoomID: "r1", User: RCMessageUser{ID: "u1", Username: "alice"}, Message: "hello", Timestamp: now},
 		}
-		tr.TransformMessages(messages, nil)
+		tr.transformMessages(messages, nil)
 		assert.Empty(t, tr.Intermediate.Posts)
 	})
 
@@ -455,7 +543,7 @@ func TestTransformMessages(t *testing.T) {
 		messages := []RocketChatMessage{
 			{ID: "m1", RoomID: "dm1", User: RCMessageUser{ID: "u1", Username: "alice"}, Message: "hey", Timestamp: now},
 		}
-		tr.TransformMessages(messages, nil)
+		tr.transformMessages(messages, nil)
 		require.Len(t, tr.Intermediate.Posts, 1)
 		p := tr.Intermediate.Posts[0]
 		assert.True(t, p.IsDirect)
@@ -481,7 +569,7 @@ func TestTransformMessages(t *testing.T) {
 				Files:     []RCFileRef{{ID: "file1", Name: "photo.jpg"}},
 			},
 		}
-		tr.TransformMessages(messages, uploads)
+		tr.transformMessages(messages, uploads)
 		require.Len(t, tr.Intermediate.Posts, 1)
 		require.Len(t, tr.Intermediate.Posts[0].Attachments, 1)
 		assert.Equal(t, "bulk-export-attachments/file1_photo.jpg", tr.Intermediate.Posts[0].Attachments[0])
@@ -577,7 +665,7 @@ func TestConvertChannelMentions(t *testing.T) {
 				Timestamp: time.Now(),
 			},
 		}
-		tr.TransformMessages(messages, nil)
+		tr.transformMessages(messages, nil)
 		require.Len(t, tr.Intermediate.Posts, 1)
 		assert.Equal(t, "check ~general and unknown-tag", tr.Intermediate.Posts[0].Message)
 	})

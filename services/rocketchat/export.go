@@ -28,7 +28,7 @@ func exportWriteLine(writer io.Writer, line *imports.LineImportData) error {
 }
 
 // Export writes the full Mattermost bulk import JSONL to outputFilePath.
-// Export order: version, team, public channels, private channels, users,
+// Export order: version, public channels, private channels, users,
 // direct channels (group + direct), posts, direct posts.
 func (t *Transformer) Export(outputFilePath string) error {
 	f, err := os.Create(outputFilePath)
@@ -40,15 +40,6 @@ func (t *Transformer) Export(outputFilePath string) error {
 	t.Logger.Info("Exporting version")
 	if err := t.ExportVersion(f); err != nil {
 		return err
-	}
-
-	if !t.SkipTeamExport {
-		t.Logger.Info("Exporting team")
-		if err := t.ExportTeam(f); err != nil {
-			return err
-		}
-	} else {
-		t.Logger.Info("Skipping team export (--skip-team-export set)")
 	}
 
 	t.Logger.Info("Exporting public channels")
@@ -90,20 +81,6 @@ func (t *Transformer) ExportVersion(w io.Writer) error {
 	line := &imports.LineImportData{
 		Type:    "version",
 		Version: &version,
-	}
-	return exportWriteLine(w, line)
-}
-
-// ExportTeam writes the team import line.
-func (t *Transformer) ExportTeam(w io.Writer) error {
-	teamType := model.TeamOpen
-	line := &imports.LineImportData{
-		Type: "team",
-		Team: &imports.TeamImportData{
-			Name:        model.NewPointer(t.TeamName),
-			DisplayName: model.NewPointer(t.TeamName),
-			Type:        model.NewPointer(teamType),
-		},
 	}
 	return exportWriteLine(w, line)
 }

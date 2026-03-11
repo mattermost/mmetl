@@ -19,7 +19,7 @@ mmetl check rocketchat [flags]
       --default-email-domain string   If this flag is provided: When a user's email address is empty, the output's email address will be generated from their username and the provided domain.
   -d, --dump-dir string               path to the mongodump output directory
   -h, --help                          help for rocketchat
-      --skip-empty-emails             Ignore empty email addresses from the import file.
+      --skip-empty-emails             Ignore empty email addresses from the import file. Note that this results in invalid data.
 ```
 
 ### SEE ALSO

@@ -159,7 +159,7 @@ func (t *Transformer) TransformChannels(channels []SlackChannel) []*Intermediate
 			Type:         channel.Type,
 		}
 
-		newChannel.Sanitise(t.Logger)
+		newChannel.SanitiseWithPrefix(t.Logger, "slack-channel-")
 		resultChannels = append(resultChannels, newChannel)
 	}
 
@@ -523,33 +523,9 @@ func (t *Transformer) getReactionsFromPost(post SlackPost) []*IntermediateReacti
 	return reactions
 }
 
-// splitPostIntoThread splits a post's message if it exceeds the maximum rune limit.
-// The first chunk becomes/remains the main post, and additional chunks are added as replies.
-// Reactions and attachments are kept only on the first chunk.
+// splitPostIntoThread delegates to the shared intermediate package implementation.
 func splitPostIntoThread(post *IntermediatePost) {
-	if utf8.RuneCountInString(post.Message) <= model.PostMessageMaxRunesV2 {
-		// No splitting needed
-		return
-	}
-
-	chunks := splitTextIntoChunks(post.Message, model.PostMessageMaxRunesV2)
-
-	// First chunk stays as the main message
-	post.Message = chunks[0]
-
-	// Create replies for the remaining chunks
-	for i, chunk := range chunks[1:] {
-		reply := &IntermediatePost{
-			User:           post.User,
-			Channel:        post.Channel,
-			Message:        chunk,
-			CreateAt:       post.CreateAt + int64(i+1), // Increment timestamp to maintain order
-			IsDirect:       post.IsDirect,
-			ChannelMembers: post.ChannelMembers,
-			// No reactions, attachments, or props for continuation chunks
-		}
-		post.Replies = append(post.Replies, reply)
-	}
+	intermediate.SplitPostIntoThread(post)
 }
 
 func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir string, skipAttachments, discardInvalidProps, allowDownload bool) error {
@@ -769,59 +745,9 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 			// Split the post if it exceeds the maximum rune limit
 			splitPostIntoThread(post)
 
-			// Also split any existing replies that exceed the limit
-			// We need to iterate carefully because we'll be modifying the replies slice
-			originalReplies := post.Replies
-			post.Replies = []*IntermediatePost{}
-
-			// Build a set of used timestamps from existing replies to avoid duplicates
-			usedTimestamps := make(map[int64]bool)
-			for _, reply := range originalReplies {
-				usedTimestamps[reply.CreateAt] = true
-			}
-
-			for _, reply := range originalReplies {
-				if utf8.RuneCountInString(reply.Message) <= model.PostMessageMaxRunesV2 {
-					// Reply doesn't need splitting, keep as-is
-					post.Replies = append(post.Replies, reply)
-					continue
-				}
-
-				// Reply needs splitting - add all chunks as siblings
-				chunks := splitTextIntoChunks(reply.Message, model.PostMessageMaxRunesV2)
-
-				// First chunk: update the original reply
-				reply.Message = chunks[0]
-				post.Replies = append(post.Replies, reply)
-
-				// Remaining chunks: create new sibling replies
-				for i, chunk := range chunks[1:] {
-					// Find a unique timestamp by incrementing until we find one not in use
-					timestamp := reply.CreateAt + int64(i+1)
-					for usedTimestamps[timestamp] {
-						timestamp++
-					}
-					usedTimestamps[timestamp] = true
-
-					continuationReply := &IntermediatePost{
-						User:           reply.User,
-						Channel:        reply.Channel,
-						Message:        chunk,
-						CreateAt:       timestamp,
-						IsDirect:       reply.IsDirect,
-						ChannelMembers: reply.ChannelMembers,
-						// No reactions, attachments, or props for continuation chunks
-					}
-					post.Replies = append(post.Replies, continuationReply)
-				}
-			}
-
-			// Sort replies by CreateAt to ensure proper ordering
-			// This is important because split chunks may have timestamps that need to be
-			// interleaved with other replies
-			sort.Slice(post.Replies, func(i, j int) bool {
-				return post.Replies[i].CreateAt < post.Replies[j].CreateAt
-			})
+			// Also split any existing replies that exceed the limit,
+			// deduplicate timestamps, and sort by CreateAt.
+			intermediate.SplitOversizedReplies(post)
 
 			channelPosts = append(channelPosts, post)
 		}

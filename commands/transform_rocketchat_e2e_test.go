@@ -162,12 +162,6 @@ func TestTransformRocketChatE2E(t *testing.T) {
 		assertJSONField(t, lines[0], "type", "version")
 		assert.Equal(t, float64(1), lines[0]["version"])
 
-		// Team line must exist
-		teamLine := findLineByType(lines, "team")
-		require.NotNil(t, teamLine, "expected a team line")
-		team := teamLine["team"].(map[string]any)
-		assert.Equal(t, "testteam", team["name"])
-
 		// Public channel (general)
 		channelLines := findLinesByType(lines, "channel")
 		require.NotEmpty(t, channelLines)
@@ -238,10 +232,10 @@ func TestTransformRocketChatE2E(t *testing.T) {
 		require.NoError(t, err)
 		lines := splitJSONLLines(t, data)
 
-		teamLine := findLineByType(lines, "team")
-		require.NotNil(t, teamLine)
-		team := teamLine["team"].(map[string]any)
-		assert.Equal(t, "testteam", team["name"])
+		// Team name should be lowercased in channel records.
+		channelLines := findLinesByType(lines, "channel")
+		require.NotEmpty(t, channelLines)
+		assert.Equal(t, "testteam", channelLines[0]["team"])
 	})
 
 	t.Run("thread replies nested under parent post", func(t *testing.T) {
@@ -326,10 +320,9 @@ func TestTransformRocketChatEdgeCases(t *testing.T) {
 		require.NoError(t, err)
 		lines := splitJSONLLines(t, data)
 
-		// Must have version and team lines, nothing else
-		require.Len(t, lines, 2)
+		// Must have only the version line, nothing else
+		require.Len(t, lines, 1)
 		assertJSONField(t, lines[0], "type", "version")
-		assertJSONField(t, lines[1], "type", "team")
 	})
 
 	t.Run("message with username not in UsersById uses username from message", func(t *testing.T) {
@@ -524,15 +517,6 @@ func splitJSONLLines(t *testing.T, data []byte) []map[string]any {
 func assertJSONField(t *testing.T, m map[string]any, key string, expected any) {
 	t.Helper()
 	assert.Equal(t, expected, m[key])
-}
-
-func findLineByType(lines []map[string]any, typeName string) map[string]any {
-	for _, l := range lines {
-		if l["type"] == typeName {
-			return l
-		}
-	}
-	return nil
 }
 
 func findLinesByType(lines []map[string]any, typeName string) []map[string]any {

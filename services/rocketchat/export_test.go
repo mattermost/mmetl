@@ -48,18 +48,6 @@ func TestExportVersion(t *testing.T) {
 	assert.Equal(t, float64(1), lines[0]["version"])
 }
 
-func TestExportTeam(t *testing.T) {
-	tr := NewTransformer("myteam", newExportLogger())
-	var buf bytes.Buffer
-	require.NoError(t, tr.ExportTeam(&buf))
-
-	lines := readLines(t, &buf)
-	require.Len(t, lines, 1)
-	assert.Equal(t, "team", lines[0]["type"])
-	team := lines[0]["team"].(map[string]any)
-	assert.Equal(t, "myteam", team["name"])
-}
-
 func TestExportChannels(t *testing.T) {
 	tr := NewTransformer("myteam", newExportLogger())
 	channels := []*intermediate.IntermediateChannel{
@@ -220,16 +208,15 @@ func TestExportOrder(t *testing.T) {
 		types = append(types, line.Type)
 	}
 
-	// Expected order: version, team, public channel, private channel, user,
+	// Expected order: version, public channel, private channel, user,
 	// direct channel, post
-	require.Len(t, types, 7)
+	require.Len(t, types, 6)
 	assert.Equal(t, "version", types[0])
-	assert.Equal(t, "team", types[1])
-	assert.Equal(t, "channel", types[2]) // public channel
-	assert.Equal(t, "channel", types[3]) // private channel
-	assert.Equal(t, "user", types[4])
-	assert.Equal(t, "direct_channel", types[5])
-	assert.Equal(t, "post", types[6])
+	assert.Equal(t, "channel", types[1]) // public channel
+	assert.Equal(t, "channel", types[2]) // private channel
+	assert.Equal(t, "user", types[3])
+	assert.Equal(t, "direct_channel", types[4])
+	assert.Equal(t, "post", types[5])
 }
 
 func TestExportUsersIncludeTeamMemberships(t *testing.T) {

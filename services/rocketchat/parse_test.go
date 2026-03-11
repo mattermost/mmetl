@@ -122,14 +122,14 @@ func TestParseDump(t *testing.T) {
 		parsed, err := ParseDump(dir, logger)
 		require.NoError(t, err)
 
-		assert.Len(t, parsed.UsersByID, 2)
-		assert.Len(t, parsed.RoomsByID, 1)
-		assert.Len(t, parsed.MessagesByRoomID["r1"], 2)
-		assert.Len(t, parsed.SubscriptionsByRoomID["r1"], 1)
+		assert.Len(t, parsed.Users, 2)
+		assert.Len(t, parsed.Rooms, 1)
+		assert.Len(t, parsed.Messages, 2)
+		assert.Len(t, parsed.Subscriptions, 1)
 		assert.Empty(t, parsed.UploadsByID)
 
-		assert.Equal(t, "alice", parsed.UsersByID["u1"].Username)
-		assert.Equal(t, "general", parsed.RoomsByID["r1"].Name)
+		assert.Equal(t, "alice", parsed.Users[0].Username)
+		assert.Equal(t, "general", parsed.Rooms[0].Name)
 	})
 
 	t.Run("parses optional uploads collection when present", func(t *testing.T) {

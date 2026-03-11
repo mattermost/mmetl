@@ -13,15 +13,15 @@ import (
 
 // ParsedData holds all data read from a Rocket.Chat mongodump directory.
 type ParsedData struct {
-	UsersByID             map[string]*RocketChatUser
-	RoomsByID             map[string]*RocketChatRoom
-	MessagesByRoomID      map[string][]*RocketChatMessage
-	SubscriptionsByRoomID map[string][]*RocketChatSubscription
-	UploadsByID           map[string]*RocketChatUpload
+	Users         []RocketChatUser
+	Rooms         []RocketChatRoom
+	Messages      []RocketChatMessage
+	Subscriptions []RocketChatSubscription
+	UploadsByID   map[string]*RocketChatUpload
 }
 
 // readBSONFile reads a concatenated BSON file (as produced by mongodump) and
-// deserialises each document into type T.
+// deserializes each document into type T.
 func readBSONFile[T any](filePath string) ([]T, error) {
 	f, err := os.Open(filePath)
 	if err != nil {
@@ -29,9 +29,15 @@ func readBSONFile[T any](filePath string) ([]T, error) {
 	}
 	defer f.Close()
 
+	// A mongodump .bson file is a raw stream of back-to-back BSON documents
+	// with no delimiter between them. Each document encodes its own total byte
+	// length in the first 4 bytes, so we use that to frame each read.
 	var results []T
 	for {
-		// Read the 4-byte little-endian document length prefix.
+		// Every BSON document begins with a 4-byte little-endian int32 that
+		// gives the total length of the document in bytes, length field included.
+		// io.ReadFull is used instead of Read to guarantee all 4 bytes are
+		// returned even if the underlying Read returns a short count.
 		var sizeBuf [4]byte
 		_, err := io.ReadFull(f, sizeBuf[:])
 		if err == io.EOF {
@@ -41,12 +47,19 @@ func readBSONFile[T any](filePath string) ([]T, error) {
 			return nil, fmt.Errorf("reading BSON document size from %s: %w", filePath, err)
 		}
 
+		// Decode the 4 bytes as a little-endian int32 (LSB first, as the BSON
+		// spec requires). The result is the total document size in bytes.
 		docSize := int32(sizeBuf[0]) | int32(sizeBuf[1])<<8 | int32(sizeBuf[2])<<16 | int32(sizeBuf[3])<<24
 		if docSize < 5 {
+			// A valid BSON document is at minimum 5 bytes: 4-byte length + 1-byte
+			// null terminator. Anything smaller indicates a corrupt file.
 			return nil, fmt.Errorf("invalid BSON document size %d in %s", docSize, filePath)
 		}
 
-		// Read the rest of the document (we already read 4 bytes of the header).
+		// Allocate a buffer for the complete document and copy the 4 size bytes
+		// we already consumed back into the front of it. bson.Unmarshal expects
+		// the full raw document including the leading length prefix, so we must
+		// reconstruct it before passing the buffer to the decoder.
 		remaining := int(docSize) - 4
 		doc := make([]byte, int(docSize))
 		copy(doc[:4], sizeBuf[:])
@@ -108,37 +121,15 @@ func ParseDump(dumpDir string, logger log.FieldLogger) (*ParsedData, error) {
 
 	// --- uploads (optional) ---
 	var uploads []RocketChatUpload
-	uploadsPath := filepath.Join(dumpDir, "rocketchat_uploads.bson")
-	if _, err := os.Stat(uploadsPath); err == nil {
-		uploads, err = readBSONFile[RocketChatUpload](uploadsPath)
+	uploadsBSON := filepath.Join(dumpDir, "rocketchat_uploads.bson")
+	if _, err := os.Stat(uploadsBSON); err == nil {
+		uploads, err = readBSONFile[RocketChatUpload](uploadsBSON)
 		if err != nil {
 			return nil, fmt.Errorf("parsing uploads: %w", err)
 		}
 	}
 
-	// Build lookup maps.
-	usersByID := make(map[string]*RocketChatUser, len(users))
-	for i := range users {
-		usersByID[users[i].ID] = &users[i]
-	}
-
-	roomsByID := make(map[string]*RocketChatRoom, len(rooms))
-	for i := range rooms {
-		roomsByID[rooms[i].ID] = &rooms[i]
-	}
-
-	messagesByRoomID := make(map[string][]*RocketChatMessage)
-	for i := range messages {
-		rid := messages[i].RoomID
-		messagesByRoomID[rid] = append(messagesByRoomID[rid], &messages[i])
-	}
-
-	subscriptionsByRoomID := make(map[string][]*RocketChatSubscription)
-	for i := range subscriptions {
-		rid := subscriptions[i].RoomID
-		subscriptionsByRoomID[rid] = append(subscriptionsByRoomID[rid], &subscriptions[i])
-	}
-
+	// Build upload lookup map.
 	uploadsByID := make(map[string]*RocketChatUpload, len(uploads))
 	for i := range uploads {
 		uploadsByID[uploads[i].ID] = &uploads[i]
@@ -148,10 +139,10 @@ func ParseDump(dumpDir string, logger log.FieldLogger) (*ParsedData, error) {
 		len(users), len(rooms), len(messages), len(subscriptions), len(uploads))
 
 	return &ParsedData{
-		UsersByID:             usersByID,
-		RoomsByID:             roomsByID,
-		MessagesByRoomID:      messagesByRoomID,
-		SubscriptionsByRoomID: subscriptionsByRoomID,
-		UploadsByID:           uploadsByID,
+		Users:         users,
+		Rooms:         rooms,
+		Messages:      messages,
+		Subscriptions: subscriptions,
+		UploadsByID:   uploadsByID,
 	}, nil
 }

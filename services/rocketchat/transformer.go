@@ -3,8 +3,9 @@ package rocketchat
 import (
 	"fmt"
 	"regexp"
+	"slices"
+	"sort"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/mattermost/mattermost/server/public/model"
 	log "github.com/sirupsen/logrus"
@@ -17,11 +18,6 @@ type Transformer struct {
 	TeamName     string
 	Intermediate *intermediate.Intermediate
 	Logger       log.FieldLogger
-
-	// SkipTeamExport controls whether the team line is written to the JSONL output.
-	// Set to true when importing into an existing Mattermost team to avoid the
-	// "duplicate team" validation error.
-	SkipTeamExport bool
 
 	// skippedRoomIDs records room IDs that were skipped (encrypted/discussion) so
 	// that messages in those rooms are also skipped.
@@ -46,13 +42,23 @@ func NewTransformer(teamName string, logger log.FieldLogger) *Transformer {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Phase 2.1 — User transformation
-// ---------------------------------------------------------------------------
+// Transform runs all transformation phases against a parsed dump in order:
+// users, channels, subscriptions, then messages.
+// When skipAttachments is true, no attachment paths are written into posts.
+func (t *Transformer) Transform(parsed *ParsedData, skipAttachments bool, skipEmptyEmails bool, defaultEmailDomain string) {
+	t.transformUsers(parsed.Users, skipEmptyEmails, defaultEmailDomain)
+	t.transformChannels(parsed.Rooms)
+	t.transformSubscriptions(parsed.Subscriptions)
+	var uploadsForTransform map[string]*RocketChatUpload
+	if !skipAttachments {
+		uploadsForTransform = parsed.UploadsByID
+	}
+	t.transformMessages(parsed.Messages, uploadsForTransform)
+}
 
-// TransformUsers converts RocketChatUser records into IntermediateUser records
+// transformUsers converts RocketChatUser records into IntermediateUser records
 // and stores them in Intermediate.UsersById keyed by RC _id.
-func (t *Transformer) TransformUsers(users []RocketChatUser, skipEmptyEmails bool, defaultEmailDomain string) {
+func (t *Transformer) transformUsers(users []RocketChatUser, skipEmptyEmails bool, defaultEmailDomain string) {
 	t.Logger.Info("Transforming users")
 
 	result := make(map[string]*intermediate.IntermediateUser, len(users))
@@ -74,8 +80,6 @@ func (t *Transformer) TransformUsers(users []RocketChatUser, skipEmptyEmails boo
 			email = u.Emails[0].Address
 		}
 
-		roles := mapRoles(u.Roles)
-
 		newUser := &intermediate.IntermediateUser{
 			Id:        u.ID,
 			Username:  strings.ToLower(u.Username),
@@ -85,7 +89,6 @@ func (t *Transformer) TransformUsers(users []RocketChatUser, skipEmptyEmails boo
 			Password:  model.NewId(),
 			DeleteAt:  deleteAt,
 		}
-		_ = roles // roles are set at team/channel level in Mattermost import
 
 		newUser.Sanitise(t.Logger, defaultEmailDomain, skipEmptyEmails)
 		result[newUser.Id] = newUser
@@ -102,18 +105,6 @@ func splitName(name string) (firstName, lastName string) {
 		return name, ""
 	}
 	return name[:idx], name[idx+1:]
-}
-
-// mapRoles maps RC role strings to Mattermost system role strings.
-// Returns the highest-privilege role found.
-func mapRoles(roles []string) string {
-	for _, r := range roles {
-		switch r {
-		case "admin":
-			return model.SystemAdminRoleId
-		}
-	}
-	return model.SystemUserRoleId
 }
 
 // createPlaceholderUser creates a deleted placeholder user for a missing RC user.
@@ -133,12 +124,8 @@ func (t *Transformer) createPlaceholderUser(rcUserID string) *intermediate.Inter
 	return u
 }
 
-// ---------------------------------------------------------------------------
-// Phase 2.2 — Channel transformation
-// ---------------------------------------------------------------------------
-
-// TransformChannels converts RocketChatRoom records into IntermediateChannel records.
-func (t *Transformer) TransformChannels(rooms []RocketChatRoom) {
+// transformChannels converts RocketChatRoom records into IntermediateChannel records.
+func (t *Transformer) transformChannels(rooms []RocketChatRoom) {
 	t.Logger.Info("Transforming channels")
 
 	for i := range rooms {
@@ -169,24 +156,39 @@ func (t *Transformer) TransformChannels(rooms []RocketChatRoom) {
 			t.roomIDToChannelName[room.ID] = ch.Name
 
 		case "d":
-			// Filter out DM/group rooms that contain users not present in UsersById
-			// (e.g. rocket.cat or other bot/system users that were skipped during
-			// user transformation). Mattermost validation rejects references to
-			// unknown users in direct_channel members.
-			if unknownUsername := t.firstUnknownMember(room.UIDs, room.Usernames); unknownUsername != "" {
-				t.Logger.Warnf("Skipping direct room %s: member %q not in transformed users", room.ID, unknownUsername)
+			// Resolve all member IDs, creating placeholder users for any that are
+			// missing (e.g. rocket.cat or other bots skipped during user
+			// transformation). This preserves message history rather than dropping
+			// the whole room.
+			resolvedUIDs, resolvedUsernames := t.resolveDirectMembers(room.UIDs, room.Usernames)
+
+			// Guard: Mattermost requires at least 2 participants in a direct channel.
+			if len(resolvedUIDs) <= 1 {
+				t.Logger.Warnf("Skipping direct room %s: requires at least 2 members, found %d", room.ID, len(resolvedUIDs))
 				t.skippedRoomIDs[room.ID] = true
 				continue
 			}
-			if len(room.UIDs) >= 3 {
-				ch := t.roomToDirectChannel(room, model.ChannelTypeGroup)
+
+			if len(resolvedUIDs) >= 3 && len(resolvedUIDs) <= model.ChannelGroupMaxUsers {
+				ch := t.roomToDirectChannel(room, model.ChannelTypeGroup, resolvedUIDs, resolvedUsernames)
 				t.Intermediate.GroupChannels = append(t.Intermediate.GroupChannels, ch)
+				// Direct channel names are resolved via member usernames at post time.
+				t.roomIDToChannelName[room.ID] = ""
+			} else if len(resolvedUIDs) > model.ChannelGroupMaxUsers {
+				// Mattermost group messages support at most model.ChannelGroupMaxUsers
+				// members; convert oversized group DMs to private channels.
+				t.Logger.Warnf("Room %s has %d members (>%d), converting group DM to private channel",
+					room.ID, len(resolvedUIDs), model.ChannelGroupMaxUsers)
+				ch := t.roomToIntermediateChannel(room, model.ChannelTypePrivate)
+				t.Intermediate.PrivateChannels = append(t.Intermediate.PrivateChannels, ch)
+				t.roomIDToChannelName[room.ID] = ch.Name
+				t.roomIDToType[room.ID] = "p"
 			} else {
-				ch := t.roomToDirectChannel(room, model.ChannelTypeDirect)
+				ch := t.roomToDirectChannel(room, model.ChannelTypeDirect, resolvedUIDs, resolvedUsernames)
 				t.Intermediate.DirectChannels = append(t.Intermediate.DirectChannels, ch)
+				// Direct channel names are resolved via member usernames at post time.
+				t.roomIDToChannelName[room.ID] = ""
 			}
-			// Direct channel names are resolved via member usernames at post time.
-			t.roomIDToChannelName[room.ID] = ""
 
 		default:
 			t.Logger.Warnf("Skipping room with unknown type %q: %s", room.Type, room.Name)
@@ -215,70 +217,118 @@ func (t *Transformer) roomToIntermediateChannel(room *RocketChatRoom, chType mod
 
 	ch := &intermediate.IntermediateChannel{
 		Id:           room.ID,
-		OriginalName: room.Name,
-		Name:         strings.ToLower(room.Name),
+		OriginalName: roomOriginalName(room),
+		Name:         rcConvertChannelName(room.Name, room.ID),
 		DisplayName:  displayName,
 		Purpose:      description,
 		Header:       room.Topic,
 		Type:         chType,
 	}
-	ch.SanitiseWithPrefix(t.Logger, "imported-channel-")
+	ch.SanitiseWithPrefix(t.Logger, "rocketchat-channel-")
 	return ch
 }
 
-func (t *Transformer) roomToDirectChannel(room *RocketChatRoom, chType model.ChannelType) *intermediate.IntermediateChannel {
+func (t *Transformer) roomToDirectChannel(room *RocketChatRoom, chType model.ChannelType, uids, usernames []string) *intermediate.IntermediateChannel {
 	ch := &intermediate.IntermediateChannel{
 		Id:               room.ID,
-		OriginalName:     room.Name,
+		OriginalName:     roomOriginalName(room),
 		Name:             room.Name,
 		DisplayName:      room.FName,
-		Members:          room.UIDs,
-		MembersUsernames: room.Usernames,
+		Members:          uids,
+		MembersUsernames: usernames,
 		Type:             chType,
 	}
 	return ch
 }
 
-// firstUnknownMember returns the first username in a DM room whose user ID is
-// not present in UsersById. Both uids and usernames slices are parallel; if
-// uids is empty the lookup falls back to username matching. Returns "" if all
-// members are known.
-func (t *Transformer) firstUnknownMember(uids, usernames []string) string {
-	// Build a username → id reverse map for fallback lookup.
+// roomOriginalName returns the room's Name if non-empty, falling back to its
+// ID. This mirrors the Slack getOriginalName pattern and ensures OriginalName
+// is always a meaningful, non-empty identifier.
+func roomOriginalName(room *RocketChatRoom) string {
+	if room.Name == "" {
+		return room.ID
+	}
+	return room.Name
+}
+
+// rcConvertChannelName converts a Rocket.Chat room name to a
+// Mattermost-compatible channel name slug. Spaces and unsupported characters
+// are replaced with hyphens, the result is lowercased, and the room ID is used
+// as a fallback when the slug would otherwise be empty. SanitiseWithPrefix
+// further trims and validates the result.
+func rcConvertChannelName(name, id string) string {
+	var sb strings.Builder
+	for _, r := range strings.ToLower(name) {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '-', r == '_':
+			sb.WriteRune(r)
+		default:
+			// Replace spaces and any other invalid character with a hyphen.
+			sb.WriteRune('-')
+		}
+	}
+	slug := strings.Trim(sb.String(), "-_")
+	if slug == "" {
+		return strings.ToLower(id)
+	}
+	return slug
+}
+
+// resolveDirectMembers ensures every UID in a direct/group room has a
+// corresponding user in UsersById. Unknown UIDs are first matched by username
+// (case-insensitive fallback); if still unresolved a placeholder "Deleted User"
+// is created so that message history is preserved instead of dropping the whole
+// room. Returns the resolved (uids, usernames) slices.
+func (t *Transformer) resolveDirectMembers(uids, usernames []string) ([]string, []string) {
+	// Build a username → id reverse map for the username-fallback lookup.
 	usernameToID := make(map[string]string, len(t.Intermediate.UsersById))
 	for id, u := range t.Intermediate.UsersById {
 		usernameToID[strings.ToLower(u.Username)] = id
 	}
 
+	resolvedUIDs := make([]string, 0, len(uids))
+	resolvedUsernames := make([]string, 0, len(uids))
+
 	for i, uid := range uids {
-		if _, ok := t.Intermediate.UsersById[uid]; !ok {
-			// Not found by ID — check username fallback.
-			if i < len(usernames) {
-				if _, ok := usernameToID[strings.ToLower(usernames[i])]; !ok {
-					if i < len(usernames) {
-						return usernames[i]
-					}
-					return uid
-				}
-			} else {
-				return uid
+		if user, ok := t.Intermediate.UsersById[uid]; ok {
+			// Found by UID.
+			resolvedUIDs = append(resolvedUIDs, uid)
+			resolvedUsernames = append(resolvedUsernames, user.Username)
+			continue
+		}
+
+		// Not found by UID — try username fallback.
+		if i < len(usernames) && usernames[i] != "" {
+			lowerUsername := strings.ToLower(usernames[i])
+			if existingID, ok := usernameToID[lowerUsername]; ok {
+				resolvedUIDs = append(resolvedUIDs, existingID)
+				resolvedUsernames = append(resolvedUsernames, lowerUsername)
+				continue
 			}
 		}
+
+		// Not found by either — create a placeholder and use the known
+		// username (from the room's usernames list) when available so the
+		// placeholder is identifiable in the Mattermost import.
+		u := t.createPlaceholderUser(uid)
+		if i < len(usernames) && usernames[i] != "" {
+			u.Username = strings.ToLower(usernames[i])
+			u.Email = fmt.Sprintf("%s@local", u.Username)
+		}
+		resolvedUIDs = append(resolvedUIDs, uid)
+		resolvedUsernames = append(resolvedUsernames, u.Username)
 	}
-	return ""
+
+	return resolvedUIDs, resolvedUsernames
 }
 
-// ---------------------------------------------------------------------------
-// Phase 2.3 — Subscription → Membership
-// ---------------------------------------------------------------------------
-
-// TransformSubscriptions uses subscription records to populate channel member lists
+// transformSubscriptions uses subscription records to populate channel member lists
 // for public and private channels, and user membership lists.
-func (t *Transformer) TransformSubscriptions(subscriptions []RocketChatSubscription) {
+func (t *Transformer) transformSubscriptions(subscriptions []RocketChatSubscription) {
 	t.Logger.Info("Transforming subscriptions")
 
 	// Build a room-id → channel index for public + private channels.
-	channelByRoomID := make(map[string]*intermediate.IntermediateChannel)
+	channelByRoomID := make(map[string]*intermediate.IntermediateChannel, len(t.Intermediate.PublicChannels)+len(t.Intermediate.PrivateChannels))
 	for _, ch := range t.Intermediate.PublicChannels {
 		channelByRoomID[ch.Id] = ch
 	}
@@ -302,34 +352,15 @@ func (t *Transformer) TransformSubscriptions(subscriptions []RocketChatSubscript
 		}
 
 		// Add to channel Members (by user ID) if not already present.
-		alreadyMember := false
-		for _, m := range ch.Members {
-			if m == sub.User.ID {
-				alreadyMember = true
-				break
-			}
-		}
-		if !alreadyMember {
+		if !slices.Contains(ch.Members, sub.User.ID) {
 			ch.Members = append(ch.Members, sub.User.ID)
 		}
 
-		// Add to user Memberships (by channel name) if not already present.
-		alreadyMembership := false
-		for _, m := range user.Memberships {
-			if m == ch.Name {
-				alreadyMembership = true
-				break
-			}
-		}
-		if !alreadyMembership {
+		if !slices.Contains(user.Memberships, ch.Name) {
 			user.Memberships = append(user.Memberships, ch.Name)
 		}
 	}
 }
-
-// ---------------------------------------------------------------------------
-// Phase 2.4 — Message transformation
-// ---------------------------------------------------------------------------
 
 // systemMessageTypeMap maps RC system message types to Mattermost post types.
 // Types not listed here are skipped.
@@ -356,9 +387,15 @@ var skippedSystemMessageTypes = map[string]bool{
 	"subscription-role-removed": true,
 }
 
-// TransformMessages converts RC messages into IntermediatePost records.
-func (t *Transformer) TransformMessages(messages []RocketChatMessage, uploadsById map[string]*RocketChatUpload) {
+// transformMessages converts RC messages into IntermediatePost records.
+func (t *Transformer) transformMessages(messages []RocketChatMessage, uploadsById map[string]*RocketChatUpload) {
 	t.Logger.Info("Transforming messages")
+
+	// Sort messages by timestamp for deterministic output and to ensure root
+	// posts are always processed before their replies.
+	sort.Slice(messages, func(i, j int) bool {
+		return messages[i].Timestamp.Before(messages[j].Timestamp)
+	})
 
 	// First pass: build thread map — tmid → list of reply messages.
 	threadReplies := make(map[string][]*RocketChatMessage)
@@ -370,6 +407,8 @@ func (t *Transformer) TransformMessages(messages []RocketChatMessage, uploadsByI
 	}
 
 	// Second pass: process root messages (those without a tmid).
+	// Track timestamps per room to avoid duplicates that cause import failures.
+	timestamps := make(map[int64]bool)
 	var posts []*intermediate.IntermediatePost
 	for i := range messages {
 		m := &messages[i]
@@ -389,13 +428,29 @@ func (t *Transformer) TransformMessages(messages []RocketChatMessage, uploadsByI
 			continue
 		}
 
-		// Attach thread replies.
+		// Deduplicate timestamps: increment until unique.
+		for timestamps[post.CreateAt] {
+			post.CreateAt++
+		}
+		timestamps[post.CreateAt] = true
+
+		// Attach thread replies with timestamp deduplication.
 		for _, reply := range threadReplies[m.ID] {
 			replyPost := t.convertMessage(reply, uploadsById)
 			if replyPost != nil {
+				for timestamps[replyPost.CreateAt] {
+					replyPost.CreateAt++
+				}
+				timestamps[replyPost.CreateAt] = true
 				post.Replies = append(post.Replies, replyPost)
 			}
 		}
+
+		// Split oversized root messages into continuation thread replies.
+		intermediate.SplitPostIntoThread(post)
+
+		// Split any oversized replies, deduplicate timestamps, and sort replies.
+		intermediate.SplitOversizedReplies(post)
 
 		posts = append(posts, post)
 	}
@@ -437,11 +492,9 @@ func (t *Transformer) convertMessage(m *RocketChatMessage, uploadsById map[strin
 	// falls back to scanning the text for any remaining #word tokens.
 	post.Message = t.convertChannelMentions(post.Message, m.Channels)
 
-	// Truncate/split long messages.
-	if utf8.RuneCountInString(post.Message) > model.PostMessageMaxRunesV2 {
-		runes := []rune(post.Message)
-		post.Message = string(runes[:model.PostMessageMaxRunesV2])
-	}
+	// NOTE: oversized messages are split into thread continuations by
+	// transformMessages after all replies are assembled, rather than
+	// truncated here, to avoid data loss.
 
 	// Reactions.
 	post.Reactions = t.convertReactions(m)
@@ -539,6 +592,11 @@ func (t *Transformer) convertReactions(m *RocketChatMessage) []*intermediate.Int
 	for emojiCode, info := range m.Reactions {
 		// Strip surrounding colons: ":smile:" → "smile"
 		emojiName := strings.Trim(emojiCode, ":")
+
+		// Strip skin-tone suffixes: "thumbsup::skin-tone-3" → "thumbsup"
+		if idx := strings.Index(emojiName, "::"); idx >= 0 {
+			emojiName = emojiName[:idx]
+		}
 
 		for _, username := range info.Usernames {
 			counter++

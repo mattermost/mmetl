@@ -24,6 +24,13 @@ var CheckSlackCmd = &cobra.Command{
 	RunE:  checkSlackCmdF,
 }
 
+var CheckRocketChatCmd = &cobra.Command{
+	Use:   "rocketchat",
+	Short: "Checks the integrity of a Rocket.Chat mongodump export.",
+	Args:  cobra.NoArgs,
+	RunE:  checkRocketChatCmdF,
+}
+
 func init() {
 	CheckSlackCmd.Flags().StringP("file", "f", "", "the Slack export file to transform")
 	CheckSlackCmd.Flags().Bool("debug", true, "Whether to show debug logs or not")
@@ -39,7 +46,7 @@ func init() {
 		panic(err)
 	}
 	CheckRocketChatCmd.Flags().Bool("debug", false, "Whether to show debug logs or not")
-	CheckRocketChatCmd.Flags().Bool("skip-empty-emails", false, "Ignore empty email addresses from the import file.")
+	CheckRocketChatCmd.Flags().Bool("skip-empty-emails", false, "Ignore empty email addresses from the import file. Note that this results in invalid data.")
 	CheckRocketChatCmd.Flags().String("default-email-domain", "", "If this flag is provided: When a user's email address is empty, the output's email address will be generated from their username and the provided domain.")
 
 	CheckCmd.AddCommand(
@@ -50,13 +57,6 @@ func init() {
 	RootCmd.AddCommand(
 		CheckCmd,
 	)
-}
-
-var CheckRocketChatCmd = &cobra.Command{
-	Use:   "rocketchat",
-	Short: "Checks the integrity of a Rocket.Chat mongodump export.",
-	Args:  cobra.NoArgs,
-	RunE:  checkRocketChatCmdF,
 }
 
 func checkRocketChatCmdF(cmd *cobra.Command, args []string) error {
@@ -85,35 +85,9 @@ func checkRocketChatCmdF(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	transformer := rocketchat.NewTransformer("check", logger)
+	transformer := rocketchat.NewTransformer("test", logger)
 
-	users := make([]rocketchat.RocketChatUser, 0, len(parsed.UsersByID))
-	for _, u := range parsed.UsersByID {
-		users = append(users, *u)
-	}
-	transformer.TransformUsers(users, skipEmptyEmails, defaultEmailDomain)
-
-	rooms := make([]rocketchat.RocketChatRoom, 0, len(parsed.RoomsByID))
-	for _, r := range parsed.RoomsByID {
-		rooms = append(rooms, *r)
-	}
-	transformer.TransformChannels(rooms)
-
-	subs := make([]rocketchat.RocketChatSubscription, 0)
-	for _, subList := range parsed.SubscriptionsByRoomID {
-		for _, s := range subList {
-			subs = append(subs, *s)
-		}
-	}
-	transformer.TransformSubscriptions(subs)
-
-	msgs := make([]rocketchat.RocketChatMessage, 0)
-	for _, msgList := range parsed.MessagesByRoomID {
-		for _, m := range msgList {
-			msgs = append(msgs, *m)
-		}
-	}
-	transformer.TransformMessages(msgs, parsed.UploadsByID)
+	transformer.Transform(parsed, false, skipEmptyEmails, defaultEmailDomain)
 
 	transformer.CheckIntermediate()
 

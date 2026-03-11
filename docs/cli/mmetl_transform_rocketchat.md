@@ -33,7 +33,6 @@ mmetl transform rocketchat [flags]
   -o, --output string                 the output path (default "bulk-export.jsonl")
   -a, --skip-attachments              Skips extracting file attachments
       --skip-empty-emails             Ignore empty email addresses from the import file. Note that this results in invalid data.
-      --skip-team-export              Skip writing the team line to the output. Use when importing into an existing Mattermost team.
   -t, --team string                   an existing team in Mattermost to import the data into
       --uploads-dir string            path to Rocket.Chat FileSystem uploads directory (if not using GridFS)
 ```

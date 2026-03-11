@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"sort"
 	"unicode/utf8"
 
 	"github.com/mattermost/mattermost/server/public/model"
@@ -45,10 +46,10 @@ type IntermediateChannel struct {
 }
 
 // Sanitise validates and truncates channel fields to Mattermost model limits.
-// It uses "slack-channel-" as the fallback prefix for single-character names.
+// It uses "imported-channel-" as the fallback prefix for single-character names.
 // Use SanitiseWithPrefix for a custom fallback prefix.
 func (c *IntermediateChannel) Sanitise(logger log.FieldLogger) {
-	c.SanitiseWithPrefix(logger, "slack-channel-")
+	c.SanitiseWithPrefix(logger, "imported-channel-")
 }
 
 // SanitiseWithPrefix validates and truncates channel fields to Mattermost model limits.
@@ -196,4 +197,146 @@ type Intermediate struct {
 	DirectChannels  []*IntermediateChannel       `json:"direct_channels"`
 	UsersById       map[string]*IntermediateUser `json:"users"`
 	Posts           []*IntermediatePost          `json:"posts"`
+}
+
+// SplitTextIntoChunks splits text into multiple chunks, each within the rune limit.
+// It tries to split on word boundaries (spaces) or line breaks when possible.
+// Returns a slice of strings, each within the maxRunes limit.
+func SplitTextIntoChunks(text string, maxRunes int) []string {
+	runes := []rune(text)
+
+	// If the text fits within the limit, return it as-is
+	if len(runes) <= maxRunes {
+		return []string{text}
+	}
+
+	chunks := []string{}
+	currentPos := 0
+
+	for currentPos < len(runes) {
+		// Determine the end position for this chunk
+		endPos := currentPos + maxRunes
+		if endPos >= len(runes) {
+			// Last chunk
+			chunks = append(chunks, string(runes[currentPos:]))
+			break
+		}
+
+		// Try to find a good break point (newline, space, etc.)
+		breakPos := endPos
+
+		// First, look for a newline within a reasonable range
+		searchStart := currentPos
+		if endPos-currentPos > 100 {
+			searchStart = endPos - 100
+		}
+
+		foundNewline := false
+		for i := endPos - 1; i >= searchStart; i-- {
+			if runes[i] == '\n' {
+				breakPos = i + 1 // Include the newline in the current chunk
+				foundNewline = true
+				break
+			}
+		}
+
+		// If no newline found, look for a space
+		if !foundNewline {
+			for i := endPos - 1; i >= searchStart; i-- {
+				if runes[i] == ' ' {
+					breakPos = i + 1 // Include the space in the current chunk
+					break
+				}
+			}
+		}
+
+		// If we're still at endPos, it means we couldn't find a good break point
+		// In this case, just split at the limit
+		if breakPos == endPos && breakPos < len(runes) {
+			breakPos = endPos
+		}
+
+		chunks = append(chunks, string(runes[currentPos:breakPos]))
+		currentPos = breakPos
+	}
+
+	return chunks
+}
+
+// SplitPostIntoThread splits a post's message if it exceeds the maximum rune limit.
+// The first chunk becomes/remains the main post, and additional chunks are added as replies.
+// Reactions and attachments are kept only on the first chunk.
+func SplitPostIntoThread(post *IntermediatePost) {
+	if utf8.RuneCountInString(post.Message) <= model.PostMessageMaxRunesV2 {
+		return
+	}
+
+	chunks := SplitTextIntoChunks(post.Message, model.PostMessageMaxRunesV2)
+
+	// First chunk stays as the main message
+	post.Message = chunks[0]
+
+	// Create replies for the remaining chunks
+	for i, chunk := range chunks[1:] {
+		reply := &IntermediatePost{
+			User:           post.User,
+			Channel:        post.Channel,
+			Message:        chunk,
+			CreateAt:       post.CreateAt + int64(i+1),
+			IsDirect:       post.IsDirect,
+			ChannelMembers: post.ChannelMembers,
+		}
+		post.Replies = append(post.Replies, reply)
+	}
+}
+
+// SplitOversizedReplies splits any replies that exceed the maximum rune limit
+// into sibling replies, deduplicates timestamps, and sorts all replies by CreateAt.
+func SplitOversizedReplies(post *IntermediatePost) {
+	originalReplies := post.Replies
+	post.Replies = []*IntermediatePost{}
+
+	// Build a set of used timestamps from existing replies to avoid duplicates
+	usedTimestamps := make(map[int64]bool)
+	for _, reply := range originalReplies {
+		usedTimestamps[reply.CreateAt] = true
+	}
+
+	for _, reply := range originalReplies {
+		if utf8.RuneCountInString(reply.Message) <= model.PostMessageMaxRunesV2 {
+			post.Replies = append(post.Replies, reply)
+			continue
+		}
+
+		// Reply needs splitting - add all chunks as siblings
+		chunks := SplitTextIntoChunks(reply.Message, model.PostMessageMaxRunesV2)
+
+		// First chunk: update the original reply
+		reply.Message = chunks[0]
+		post.Replies = append(post.Replies, reply)
+
+		// Remaining chunks: create new sibling replies
+		for i, chunk := range chunks[1:] {
+			timestamp := reply.CreateAt + int64(i+1)
+			for usedTimestamps[timestamp] {
+				timestamp++
+			}
+			usedTimestamps[timestamp] = true
+
+			continuationReply := &IntermediatePost{
+				User:           reply.User,
+				Channel:        reply.Channel,
+				Message:        chunk,
+				CreateAt:       timestamp,
+				IsDirect:       reply.IsDirect,
+				ChannelMembers: reply.ChannelMembers,
+			}
+			post.Replies = append(post.Replies, continuationReply)
+		}
+	}
+
+	// Sort replies by CreateAt to ensure proper ordering
+	sort.Slice(post.Replies, func(i, j int) bool {
+		return post.Replies[i].CreateAt < post.Replies[j].CreateAt
+	})
 }
