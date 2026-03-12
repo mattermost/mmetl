@@ -79,10 +79,17 @@ func init() {
 }
 
 var TransformRocketChatCmd = &cobra.Command{
-	Use:     "rocketchat",
-	Short:   "Transforms a Rocket.Chat mongodump export.",
-	Long:    "Transforms a Rocket.Chat mongodump directory into a Mattermost export JSONL file.",
-	Example: "  transform rocketchat --team myteam --dump-dir /backup/meteor --output mm_export.jsonl",
+	Use:   "rocketchat",
+	Short: "Transforms a Rocket.Chat mongodump export.",
+	Long: `Transforms a Rocket.Chat mongodump directory into a Mattermost export JSONL file.
+
+Before running this command, export your Rocket.Chat MongoDB database using mongodump
+(https://www.mongodb.com/docs/database-tools/mongodump/):
+
+  mongodump --uri="mongodb://localhost:3001/meteor" --out=/tmp/rc-dump
+
+Then pass the database subdirectory to --dump-dir (e.g. /tmp/rc-dump/meteor).`,
+	Example: "  transform rocketchat --team myteam --dump-dir /tmp/rc-dump/meteor --output mm_export.jsonl",
 	Args:    cobra.NoArgs,
 	RunE:    transformRocketChatCmdF,
 }

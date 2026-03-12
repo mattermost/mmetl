@@ -8,8 +8,25 @@ description: "CLI reference for mmetl check rocketchat"
 
 Checks the integrity of a Rocket.Chat mongodump export.
 
+### Synopsis
+
+Checks the integrity of a Rocket.Chat mongodump export directory.
+
+Before running this command, export your Rocket.Chat MongoDB database using mongodump
+(https://www.mongodb.com/docs/database-tools/mongodump/):
+
+  mongodump --uri="mongodb://localhost:3001/meteor" --out=/tmp/rc-dump
+
+Then pass the database subdirectory to --dump-dir (e.g. /tmp/rc-dump/meteor).
+
 ```
 mmetl check rocketchat [flags]
+```
+
+### Examples
+
+```
+  check rocketchat --dump-dir /tmp/rc-dump/meteor
 ```
 
 ### Options

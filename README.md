@@ -27,22 +27,24 @@ You can also check the CLI generated documentation under [mmetl](docs/cli/mmetl.
 
 ### Prerequisites
 
-- [`mongodump`](https://www.mongodb.com/docs/database-tools/mongodump/) to export the Rocket.Chat database
+- [`mongodump`](https://www.mongodb.com/docs/database-tools/mongodump/) to export the Rocket.Chat database (part of the [MongoDB Database Tools](https://www.mongodb.com/docs/database-tools/installation/installation/))
 - A Mattermost instance to import into
 
 ### Quick Start
 
-1. Export your Rocket.Chat MongoDB database:
+1. Export your Rocket.Chat MongoDB database using `mongodump`:
 
 ```sh
-mongodump --uri="mongodb://localhost:3001/meteor" --out=/backup/rc
+mongodump --uri="mongodb://localhost:3001/meteor" --out=/tmp/rc-dump
 ```
+
+This creates a subdirectory named after the database (e.g. `/tmp/rc-dump/meteor`) containing `.bson` files — that subdirectory is what you pass to `--dump-dir` in the next step.
 
 2. Transform the export into a Mattermost bulk import file:
 
 ```sh
 mmetl transform rocketchat \
-  --dump-dir /backup/rc/meteor \
+  --dump-dir /tmp/rc-dump/meteor \
   --team myteam \
   --output mm_import.jsonl \
   --skip-attachments
@@ -52,7 +54,7 @@ mmetl transform rocketchat \
 
 ```sh
 mmetl transform rocketchat \
-  --dump-dir /backup/rc/meteor \
+  --dump-dir /tmp/rc-dump/meteor \
   --team myteam \
   --output mm_import.jsonl \
   --attachments-dir ./data

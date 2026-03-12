@@ -27,8 +27,17 @@ var CheckSlackCmd = &cobra.Command{
 var CheckRocketChatCmd = &cobra.Command{
 	Use:   "rocketchat",
 	Short: "Checks the integrity of a Rocket.Chat mongodump export.",
-	Args:  cobra.NoArgs,
-	RunE:  checkRocketChatCmdF,
+	Long: `Checks the integrity of a Rocket.Chat mongodump export directory.
+
+Before running this command, export your Rocket.Chat MongoDB database using mongodump
+(https://www.mongodb.com/docs/database-tools/mongodump/):
+
+  mongodump --uri="mongodb://localhost:3001/meteor" --out=/tmp/rc-dump
+
+Then pass the database subdirectory to --dump-dir (e.g. /tmp/rc-dump/meteor).`,
+	Example: "  check rocketchat --dump-dir /tmp/rc-dump/meteor",
+	Args:    cobra.NoArgs,
+	RunE:    checkRocketChatCmdF,
 }
 
 func init() {

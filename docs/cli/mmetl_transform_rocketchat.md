@@ -12,6 +12,13 @@ Transforms a Rocket.Chat mongodump export.
 
 Transforms a Rocket.Chat mongodump directory into a Mattermost export JSONL file.
 
+Before running this command, export your Rocket.Chat MongoDB database using mongodump
+(https://www.mongodb.com/docs/database-tools/mongodump/):
+
+  mongodump --uri="mongodb://localhost:3001/meteor" --out=/tmp/rc-dump
+
+Then pass the database subdirectory to --dump-dir (e.g. /tmp/rc-dump/meteor).
+
 ```
 mmetl transform rocketchat [flags]
 ```
@@ -19,7 +26,7 @@ mmetl transform rocketchat [flags]
 ### Examples
 
 ```
-  transform rocketchat --team myteam --dump-dir /backup/meteor --output mm_export.jsonl
+  transform rocketchat --team myteam --dump-dir /tmp/rc-dump/meteor --output mm_export.jsonl
 ```
 
 ### Options
