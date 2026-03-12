@@ -30,7 +30,7 @@ func exportWriteLine(writer io.Writer, line *imports.LineImportData) error {
 // Export writes the full Mattermost bulk import JSONL to outputFilePath.
 // Export order: version, public channels, private channels, users,
 // direct channels (group + direct), posts, direct posts.
-func (t *Transformer) Export(outputFilePath string) error {
+func (t *Transformer) Export(outputFilePath string, botOwner string) error {
 	f, err := os.Create(outputFilePath)
 	if err != nil {
 		return errors.Wrap(err, "error creating output file")
@@ -53,7 +53,7 @@ func (t *Transformer) Export(outputFilePath string) error {
 	}
 
 	t.Logger.Info("Exporting users")
-	if err := t.ExportUsers(f); err != nil {
+	if err := t.ExportUsers(f, botOwner); err != nil {
 		return err
 	}
 
@@ -128,21 +128,43 @@ func (t *Transformer) ExportDirectChannels(channels []*intermediate.Intermediate
 }
 
 // ExportUsers writes user import lines, sorted by username for deterministic output.
-func (t *Transformer) ExportUsers(w io.Writer) error {
+func (t *Transformer) ExportUsers(w io.Writer, botOwner string) error {
 	users := make([]*intermediate.IntermediateUser, 0, len(t.Intermediate.UsersById))
+	bots := make([]*intermediate.IntermediateUser, 0)
 	for _, u := range t.Intermediate.UsersById {
-		users = append(users, u)
+		if u.IsBot {
+			bots = append(bots, u)
+		} else {
+			users = append(users, u)
+		}
 	}
+
 	sort.Slice(users, func(i, j int) bool {
 		return users[i].Username < users[j].Username
 	})
+	sort.Slice(bots, func(i, j int) bool {
+		return bots[i].Username < bots[j].Username
+	})
 
+	// Write regular users first (bot owner must exist before bots).
 	for _, u := range users {
 		line := t.userImportLine(u)
 		if err := exportWriteLine(w, line); err != nil {
 			return err
 		}
 	}
+
+	// Write bots after users.
+	if len(bots) > 0 && botOwner == "" {
+		return errors.New("cannot export bots without a bot owner: please provide the --bot-owner flag")
+	}
+	for _, bot := range bots {
+		line := botImportLine(bot, botOwner)
+		if err := exportWriteLine(w, line); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
@@ -186,6 +208,24 @@ func (t *Transformer) userImportLine(u *intermediate.IntermediateUser) *imports.
 	return &imports.LineImportData{
 		Type: "user",
 		User: userData,
+	}
+}
+
+// botImportLine creates a Mattermost bot import line for a bot user.
+func botImportLine(u *intermediate.IntermediateUser, owner string) *imports.LineImportData {
+	var deleteAt *int64
+	if u.DeleteAt > 0 {
+		deleteAt = &u.DeleteAt
+	}
+
+	return &imports.LineImportData{
+		Type: "bot",
+		Bot: &imports.BotImportData{
+			Username:    model.NewPointer(u.Username),
+			DisplayName: model.NewPointer(u.DisplayName),
+			Owner:       model.NewPointer(owner),
+			DeleteAt:    deleteAt,
+		},
 	}
 }
 

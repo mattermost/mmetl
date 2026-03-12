@@ -72,7 +72,7 @@ func TestExportUsers(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	require.NoError(t, tr.ExportUsers(&buf))
+	require.NoError(t, tr.ExportUsers(&buf, ""))
 
 	lines := readLines(t, &buf)
 	require.Len(t, lines, 2)
@@ -195,7 +195,7 @@ func TestExportOrder(t *testing.T) {
 	require.NoError(t, err)
 	tmpFile.Close()
 
-	require.NoError(t, tr.Export(tmpFile.Name()))
+	require.NoError(t, tr.Export(tmpFile.Name(), ""))
 
 	data, err := os.ReadFile(tmpFile.Name())
 	require.NoError(t, err)
@@ -226,7 +226,7 @@ func TestExportUsersIncludeTeamMemberships(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	require.NoError(t, tr.ExportUsers(&buf))
+	require.NoError(t, tr.ExportUsers(&buf, ""))
 
 	lines := readLines(t, &buf)
 	require.Len(t, lines, 1)
@@ -262,7 +262,7 @@ func TestExportLinesAreValidJSON(t *testing.T) {
 	require.NoError(t, err)
 	tmpFile.Close()
 
-	require.NoError(t, tr.Export(tmpFile.Name()))
+	require.NoError(t, tr.Export(tmpFile.Name(), ""))
 
 	data, err := os.ReadFile(tmpFile.Name())
 	require.NoError(t, err)

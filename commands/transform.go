@@ -67,6 +67,7 @@ func init() {
 	TransformRocketChatCmd.Flags().Bool("skip-empty-emails", false, "Ignore empty email addresses from the import file. Note that this results in invalid data.")
 	TransformRocketChatCmd.Flags().String("default-email-domain", "", "If this flag is provided: When a user's email address is empty, the output's email address will be generated from their username and the provided domain.")
 	TransformRocketChatCmd.Flags().Bool("debug", false, "Whether to show debug logs or not")
+	TransformRocketChatCmd.Flags().String("bot-owner", "", "Username of the Mattermost user who will own all imported bots. Required if the Rocket.Chat export contains bot users.")
 
 	TransformCmd.AddCommand(
 		TransformSlackCmd,
@@ -104,6 +105,7 @@ func transformRocketChatCmdF(cmd *cobra.Command, args []string) error {
 	skipEmptyEmails, _ := cmd.Flags().GetBool("skip-empty-emails")
 	defaultEmailDomain, _ := cmd.Flags().GetString("default-email-domain")
 	debug, _ := cmd.Flags().GetBool("debug")
+	botOwner, _ := cmd.Flags().GetString("bot-owner")
 
 	team = strings.ToLower(team)
 
@@ -146,7 +148,20 @@ func transformRocketChatCmdF(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	if err := transformer.Export(outputFilePath); err != nil {
+	// Validate that --bot-owner is provided if there are bot users.
+	hasBots := false
+	for _, user := range transformer.Intermediate.UsersById {
+		if user.IsBot {
+			hasBots = true
+			break
+		}
+	}
+	botOwner = strings.TrimSpace(botOwner)
+	if hasBots && botOwner == "" {
+		return fmt.Errorf("the Rocket.Chat export contains bot users but --bot-owner was not specified. Please provide the username of a Mattermost user who will own the imported bots")
+	}
+
+	if err := transformer.Export(outputFilePath, botOwner); err != nil {
 		return err
 	}
 

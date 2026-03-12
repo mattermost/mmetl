@@ -99,8 +99,20 @@ func (t *Transformer) CheckIntermediate() {
 		}
 	}
 
-	t.Logger.Infof("Check complete: %d users, %d public channels, %d private channels, %d direct/group channels, %d posts",
+	// Count bot users so the operator knows whether --bot-owner is needed.
+	botCount := 0
+	for _, u := range t.Intermediate.UsersById {
+		if u.IsBot {
+			botCount++
+		}
+	}
+	if botCount > 0 {
+		t.Logger.Infof("Found %d bot user(s). You will need to provide the --bot-owner flag when running the transform command.", botCount)
+	}
+
+	t.Logger.Infof("Check complete: %d users (%d bots), %d public channels, %d private channels, %d direct/group channels, %d posts",
 		len(t.Intermediate.UsersById),
+		botCount,
 		len(t.Intermediate.PublicChannels),
 		len(t.Intermediate.PrivateChannels),
 		len(t.Intermediate.DirectChannels)+len(t.Intermediate.GroupChannels),

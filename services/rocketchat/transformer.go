@@ -64,7 +64,19 @@ func (t *Transformer) transformUsers(users []RocketChatUser, skipEmptyEmails boo
 	result := make(map[string]*intermediate.IntermediateUser, len(users))
 	for _, u := range users {
 		if u.Type == "bot" {
-			t.Logger.Debugf("Skipping bot user: %s", u.Username)
+			var deleteAt int64
+			if !u.Active {
+				deleteAt = model.GetMillis()
+			}
+			newUser := &intermediate.IntermediateUser{
+				Id:          u.ID,
+				Username:    strings.ToLower(u.Username),
+				DisplayName: u.Name,
+				IsBot:       true,
+				DeleteAt:    deleteAt,
+			}
+			result[newUser.Id] = newUser
+			t.Logger.Debugf("Transformed bot user: %s", u.Username)
 			continue
 		}
 
@@ -348,6 +360,11 @@ func (t *Transformer) transformSubscriptions(subscriptions []RocketChatSubscript
 		user, ok := t.Intermediate.UsersById[sub.User.ID]
 		if !ok {
 			t.Logger.Warnf("Subscription references unknown user %s (room %s), skipping", sub.User.ID, sub.RoomID)
+			continue
+		}
+
+		// Bots don't need channel or team memberships.
+		if user.IsBot {
 			continue
 		}
 

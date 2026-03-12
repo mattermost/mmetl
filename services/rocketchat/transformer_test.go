@@ -107,16 +107,39 @@ func TestTransformUsers(t *testing.T) {
 		assert.Equal(t, "", u.Email)
 	})
 
-	t.Run("bot user is skipped", func(t *testing.T) {
+	t.Run("bot user is imported as bot", func(t *testing.T) {
 		tr := NewTransformer("test", newLogger())
 		users := []RocketChatUser{
-			{ID: "b1", Username: "bot", Name: "My Bot", Type: "bot"},
+			{ID: "b1", Username: "bot", Name: "My Bot", Type: "bot", Active: true},
 			{ID: "u1", Username: "human", Name: "Human User", Emails: []RCEmail{{Address: "h@h.com"}}, Active: true, Type: "user"},
 		}
 		tr.transformUsers(users, false, "")
-		assert.Len(t, tr.Intermediate.UsersById, 1)
-		assert.Nil(t, tr.Intermediate.UsersById["b1"])
-		assert.NotNil(t, tr.Intermediate.UsersById["u1"])
+		assert.Len(t, tr.Intermediate.UsersById, 2)
+
+		bot := tr.Intermediate.UsersById["b1"]
+		require.NotNil(t, bot)
+		assert.True(t, bot.IsBot)
+		assert.Equal(t, "bot", bot.Username)
+		assert.Equal(t, "My Bot", bot.DisplayName)
+		assert.Equal(t, "", bot.Email)
+		assert.Equal(t, "", bot.Password)
+		assert.Equal(t, int64(0), bot.DeleteAt)
+
+		human := tr.Intermediate.UsersById["u1"]
+		require.NotNil(t, human)
+		assert.False(t, human.IsBot)
+	})
+
+	t.Run("inactive bot user sets DeleteAt", func(t *testing.T) {
+		tr := NewTransformer("test", newLogger())
+		users := []RocketChatUser{
+			{ID: "b1", Username: "bot", Name: "My Bot", Type: "bot", Active: false},
+		}
+		tr.transformUsers(users, false, "")
+		bot := tr.Intermediate.UsersById["b1"]
+		require.NotNil(t, bot)
+		assert.True(t, bot.IsBot)
+		assert.Greater(t, bot.DeleteAt, int64(0))
 	})
 }
 
