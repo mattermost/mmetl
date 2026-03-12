@@ -110,11 +110,15 @@ func (t *Transformer) ExportChannels(channels []*intermediate.IntermediateChanne
 func (t *Transformer) ExportDirectChannels(channels []*intermediate.IntermediateChannel, w io.Writer) error {
 	for _, ch := range channels {
 		members := ch.MembersUsernames
+		dc := &imports.DirectChannelImportData{
+			Members: &members,
+		}
+		if ch.Header != "" {
+			dc.Header = model.NewPointer(ch.Header)
+		}
 		line := &imports.LineImportData{
-			Type: "direct_channel",
-			DirectChannel: &imports.DirectChannelImportData{
-				Members: &members,
-			},
+			Type:          "direct_channel",
+			DirectChannel: dc,
 		}
 		if err := exportWriteLine(w, line); err != nil {
 			return err
@@ -217,6 +221,7 @@ func postImportLine(post *intermediate.IntermediatePost, team string) *imports.L
 				ChannelMembers: &post.ChannelMembers,
 				User:           &post.User,
 				Message:        &post.Message,
+				Props:          &post.Props,
 				CreateAt:       &post.CreateAt,
 				Replies:        &replies,
 				Reactions:      &reactions,
@@ -233,6 +238,7 @@ func postImportLine(post *intermediate.IntermediatePost, team string) *imports.L
 			Channel:     &post.Channel,
 			User:        &post.User,
 			Message:     &post.Message,
+			Props:       &post.Props,
 			CreateAt:    &post.CreateAt,
 			Replies:     &replies,
 			Reactions:   &reactions,
