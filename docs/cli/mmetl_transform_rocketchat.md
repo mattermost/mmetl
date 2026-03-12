@@ -33,6 +33,7 @@ mmetl transform rocketchat [flags]
 
 ```
       --attachments-dir string        the path for the attachments directory (default "data")
+      --bot-owner string              Username of the Mattermost user who will own all imported bots. Required if the Rocket.Chat export contains bot users.
       --debug                         Whether to show debug logs or not
       --default-email-domain string   If this flag is provided: When a user's email address is empty, the output's email address will be generated from their username and the provided domain.
   -d, --dump-dir string               path to the mongodump output directory (containing .bson files)
