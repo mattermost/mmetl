@@ -132,15 +132,14 @@ type IntermediateUser struct {
 
 // Sanitise validates and truncates user fields to Mattermost model limits.
 func (u *IntermediateUser) Sanitise(logger log.FieldLogger, defaultEmailDomain string, skipEmptyEmails bool) {
-	logger.Debugf("TransformUsers: Sanitise: IntermediateUser receiver: %+v", u)
+	logger.Debugf("TransformUsers: Sanitise: user id=%s username=%s", u.Id, u.Username)
 
 	if u.Email == "" {
 		if skipEmptyEmails {
+			// Log and continue — do NOT return early so that the field-length
+			// checks below (FirstName, LastName, Position) still run.
 			logger.Warnf("User %s does not have an email address in the export. Using blank email address due to --skip-empty-emails flag.", u.Username)
-			return
-		}
-
-		if defaultEmailDomain != "" {
+		} else if defaultEmailDomain != "" {
 			u.Email = u.Username + "@" + defaultEmailDomain
 			logger.Warnf("User %s does not have an email address in the export. Used %s as a placeholder. The user should update their email address once logged in to the system.", u.Username, u.Email)
 		} else {
@@ -148,6 +147,7 @@ func (u *IntermediateUser) Sanitise(logger log.FieldLogger, defaultEmailDomain s
 			logger.Error(msg)
 			fmt.Println(msg)
 			ExitFunc(1)
+			return // Ensure execution stops when ExitFunc is stubbed in tests.
 		}
 	}
 

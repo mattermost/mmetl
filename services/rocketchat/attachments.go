@@ -76,6 +76,11 @@ func ExtractAttachments(
 		}
 
 		if extractErr != nil {
+			// Remove any partial file left by a failed write so it cannot be
+			// imported later as a corrupt attachment.
+			if removeErr := os.Remove(destPath); removeErr != nil && !os.IsNotExist(removeErr) {
+				logger.Warnf("Failed to clean up partial attachment %s: %v", destPath, removeErr)
+			}
 			logger.Warnf("Failed to extract upload %s (%s): %v", upload.ID, upload.Name, extractErr)
 			skipped++
 			continue

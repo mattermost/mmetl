@@ -140,6 +140,21 @@ func transformRocketChatCmdF(cmd *cobra.Command, args []string) error {
 	transformer := rocketchat.NewTransformer(team, logger)
 	transformer.Transform(parsed, skipAttachments, skipEmptyEmails, defaultEmailDomain)
 
+	// Validate that --bot-owner is provided if there are bot users.
+	// Do this before attachment extraction so we fail fast without doing
+	// expensive I/O that would be wasted.
+	hasBots := false
+	for _, user := range transformer.Intermediate.UsersById {
+		if user.IsBot {
+			hasBots = true
+			break
+		}
+	}
+	botOwner = strings.TrimSpace(botOwner)
+	if hasBots && botOwner == "" {
+		return fmt.Errorf("the Rocket.Chat export contains bot users but --bot-owner was not specified. Please provide the username of a Mattermost user who will own the imported bots")
+	}
+
 	if !skipAttachments {
 		chunksFilePath := path.Join(dumpDir, "rocketchat_uploads.chunks.bson")
 		var gridfsChunks map[string][]rocketchat.GridFSChunk
@@ -154,19 +169,6 @@ func transformRocketChatCmdF(cmd *cobra.Command, args []string) error {
 		if err := rocketchat.ExtractAttachments(parsed.UploadsByID, gridfsChunks, attachmentsOutput, uploadsDir, logger); err != nil {
 			return err
 		}
-	}
-
-	// Validate that --bot-owner is provided if there are bot users.
-	hasBots := false
-	for _, user := range transformer.Intermediate.UsersById {
-		if user.IsBot {
-			hasBots = true
-			break
-		}
-	}
-	botOwner = strings.TrimSpace(botOwner)
-	if hasBots && botOwner == "" {
-		return fmt.Errorf("the Rocket.Chat export contains bot users but --bot-owner was not specified. Please provide the username of a Mattermost user who will own the imported bots")
 	}
 
 	if err := transformer.Export(outputFilePath, botOwner); err != nil {

@@ -92,12 +92,19 @@ func (t *Transformer) CheckIntermediate() {
 	for channelName, ch := range channelsByName {
 		visitedChannels[channelName] = true
 
+		// For DM/group channels, memberships are stored in MembersUsernames
+		// (already resolved). For public/private channels, resolve via Members
+		// (RC user IDs) against UsersById.
 		usernames := []string{}
-		for _, memberID := range ch.Members {
-			if user, ok := t.Intermediate.UsersById[memberID]; ok {
-				usernames = append(usernames, user.Username)
-			} else {
-				t.Logger.Warnf("-- Invalid member: %s", memberID)
+		if len(ch.MembersUsernames) > 0 {
+			usernames = append(usernames, ch.MembersUsernames...)
+		} else {
+			for _, memberID := range ch.Members {
+				if user, ok := t.Intermediate.UsersById[memberID]; ok {
+					usernames = append(usernames, user.Username)
+				} else {
+					t.Logger.Warnf("-- Invalid member: %s", memberID)
+				}
 			}
 		}
 

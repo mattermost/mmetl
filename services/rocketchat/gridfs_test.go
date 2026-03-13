@@ -115,6 +115,34 @@ func TestReassembleGridFSFile(t *testing.T) {
 		require.NoError(t, err)
 		assert.Empty(t, data)
 	})
+
+	t.Run("gap in sequence returns error and no output file", func(t *testing.T) {
+		dir := t.TempDir()
+		outPath := filepath.Join(dir, "out.bin")
+		chunks := []GridFSChunk{
+			{N: 0, Data: []byte("part0")},
+			{N: 2, Data: []byte("part2")}, // N:1 missing
+		}
+		err := ReassembleGridFSFile(chunks, outPath)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "gap or duplicate")
+		_, statErr := os.Stat(outPath)
+		assert.True(t, os.IsNotExist(statErr), "output file must not be created on error")
+	})
+
+	t.Run("duplicate chunk N returns error and no output file", func(t *testing.T) {
+		dir := t.TempDir()
+		outPath := filepath.Join(dir, "out.bin")
+		chunks := []GridFSChunk{
+			{N: 0, Data: []byte("part0")},
+			{N: 0, Data: []byte("dup0")},
+		}
+		err := ReassembleGridFSFile(chunks, outPath)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "gap or duplicate")
+		_, statErr := os.Stat(outPath)
+		assert.True(t, os.IsNotExist(statErr), "output file must not be created on error")
+	})
 }
 
 func TestExtractAttachments(t *testing.T) {
