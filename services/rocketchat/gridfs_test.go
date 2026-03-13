@@ -196,8 +196,13 @@ func TestExtractAttachments(t *testing.T) {
 		dir := t.TempDir()
 		outDir := filepath.Join(dir, "output")
 
-		// NFC normalization: composed form of café
-		filename := "caf\u00e9.txt" // "café" already in NFC
+		// Use NFD decomposed form: 'e' + U+0301 COMBINING ACUTE ACCENT.
+		// ExtractAttachments must apply NFC *before* sanitizing so that the
+		// two-codepoint sequence is composed into the single precomposed 'é'
+		// (U+00E9) and then sanitized to '_'.  If NFC were applied after
+		// sanitization the combining accent would have already been stripped to
+		// '_' and the 'e' would remain, yielding a longer filename.
+		filename := "cafe\u0301.txt" // NFD: 'e' + combining acute accent
 		content := []byte("text")
 		uploads := map[string]*RocketChatUpload{
 			"up1": {ID: "up1", Name: filename, Store: "GridFS:Uploads", Complete: true},
@@ -209,9 +214,13 @@ func TestExtractAttachments(t *testing.T) {
 		err := ExtractAttachments(uploads, chunks, outDir, "", logger)
 		require.NoError(t, err)
 
-		// The file should have been created (with NFC-normalized name in sanitized form)
+		// NFC normalization composes "e" + combining accent → "é", then
+		// sanitizeFilename replaces the non-ASCII "é" with "_", producing
+		// "caf_.txt".  Without NFC-first the combining accent would be stripped
+		// separately and "e" would remain, yielding the longer "cafe_.txt".
 		entries, err := os.ReadDir(outDir)
 		require.NoError(t, err)
-		assert.Len(t, entries, 1)
+		require.Len(t, entries, 1)
+		assert.Equal(t, "up1_caf_.txt", entries[0].Name())
 	})
 }

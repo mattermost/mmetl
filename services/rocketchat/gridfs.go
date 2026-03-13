@@ -43,7 +43,21 @@ func LoadGridFSChunks(chunksFilePath string) (map[string][]GridFSChunk, error) {
 
 // ReassembleGridFSFile writes the binary data from sorted chunks to outputPath,
 // creating (or truncating) the file.
+//
+// Chunks must be sorted by N (as LoadGridFSChunks guarantees) and must form a
+// complete, contiguous sequence starting at 0. A gap or duplicate chunk number
+// is treated as a corrupt file and returns an error rather than silently
+// producing a truncated or garbled output file.
 func ReassembleGridFSFile(chunks []GridFSChunk, outputPath string) error {
+	// Validate that chunks form the contiguous sequence 0, 1, 2, …, len-1.
+	// LoadGridFSChunks sorts by N, so we only need to check that each chunk's N
+	// matches its position in the slice (catching both gaps and duplicates).
+	for i, chunk := range chunks {
+		if chunk.N != i {
+			return fmt.Errorf("chunk sequence error for %s: expected chunk %d but got chunk %d (gap or duplicate)", outputPath, i, chunk.N)
+		}
+	}
+
 	f, err := os.Create(outputPath)
 	if err != nil {
 		return fmt.Errorf("creating output file %s: %w", outputPath, err)

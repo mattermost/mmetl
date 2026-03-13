@@ -36,8 +36,14 @@ func ExtractAttachments(
 			continue
 		}
 
-		sanitizedName := norm.NFC.String(sanitizeFilename(upload.Name))
-		destFilename := fmt.Sprintf("%s_%s", upload.ID, sanitizedName)
+		// Apply NFC normalization before sanitizing so that combining characters
+		// are composed into their canonical form first (e.g. NFD "e" + combining
+		// acute → NFC "é") before any character-stripping takes place.
+		sanitizedName := sanitizeFilename(norm.NFC.String(upload.Name))
+		// Sanitize the upload ID as well to prevent path traversal attacks via
+		// crafted IDs containing ".." or path separators.
+		sanitizedID := sanitizeFilename(upload.ID)
+		destFilename := fmt.Sprintf("%s_%s", sanitizedID, sanitizedName)
 		destPath := filepath.Join(outputDir, destFilename)
 
 		var extractErr error

@@ -55,11 +55,24 @@ func (t *Transformer) CheckIntermediate() {
 		channelsByName[name] = ch
 	}
 
-	// Validate named-channel members exist in UsersById.
+	// Validate named-channel members (by user ID) exist in UsersById.
 	for _, ch := range append(t.Intermediate.PublicChannels, t.Intermediate.PrivateChannels...) {
 		for _, memberID := range ch.Members {
 			if _, ok := t.Intermediate.UsersById[memberID]; !ok {
 				t.Logger.Warnf("Channel %s has member %s not found in users", ch.Name, memberID)
+			}
+		}
+	}
+
+	// Validate group/direct channel members (by username) exist in UsersById.
+	knownUsernames := make(map[string]bool, len(t.Intermediate.UsersById))
+	for _, u := range t.Intermediate.UsersById {
+		knownUsernames[u.Username] = true
+	}
+	for _, ch := range append(t.Intermediate.GroupChannels, t.Intermediate.DirectChannels...) {
+		for _, memberUsername := range ch.MembersUsernames {
+			if !knownUsernames[memberUsername] {
+				t.Logger.Warnf("Direct/group channel %s has member username %s not found in users", ch.Id, memberUsername)
 			}
 		}
 	}

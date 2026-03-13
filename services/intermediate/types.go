@@ -249,12 +249,8 @@ func SplitTextIntoChunks(text string, maxRunes int) []string {
 				}
 			}
 		}
-
-		// If we're still at endPos, it means we couldn't find a good break point
-		// In this case, just split at the limit
-		if breakPos == endPos && breakPos < len(runes) {
-			breakPos = endPos
-		}
+		// If neither a newline nor a space was found within the search window,
+		// breakPos remains at endPos and we hard-split at the rune limit.
 
 		chunks = append(chunks, string(runes[currentPos:breakPos]))
 		currentPos = breakPos

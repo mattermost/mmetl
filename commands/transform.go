@@ -109,6 +109,14 @@ func transformRocketChatCmdF(cmd *cobra.Command, args []string) error {
 
 	team = strings.ToLower(team)
 
+	// Validate output path before doing any work, matching the guard in
+	// transformSlackCmdF.
+	if fileInfo, err := os.Stat(outputFilePath); err != nil && !os.IsNotExist(err) {
+		return err
+	} else if err == nil && fileInfo.IsDir() {
+		return fmt.Errorf("output file %q is a directory", outputFilePath)
+	}
+
 	logger := log.New()
 	logFile, err := os.OpenFile("transform-rocketchat.log", os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0666)
 	if err != nil {

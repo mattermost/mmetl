@@ -146,6 +146,12 @@ func (t *Transformer) ExportUsers(w io.Writer, botOwner string) error {
 		return bots[i].Username < bots[j].Username
 	})
 
+	// Fail fast if bots exist but no owner is specified, before writing any data.
+	// This prevents leaving a truncated JSONL on disk.
+	if len(bots) > 0 && botOwner == "" {
+		return errors.New("cannot export bots without a bot owner: please provide the --bot-owner flag")
+	}
+
 	// Write regular users first (bot owner must exist before bots).
 	for _, u := range users {
 		line := t.userImportLine(u)
@@ -155,9 +161,6 @@ func (t *Transformer) ExportUsers(w io.Writer, botOwner string) error {
 	}
 
 	// Write bots after users.
-	if len(bots) > 0 && botOwner == "" {
-		return errors.New("cannot export bots without a bot owner: please provide the --bot-owner flag")
-	}
 	for _, bot := range bots {
 		line := botImportLine(bot, botOwner)
 		if err := exportWriteLine(w, line); err != nil {
@@ -316,6 +319,22 @@ func buildRepliesAndAttachments(post *intermediate.IntermediatePost, team string
 	}
 
 	replies = append(replies, extraReplies...)
+
+	// Sort all replies (real + synthetic overflow) by timestamp so that the
+	// exported thread is in chronological order regardless of append order.
+	sort.Slice(replies, func(i, j int) bool {
+		return *replies[i].CreateAt < *replies[j].CreateAt
+	})
+
+	// Deduplicate timestamps: if a synthetic overflow reply lands on a timestamp
+	// already used by a preceding reply, bump it forward by one millisecond.
+	for i := 1; i < len(replies); i++ {
+		if *replies[i].CreateAt <= *replies[i-1].CreateAt {
+			ts := *replies[i-1].CreateAt + 1
+			replies[i].CreateAt = &ts
+		}
+	}
+
 	return replies, postAttachments
 }
 

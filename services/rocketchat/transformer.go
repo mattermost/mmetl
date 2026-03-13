@@ -9,6 +9,7 @@ import (
 
 	"github.com/mattermost/mattermost/server/public/model"
 	log "github.com/sirupsen/logrus"
+	"golang.org/x/text/unicode/norm"
 
 	"github.com/mattermost/mmetl/services/intermediate"
 )
@@ -28,17 +29,28 @@ type Transformer struct {
 
 	// roomIDToType maps RC room _id → room type string ("c", "p", "d").
 	roomIDToType map[string]string
+
+	// directRoomIDToChannel maps RC direct/group room _id → IntermediateChannel.
+	// Used to look up MembersUsernames in O(1) per message instead of a linear scan.
+	directRoomIDToChannel map[string]*intermediate.IntermediateChannel
+
+	// knownChannels maps lowercase channel name → canonical name, precomputed
+	// after transformChannels so convertChannelMentions avoids rebuilding it
+	// per message.
+	knownChannels map[string]string
 }
 
 // NewTransformer creates a new Transformer for the given team.
 func NewTransformer(teamName string, logger log.FieldLogger) *Transformer {
 	return &Transformer{
-		TeamName:            teamName,
-		Intermediate:        &intermediate.Intermediate{},
-		Logger:              logger,
-		skippedRoomIDs:      make(map[string]bool),
-		roomIDToChannelName: make(map[string]string),
-		roomIDToType:        make(map[string]string),
+		TeamName:              teamName,
+		Intermediate:          &intermediate.Intermediate{},
+		Logger:                logger,
+		skippedRoomIDs:        make(map[string]bool),
+		roomIDToChannelName:   make(map[string]string),
+		roomIDToType:          make(map[string]string),
+		directRoomIDToChannel: make(map[string]*intermediate.IntermediateChannel),
+		knownChannels:         make(map[string]string),
 	}
 }
 
@@ -186,6 +198,7 @@ func (t *Transformer) transformChannels(rooms []RocketChatRoom) {
 				t.Intermediate.GroupChannels = append(t.Intermediate.GroupChannels, ch)
 				// Direct channel names are resolved via member usernames at post time.
 				t.roomIDToChannelName[room.ID] = ""
+				t.directRoomIDToChannel[room.ID] = ch
 			} else if len(resolvedUIDs) > model.ChannelGroupMaxUsers {
 				// Mattermost group messages support at most model.ChannelGroupMaxUsers
 				// members; convert oversized group DMs to private channels.
@@ -200,11 +213,21 @@ func (t *Transformer) transformChannels(rooms []RocketChatRoom) {
 				t.Intermediate.DirectChannels = append(t.Intermediate.DirectChannels, ch)
 				// Direct channel names are resolved via member usernames at post time.
 				t.roomIDToChannelName[room.ID] = ""
+				t.directRoomIDToChannel[room.ID] = ch
 			}
 
 		default:
 			t.Logger.Warnf("Skipping room with unknown type %q: %s", room.Type, room.Name)
 			t.skippedRoomIDs[room.ID] = true
+		}
+	}
+
+	// Precompute the lowercase-name → canonical-name lookup used by
+	// convertChannelMentions so that it isn't rebuilt for every message.
+	t.knownChannels = make(map[string]string, len(t.roomIDToChannelName))
+	for _, name := range t.roomIDToChannelName {
+		if name != "" {
+			t.knownChannels[strings.ToLower(name)] = name
 		}
 	}
 
@@ -424,7 +447,9 @@ func (t *Transformer) transformMessages(messages []RocketChatMessage, uploadsByI
 	}
 
 	// Second pass: process root messages (those without a tmid).
-	// Track timestamps per room to avoid duplicates that cause import failures.
+	// Track timestamps globally to avoid duplicates that cause import failures.
+	// This is more conservative than per-channel (Mattermost only requires
+	// unique timestamps within a channel), but keeps the logic simple.
 	timestamps := make(map[int64]bool)
 	var posts []*intermediate.IntermediatePost
 	for i := range messages {
@@ -523,8 +548,11 @@ func (t *Transformer) convertMessage(m *RocketChatMessage, uploadsById map[strin
 			if !ok || !upload.Complete {
 				continue
 			}
-			sanitizedName := sanitizeFilename(upload.Name)
-			attachPath := fmt.Sprintf("bulk-export-attachments/%s_%s", upload.ID, sanitizedName)
+			// Apply NFC normalization before sanitizing, matching the logic in
+			// ExtractAttachments, so the path embedded in the JSONL matches the
+			// filename that will be created on disk.
+			sanitizedName := sanitizeFilename(norm.NFC.String(upload.Name))
+			attachPath := fmt.Sprintf("bulk-export-attachments/%s_%s", sanitizeFilename(upload.ID), sanitizedName)
 			post.Attachments = append(post.Attachments, attachPath)
 		}
 	}
@@ -536,13 +564,25 @@ func (t *Transformer) convertMessage(m *RocketChatMessage, uploadsById map[strin
 // user and channel references. Returns nil if the post should be skipped.
 func (t *Transformer) buildBasePost(m *RocketChatMessage) *intermediate.IntermediatePost {
 	// Resolve user.
+	// Always check UsersById and create a placeholder when the user ID is absent.
+	// This ensures every post's author has a corresponding user line in the JSONL,
+	// even when the message carries a username that is not in the user collection.
 	username := strings.ToLower(m.User.Username)
-	if username == "" {
+	if m.User.ID != "" {
 		if _, ok := t.Intermediate.UsersById[m.User.ID]; !ok {
-			t.createPlaceholderUser(m.User.ID)
+			placeholder := t.createPlaceholderUser(m.User.ID)
+			if username != "" {
+				// Use the username from the message so the post's user field
+				// matches the placeholder user line we'll export.
+				placeholder.Username = username
+				placeholder.Email = fmt.Sprintf("%s@local", username)
+			} else {
+				username = placeholder.Username
+			}
 		}
-		user := t.Intermediate.UsersById[m.User.ID]
-		if user != nil {
+	}
+	if username == "" {
+		if user := t.Intermediate.UsersById[m.User.ID]; user != nil {
 			username = user.Username
 		}
 	}
@@ -555,20 +595,27 @@ func (t *Transformer) buildBasePost(m *RocketChatMessage) *intermediate.Intermed
 	var channelMembers []string
 
 	if isDirect {
-		// For direct posts, channel name is empty; members are resolved from the room.
+		// For direct posts, channel name is empty; members are resolved from the
+		// precomputed directRoomIDToChannel map (O(1) instead of linear scan).
 		channelName = ""
-		// We need the channel's member usernames.
-		for _, ch := range t.Intermediate.DirectChannels {
-			if ch.Id == m.RoomID {
-				channelMembers = ch.MembersUsernames
-				break
-			}
-		}
-		if channelMembers == nil {
-			for _, ch := range t.Intermediate.GroupChannels {
+		if ch, ok := t.directRoomIDToChannel[m.RoomID]; ok {
+			channelMembers = ch.MembersUsernames
+		} else {
+			// Fallback: linear scan for callers (e.g. unit tests) that populate
+			// Intermediate.DirectChannels / GroupChannels directly without going
+			// through transformChannels, which normally builds the map.
+			for _, ch := range t.Intermediate.DirectChannels {
 				if ch.Id == m.RoomID {
 					channelMembers = ch.MembersUsernames
 					break
+				}
+			}
+			if channelMembers == nil {
+				for _, ch := range t.Intermediate.GroupChannels {
+					if ch.Id == m.RoomID {
+						channelMembers = ch.MembersUsernames
+						break
+					}
 				}
 			}
 		}
@@ -644,14 +691,19 @@ func (t *Transformer) convertChannelMentions(text string, refs []RCChannelRef) s
 		return text
 	}
 
-	// Build a lookup of all known channel names (already lowercased by
-	// roomToIntermediateChannel / SanitiseWithPrefix).
-	// roomIDToChannelName values are the canonical MM channel names.
-	knownChannels := make(map[string]string, len(t.roomIDToChannelName))
-	for _, name := range t.roomIDToChannelName {
-		if name != "" {
-			knownChannels[strings.ToLower(name)] = name
+	// Use the precomputed knownChannels map (built once at end of transformChannels).
+	// If it is empty — which happens when unit tests set roomIDToChannelName
+	// directly without going through transformChannels — rebuild lazily from
+	// roomIDToChannelName and cache the result for subsequent calls.
+	knownChannels := t.knownChannels
+	if len(knownChannels) == 0 && len(t.roomIDToChannelName) > 0 {
+		knownChannels = make(map[string]string, len(t.roomIDToChannelName))
+		for _, name := range t.roomIDToChannelName {
+			if name != "" {
+				knownChannels[strings.ToLower(name)] = name
+			}
 		}
+		t.knownChannels = knownChannels
 	}
 
 	// Index the structured refs by lowercase name and fname for fast lookup.

@@ -15,6 +15,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// resetRCFlags resets all Cobra flags to their defaults before each subtest so
+// that flag state does not leak between tests when reusing the global RootCmd.
+// (resetCobraFlags is defined in transform_slack_e2e_test.go and available here
+// since both files share the commands_test package.)
+func resetRCFlags() {
+	resetCobraFlags(commands.RootCmd)
+}
+
 // marshalBSONFileCmds serialises a slice of documents into a concatenated BSON
 // file (the format produced by mongodump) and writes it to filePath.
 func marshalBSONFileCmds(t *testing.T, filePath string, docs []any) {
@@ -142,6 +150,7 @@ func TestTransformRocketChatE2E(t *testing.T) {
 		defer os.Remove("transform-rocketchat.log")
 
 		c := commands.RootCmd
+		resetRCFlags()
 		c.SetArgs([]string{
 			"transform", "rocketchat",
 			"--team", "testteam",
@@ -219,6 +228,7 @@ func TestTransformRocketChatE2E(t *testing.T) {
 		defer os.Remove("transform-rocketchat.log")
 
 		c := commands.RootCmd
+		resetRCFlags()
 		c.SetArgs([]string{
 			"transform", "rocketchat",
 			"--team", "TestTeam",
@@ -267,6 +277,7 @@ func TestTransformRocketChatE2E(t *testing.T) {
 		defer os.Remove("transform-rocketchat.log")
 
 		c := commands.RootCmd
+		resetRCFlags()
 		c.SetArgs([]string{
 			"transform", "rocketchat",
 			"--team", "testteam",
@@ -307,6 +318,7 @@ func TestTransformRocketChatEdgeCases(t *testing.T) {
 		defer os.Remove("transform-rocketchat.log")
 
 		c := commands.RootCmd
+		resetRCFlags()
 		c.SetArgs([]string{
 			"transform", "rocketchat",
 			"--team", "testteam",
@@ -344,6 +356,7 @@ func TestTransformRocketChatEdgeCases(t *testing.T) {
 		defer os.Remove("transform-rocketchat.log")
 
 		c := commands.RootCmd
+		resetRCFlags()
 		c.SetArgs([]string{
 			"transform", "rocketchat",
 			"--team", "testteam",
@@ -391,6 +404,7 @@ func TestTransformRocketChatEdgeCases(t *testing.T) {
 		defer os.Remove("transform-rocketchat.log")
 
 		c := commands.RootCmd
+		resetRCFlags()
 		c.SetArgs([]string{
 			"transform", "rocketchat",
 			"--team", "testteam",
@@ -443,6 +457,7 @@ func TestTransformRocketChatEdgeCases(t *testing.T) {
 		defer os.Remove("transform-rocketchat.log")
 
 		c := commands.RootCmd
+		resetRCFlags()
 		c.SetArgs([]string{
 			"transform", "rocketchat",
 			"--team", "testteam",
@@ -478,6 +493,7 @@ func TestTransformRocketChatEdgeCases(t *testing.T) {
 		defer os.Remove("transform-rocketchat.log")
 
 		c := commands.RootCmd
+		resetRCFlags()
 		c.SetArgs([]string{
 			"transform", "rocketchat",
 			"--team", "testteam",

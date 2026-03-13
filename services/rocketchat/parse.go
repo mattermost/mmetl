@@ -20,6 +20,11 @@ type ParsedData struct {
 	UploadsByID   map[string]*RocketChatUpload
 }
 
+// maxBSONDocSize is the maximum allowed BSON document size (16 MiB), matching
+// MongoDB's enforced limit. Any document claiming to be larger is treated as
+// corrupt to prevent unbounded memory allocation.
+const maxBSONDocSize = 16 * 1024 * 1024
+
 // readBSONFile reads a concatenated BSON file (as produced by mongodump) and
 // deserializes each document into type T.
 func readBSONFile[T any](filePath string) ([]T, error) {
@@ -54,6 +59,11 @@ func readBSONFile[T any](filePath string) ([]T, error) {
 			// A valid BSON document is at minimum 5 bytes: 4-byte length + 1-byte
 			// null terminator. Anything smaller indicates a corrupt file.
 			return nil, fmt.Errorf("invalid BSON document size %d in %s", docSize, filePath)
+		}
+		if docSize > maxBSONDocSize {
+			// Guard against corrupt or malicious files that declare an enormous
+			// document size, which would cause a huge allocation.
+			return nil, fmt.Errorf("BSON document size %d exceeds maximum allowed %d in %s", docSize, maxBSONDocSize, filePath)
 		}
 
 		// Allocate a buffer for the complete document and copy the 4 size bytes
