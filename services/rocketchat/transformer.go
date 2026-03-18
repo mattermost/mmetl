@@ -75,23 +75,6 @@ func (t *Transformer) transformUsers(users []RocketChatUser, skipEmptyEmails boo
 
 	result := make(map[string]*intermediate.IntermediateUser, len(users))
 	for _, u := range users {
-		if u.Type == "bot" {
-			var deleteAt int64
-			if !u.Active {
-				deleteAt = model.GetMillis()
-			}
-			newUser := &intermediate.IntermediateUser{
-				Id:          u.ID,
-				Username:    strings.ToLower(u.Username),
-				DisplayName: u.Name,
-				IsBot:       true,
-				DeleteAt:    deleteAt,
-			}
-			result[newUser.Id] = newUser
-			t.Logger.Debugf("Transformed bot user: %s", u.Username)
-			continue
-		}
-
 		var deleteAt int64
 		if !u.Active {
 			deleteAt = model.GetMillis()
@@ -105,17 +88,21 @@ func (t *Transformer) transformUsers(users []RocketChatUser, skipEmptyEmails boo
 		}
 
 		newUser := &intermediate.IntermediateUser{
-			Id:        u.ID,
-			Username:  strings.ToLower(u.Username),
-			FirstName: firstName,
-			LastName:  lastName,
-			Email:     email,
-			Password:  model.NewId(),
-			DeleteAt:  deleteAt,
+			Id:          u.ID,
+			IsBot:       u.Type == "bot",
+			Username:    strings.ToLower(u.Username),
+			FirstName:   firstName,
+			LastName:    lastName,
+			DisplayName: u.Name,
+			Email:       email,
+			DeleteAt:    deleteAt,
 		}
 
-		newUser.Sanitise(t.Logger, defaultEmailDomain, skipEmptyEmails)
+		if !newUser.IsBot {
+			newUser.Sanitise(t.Logger, defaultEmailDomain, skipEmptyEmails)
+		}
 		result[newUser.Id] = newUser
+		t.Logger.Debugf("transformed user: %s isBot: %t", newUser.Username, newUser.IsBot)
 	}
 
 	t.Intermediate.UsersById = result
@@ -157,11 +144,6 @@ func (t *Transformer) transformChannels(rooms []RocketChatRoom) {
 
 		if room.Encrypted {
 			t.Logger.Warnf("Skipping encrypted room: %s", room.Name)
-			t.skippedRoomIDs[room.ID] = true
-			continue
-		}
-		if room.ParentRID != "" {
-			t.Logger.Warnf("Skipping discussion room: %s (parent: %s)", room.Name, room.ParentRID)
 			t.skippedRoomIDs[room.ID] = true
 			continue
 		}
