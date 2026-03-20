@@ -162,36 +162,36 @@ func (t *Transformer) transformChannels(rooms []RocketChatRoom) {
 			t.roomIDToChannelName[room.ID] = ch.Name
 
 		case "d":
-			// Resolve all member IDs, creating placeholder users for any that are
-			// missing (e.g. rocket.cat or other bots skipped during user
-			// transformation). This preserves message history rather than dropping
-			// the whole room.
-			resolvedUIDs, resolvedUsernames := t.resolveDirectMembers(room.UIDs, room.Usernames)
-
-			// Guard: Mattermost requires at least 2 participants in a direct channel.
-			if len(resolvedUIDs) <= 1 {
-				t.Logger.Warnf("Skipping direct room %s: requires at least 2 members, found %d", room.ID, len(resolvedUIDs))
-				t.skippedRoomIDs[room.ID] = true
-				continue
+			uids := room.UIDs
+			usernames := make([]string, len(room.Usernames))
+			for i, username := range room.Usernames {
+				usernames[i] = strings.ToLower(username)
 			}
 
-			if len(resolvedUIDs) >= 3 && len(resolvedUIDs) <= model.ChannelGroupMaxUsers {
-				ch := t.roomToDirectChannel(room, model.ChannelTypeGroup, resolvedUIDs, resolvedUsernames)
+			// RC allows self-DMs (1 participant). Mattermost models these as a
+			// direct channel where the same user appears twice.
+			if len(uids) == 1 {
+				uids = []string{uids[0], uids[0]}
+				usernames = []string{usernames[0], usernames[0]}
+			}
+
+			if len(uids) >= 3 && len(uids) <= model.ChannelGroupMaxUsers {
+				ch := t.roomToDirectChannel(room, model.ChannelTypeGroup, uids, usernames)
 				t.Intermediate.GroupChannels = append(t.Intermediate.GroupChannels, ch)
 				// Direct channel names are resolved via member usernames at post time.
 				t.roomIDToChannelName[room.ID] = ""
 				t.directRoomIDToChannel[room.ID] = ch
-			} else if len(resolvedUIDs) > model.ChannelGroupMaxUsers {
+			} else if len(uids) > model.ChannelGroupMaxUsers {
 				// Mattermost group messages support at most model.ChannelGroupMaxUsers
 				// members; convert oversized group DMs to private channels.
 				t.Logger.Warnf("Room %s has %d members (>%d), converting group DM to private channel",
-					room.ID, len(resolvedUIDs), model.ChannelGroupMaxUsers)
+					room.ID, len(uids), model.ChannelGroupMaxUsers)
 				ch := t.roomToIntermediateChannel(room, model.ChannelTypePrivate)
 				t.Intermediate.PrivateChannels = append(t.Intermediate.PrivateChannels, ch)
 				t.roomIDToChannelName[room.ID] = ch.Name
 				t.roomIDToType[room.ID] = "p"
 			} else {
-				ch := t.roomToDirectChannel(room, model.ChannelTypeDirect, resolvedUIDs, resolvedUsernames)
+				ch := t.roomToDirectChannel(room, model.ChannelTypeDirect, uids, usernames)
 				t.Intermediate.DirectChannels = append(t.Intermediate.DirectChannels, ch)
 				// Direct channel names are resolved via member usernames at post time.
 				t.roomIDToChannelName[room.ID] = ""
@@ -222,6 +222,12 @@ func (t *Transformer) transformChannels(rooms []RocketChatRoom) {
 }
 
 func (t *Transformer) roomToIntermediateChannel(room *RocketChatRoom, chType model.ChannelType) *intermediate.IntermediateChannel {
+	// Handle case of group rooms which are converted to private channels due to exceeding the group DM member limit.
+	if room.Name == "" {
+		t.Logger.Warnf("Room %s has empty name, using ID as fallback", room.ID)
+		room.Name = "channel-" + room.ID
+	}
+
 	displayName := room.FName
 	if displayName == "" {
 		displayName = room.Name
@@ -249,8 +255,6 @@ func (t *Transformer) roomToDirectChannel(room *RocketChatRoom, chType model.Cha
 	ch := &intermediate.IntermediateChannel{
 		Id:               room.ID,
 		OriginalName:     roomOriginalName(room),
-		Name:             room.Name,
-		DisplayName:      room.FName,
 		Members:          uids,
 		MembersUsernames: usernames,
 		Type:             chType,
@@ -289,54 +293,6 @@ func rcConvertChannelName(name, id string) string {
 		return strings.ToLower(id)
 	}
 	return slug
-}
-
-// resolveDirectMembers ensures every UID in a direct/group room has a
-// corresponding user in UsersById. Unknown UIDs are first matched by username
-// (case-insensitive fallback); if still unresolved a placeholder "Deleted User"
-// is created so that message history is preserved instead of dropping the whole
-// room. Returns the resolved (uids, usernames) slices.
-func (t *Transformer) resolveDirectMembers(uids, usernames []string) ([]string, []string) {
-	// Build a username → id reverse map for the username-fallback lookup.
-	usernameToID := make(map[string]string, len(t.Intermediate.UsersById))
-	for id, u := range t.Intermediate.UsersById {
-		usernameToID[strings.ToLower(u.Username)] = id
-	}
-
-	resolvedUIDs := make([]string, 0, len(uids))
-	resolvedUsernames := make([]string, 0, len(uids))
-
-	for i, uid := range uids {
-		if user, ok := t.Intermediate.UsersById[uid]; ok {
-			// Found by UID.
-			resolvedUIDs = append(resolvedUIDs, uid)
-			resolvedUsernames = append(resolvedUsernames, user.Username)
-			continue
-		}
-
-		// Not found by UID — try username fallback.
-		if i < len(usernames) && usernames[i] != "" {
-			lowerUsername := strings.ToLower(usernames[i])
-			if existingID, ok := usernameToID[lowerUsername]; ok {
-				resolvedUIDs = append(resolvedUIDs, existingID)
-				resolvedUsernames = append(resolvedUsernames, lowerUsername)
-				continue
-			}
-		}
-
-		// Not found by either — create a placeholder and use the known
-		// username (from the room's usernames list) when available so the
-		// placeholder is identifiable in the Mattermost import.
-		u := t.createPlaceholderUser(uid)
-		if i < len(usernames) && usernames[i] != "" {
-			u.Username = strings.ToLower(usernames[i])
-			u.Email = fmt.Sprintf("%s@local", u.Username)
-		}
-		resolvedUIDs = append(resolvedUIDs, uid)
-		resolvedUsernames = append(resolvedUsernames, u.Username)
-	}
-
-	return resolvedUIDs, resolvedUsernames
 }
 
 // transformSubscriptions uses subscription records to populate channel member lists
