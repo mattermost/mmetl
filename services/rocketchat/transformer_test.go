@@ -597,6 +597,34 @@ func TestTransformMessages(t *testing.T) {
 		require.Len(t, tr.Intermediate.Posts[0].Attachments, 1)
 		assert.Equal(t, "bulk-export-attachments/file1_photo.jpg", tr.Intermediate.Posts[0].Attachments[0])
 	})
+
+	t.Run("file attachment with caption uses upload description as message", func(t *testing.T) {
+		tr := NewTransformer("test", newLogger())
+		tr.Intermediate.UsersById = map[string]*intermediate.IntermediateUser{
+			"u1": {Id: "u1", Username: "alice"},
+		}
+		tr.roomIDToType["r1"] = "c"
+		tr.roomIDToChannelName["r1"] = "general"
+
+		uploads := map[string]*RocketChatUpload{
+			"file1": {ID: "file1", Name: "test-simple.txt", Complete: true, Description: "texter"},
+		}
+		messages := []RocketChatMessage{
+			{
+				ID: "m1", RoomID: "r1",
+				User:      RCMessageUser{ID: "u1", Username: "alice"},
+				Message:   "", // RC sets msg="" when file is uploaded with a caption
+				Timestamp: now,
+				Files:     []RCFileRef{{ID: "file1", Name: "test-simple.txt"}},
+			},
+		}
+		tr.transformMessages(messages, uploads)
+		require.Len(t, tr.Intermediate.Posts, 1)
+		p := tr.Intermediate.Posts[0]
+		assert.Equal(t, "texter", p.Message)
+		require.Len(t, p.Attachments, 1)
+		assert.Equal(t, "bulk-export-attachments/file1_test-simple.txt", p.Attachments[0])
+	})
 }
 
 // ---------------------------------------------------------------------------

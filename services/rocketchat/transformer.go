@@ -486,6 +486,11 @@ func (t *Transformer) convertMessage(m *RocketChatMessage, uploadsById map[strin
 			if !ok || !upload.Complete {
 				continue
 			}
+			// If the message has no text but the upload has a description
+			// (caption typed by the user when uploading), use it as the post message.
+			if post.Message == "" && upload.Description != "" {
+				post.Message = upload.Description
+			}
 			// Apply NFC normalization before sanitizing, matching the logic in
 			// ExtractAttachments, so the path embedded in the JSONL matches the
 			// filename that will be created on disk.
