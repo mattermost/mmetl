@@ -16,9 +16,7 @@ import (
 
 // Transformer holds all state for a Rocket.Chat → Mattermost transformation.
 type Transformer struct {
-	TeamName     string
-	Intermediate *intermediate.Intermediate
-	Logger       log.FieldLogger
+	intermediate.Exporter // provides TeamName, Intermediate, Logger, and all export methods
 
 	// skippedRoomIDs records room IDs that were skipped (encrypted/discussion) so
 	// that messages in those rooms are also skipped.
@@ -43,9 +41,11 @@ type Transformer struct {
 // NewTransformer creates a new Transformer for the given team.
 func NewTransformer(teamName string, logger log.FieldLogger) *Transformer {
 	return &Transformer{
-		TeamName:              teamName,
-		Intermediate:          &intermediate.Intermediate{},
-		Logger:                logger,
+		Exporter: intermediate.Exporter{
+			TeamName:     teamName,
+			Intermediate: &intermediate.Intermediate{},
+			Logger:       logger,
+		},
 		skippedRoomIDs:        make(map[string]bool),
 		roomIDToChannelName:   make(map[string]string),
 		roomIDToType:          make(map[string]string),

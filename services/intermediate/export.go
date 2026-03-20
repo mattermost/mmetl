@@ -1,4 +1,4 @@
-package rocketchat
+package intermediate
 
 import (
 	"encoding/json"
@@ -9,14 +9,21 @@ import (
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/v8/channels/app/imports"
 	"github.com/pkg/errors"
-
-	"github.com/mattermost/mmetl/services/intermediate"
+	log "github.com/sirupsen/logrus"
 )
 
-const postMaxAttachments = 5
+// PostMaxAttachments is the maximum number of file attachments per post or reply.
+const PostMaxAttachments = 5
 
-// exportWriteLine marshals line as JSON and writes it followed by a newline.
-func exportWriteLine(writer io.Writer, line *imports.LineImportData) error {
+// Exporter holds the state needed to write Mattermost bulk-import JSONL.
+type Exporter struct {
+	TeamName     string
+	Intermediate *Intermediate
+	Logger       log.FieldLogger
+}
+
+// ExportWriteLine marshals line as JSON and writes it followed by a newline.
+func ExportWriteLine(writer io.Writer, line *imports.LineImportData) error {
 	b, err := json.Marshal(line)
 	if err != nil {
 		return errors.Wrap(err, "error marshalling JSON for export")
@@ -30,45 +37,45 @@ func exportWriteLine(writer io.Writer, line *imports.LineImportData) error {
 // Export writes the full Mattermost bulk import JSONL to outputFilePath.
 // Export order: version, public channels, private channels, users,
 // direct channels (group + direct), posts, direct posts.
-func (t *Transformer) Export(outputFilePath string, botOwner string) error {
+func (e *Exporter) Export(outputFilePath string, botOwner string) error {
 	f, err := os.Create(outputFilePath)
 	if err != nil {
 		return errors.Wrap(err, "error creating output file")
 	}
 	defer f.Close()
 
-	t.Logger.Info("Exporting version")
-	if err := t.ExportVersion(f); err != nil {
+	e.Logger.Info("Exporting version")
+	if err := e.ExportVersion(f); err != nil {
 		return err
 	}
 
-	t.Logger.Info("Exporting public channels")
-	if err := t.ExportChannels(t.Intermediate.PublicChannels, f); err != nil {
+	e.Logger.Info("Exporting public channels")
+	if err := e.ExportChannels(e.Intermediate.PublicChannels, f); err != nil {
 		return err
 	}
 
-	t.Logger.Info("Exporting private channels")
-	if err := t.ExportChannels(t.Intermediate.PrivateChannels, f); err != nil {
+	e.Logger.Info("Exporting private channels")
+	if err := e.ExportChannels(e.Intermediate.PrivateChannels, f); err != nil {
 		return err
 	}
 
-	t.Logger.Info("Exporting users")
-	if err := t.ExportUsers(f, botOwner); err != nil {
+	e.Logger.Info("Exporting users")
+	if err := e.ExportUsers(f, botOwner); err != nil {
 		return err
 	}
 
-	t.Logger.Info("Exporting group channels")
-	if err := t.ExportDirectChannels(t.Intermediate.GroupChannels, f); err != nil {
+	e.Logger.Info("Exporting group channels")
+	if err := e.ExportDirectChannels(e.Intermediate.GroupChannels, f); err != nil {
 		return err
 	}
 
-	t.Logger.Info("Exporting direct channels")
-	if err := t.ExportDirectChannels(t.Intermediate.DirectChannels, f); err != nil {
+	e.Logger.Info("Exporting direct channels")
+	if err := e.ExportDirectChannels(e.Intermediate.DirectChannels, f); err != nil {
 		return err
 	}
 
-	t.Logger.Info("Exporting posts")
-	if err := t.ExportPosts(f); err != nil {
+	e.Logger.Info("Exporting posts")
+	if err := e.ExportPosts(f); err != nil {
 		return err
 	}
 
@@ -76,22 +83,22 @@ func (t *Transformer) Export(outputFilePath string, botOwner string) error {
 }
 
 // ExportVersion writes the Mattermost bulk import version line.
-func (t *Transformer) ExportVersion(w io.Writer) error {
+func (e *Exporter) ExportVersion(w io.Writer) error {
 	version := 1
 	line := &imports.LineImportData{
 		Type:    "version",
 		Version: &version,
 	}
-	return exportWriteLine(w, line)
+	return ExportWriteLine(w, line)
 }
 
 // ExportChannels writes public or private channel import lines.
-func (t *Transformer) ExportChannels(channels []*intermediate.IntermediateChannel, w io.Writer) error {
+func (e *Exporter) ExportChannels(channels []*IntermediateChannel, w io.Writer) error {
 	for _, ch := range channels {
 		line := &imports.LineImportData{
 			Type: "channel",
 			Channel: &imports.ChannelImportData{
-				Team:        model.NewPointer(t.TeamName),
+				Team:        model.NewPointer(e.TeamName),
 				Name:        model.NewPointer(ch.Name),
 				DisplayName: model.NewPointer(ch.DisplayName),
 				Type:        &ch.Type,
@@ -99,7 +106,7 @@ func (t *Transformer) ExportChannels(channels []*intermediate.IntermediateChanne
 				Purpose:     model.NewPointer(ch.Purpose),
 			},
 		}
-		if err := exportWriteLine(w, line); err != nil {
+		if err := ExportWriteLine(w, line); err != nil {
 			return err
 		}
 	}
@@ -107,7 +114,7 @@ func (t *Transformer) ExportChannels(channels []*intermediate.IntermediateChanne
 }
 
 // ExportDirectChannels writes direct and group channel import lines.
-func (t *Transformer) ExportDirectChannels(channels []*intermediate.IntermediateChannel, w io.Writer) error {
+func (e *Exporter) ExportDirectChannels(channels []*IntermediateChannel, w io.Writer) error {
 	for _, ch := range channels {
 		members := ch.MembersUsernames
 		dc := &imports.DirectChannelImportData{
@@ -120,7 +127,7 @@ func (t *Transformer) ExportDirectChannels(channels []*intermediate.Intermediate
 			Type:          "direct_channel",
 			DirectChannel: dc,
 		}
-		if err := exportWriteLine(w, line); err != nil {
+		if err := ExportWriteLine(w, line); err != nil {
 			return err
 		}
 	}
@@ -128,10 +135,10 @@ func (t *Transformer) ExportDirectChannels(channels []*intermediate.Intermediate
 }
 
 // ExportUsers writes user import lines, sorted by username for deterministic output.
-func (t *Transformer) ExportUsers(w io.Writer, botOwner string) error {
-	users := make([]*intermediate.IntermediateUser, 0, len(t.Intermediate.UsersById))
-	bots := make([]*intermediate.IntermediateUser, 0)
-	for _, u := range t.Intermediate.UsersById {
+func (e *Exporter) ExportUsers(w io.Writer, botOwner string) error {
+	users := make([]*IntermediateUser, 0, len(e.Intermediate.UsersById))
+	bots := make([]*IntermediateUser, 0)
+	for _, u := range e.Intermediate.UsersById {
 		if u.IsBot {
 			bots = append(bots, u)
 		} else {
@@ -147,23 +154,22 @@ func (t *Transformer) ExportUsers(w io.Writer, botOwner string) error {
 	})
 
 	// Fail fast if bots exist but no owner is specified, before writing any data.
-	// This prevents leaving a truncated JSONL on disk.
 	if len(bots) > 0 && botOwner == "" {
 		return errors.New("cannot export bots without a bot owner: please provide the --bot-owner flag")
 	}
 
 	// Write regular users first (bot owner must exist before bots).
 	for _, u := range users {
-		line := t.userImportLine(u)
-		if err := exportWriteLine(w, line); err != nil {
+		line := UserImportLine(u, e.TeamName)
+		if err := ExportWriteLine(w, line); err != nil {
 			return err
 		}
 	}
 
 	// Write bots after users.
 	for _, bot := range bots {
-		line := botImportLine(bot, botOwner)
-		if err := exportWriteLine(w, line); err != nil {
+		line := BotImportLine(bot, botOwner)
+		if err := ExportWriteLine(w, line); err != nil {
 			return err
 		}
 	}
@@ -171,7 +177,19 @@ func (t *Transformer) ExportUsers(w io.Writer, botOwner string) error {
 	return nil
 }
 
-func (t *Transformer) userImportLine(u *intermediate.IntermediateUser) *imports.LineImportData {
+// ExportPosts writes post and direct_post import lines.
+func (e *Exporter) ExportPosts(w io.Writer) error {
+	for _, post := range e.Intermediate.Posts {
+		line := PostImportLine(post, e.TeamName)
+		if err := ExportWriteLine(w, line); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// UserImportLine creates a Mattermost user import line.
+func UserImportLine(u *IntermediateUser, team string) *imports.LineImportData {
 	channelMemberships := make([]imports.UserChannelImportData, 0, len(u.Memberships))
 	for _, chName := range u.Memberships {
 		channelMemberships = append(channelMemberships, imports.UserChannelImportData{
@@ -200,7 +218,7 @@ func (t *Transformer) userImportLine(u *intermediate.IntermediateUser) *imports.
 		Roles:     model.NewPointer(model.SystemUserRoleId),
 		Teams: &[]imports.UserTeamImportData{
 			{
-				Name:     model.NewPointer(t.TeamName),
+				Name:     model.NewPointer(team),
 				Roles:    model.NewPointer(model.TeamUserRoleId),
 				Channels: channelsPtr,
 			},
@@ -214,8 +232,8 @@ func (t *Transformer) userImportLine(u *intermediate.IntermediateUser) *imports.
 	}
 }
 
-// botImportLine creates a Mattermost bot import line for a bot user.
-func botImportLine(u *intermediate.IntermediateUser, owner string) *imports.LineImportData {
+// BotImportLine creates a Mattermost bot import line for a bot user.
+func BotImportLine(u *IntermediateUser, owner string) *imports.LineImportData {
 	var deleteAt *int64
 	if u.DeleteAt > 0 {
 		deleteAt = &u.DeleteAt
@@ -232,28 +250,8 @@ func botImportLine(u *intermediate.IntermediateUser, owner string) *imports.Line
 	}
 }
 
-// ExportPosts writes post and direct_post import lines.
-func (t *Transformer) ExportPosts(w io.Writer) error {
-	for _, post := range t.Intermediate.Posts {
-		line := postImportLine(post, t.TeamName)
-		if err := exportWriteLine(w, line); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func getAttachmentImportData(paths []string) []imports.AttachmentImportData {
-	attachments := make([]imports.AttachmentImportData, 0, len(paths))
-	for _, p := range paths {
-		attachments = append(attachments, imports.AttachmentImportData{
-			Path: model.NewPointer(p),
-		})
-	}
-	return attachments
-}
-
-func postImportLine(post *intermediate.IntermediatePost, team string) *imports.LineImportData {
+// PostImportLine creates a Mattermost post or direct_post import line.
+func PostImportLine(post *IntermediatePost, team string) *imports.LineImportData {
 	reactions := convertReactionsForExport(post.Reactions)
 	replies, postAttachments := buildRepliesAndAttachments(post, team)
 
@@ -291,21 +289,32 @@ func postImportLine(post *intermediate.IntermediatePost, team string) *imports.L
 	}
 }
 
-func buildRepliesAndAttachments(post *intermediate.IntermediatePost, team string) ([]imports.ReplyImportData, []imports.AttachmentImportData) {
-	postAttachments := getAttachmentImportData(post.Attachments)
+// GetAttachmentImportData converts file paths to import attachment data.
+func GetAttachmentImportData(paths []string) []imports.AttachmentImportData {
+	attachments := make([]imports.AttachmentImportData, 0, len(paths))
+	for _, p := range paths {
+		attachments = append(attachments, imports.AttachmentImportData{
+			Path: model.NewPointer(p),
+		})
+	}
+	return attachments
+}
+
+func buildRepliesAndAttachments(post *IntermediatePost, team string) ([]imports.ReplyImportData, []imports.AttachmentImportData) {
+	postAttachments := GetAttachmentImportData(post.Attachments)
 	var extraReplies []imports.ReplyImportData
 
-	if len(postAttachments) > postMaxAttachments {
-		extraReplies = append(extraReplies, createRepliesForAttachments(postAttachments[postMaxAttachments:], post.User, post.CreateAt)...)
-		postAttachments = postAttachments[:postMaxAttachments]
+	if len(postAttachments) > PostMaxAttachments {
+		extraReplies = append(extraReplies, createRepliesForAttachments(postAttachments[PostMaxAttachments:], post.User, post.CreateAt)...)
+		postAttachments = postAttachments[:PostMaxAttachments]
 	}
 
 	var replies []imports.ReplyImportData
 	for _, reply := range post.Replies {
-		replyAttachments := getAttachmentImportData(reply.Attachments)
-		if len(replyAttachments) > postMaxAttachments {
-			extraReplies = append(extraReplies, createRepliesForAttachments(replyAttachments[postMaxAttachments:], reply.User, reply.CreateAt)...)
-			replyAttachments = replyAttachments[:postMaxAttachments]
+		replyAttachments := GetAttachmentImportData(reply.Attachments)
+		if len(replyAttachments) > PostMaxAttachments {
+			extraReplies = append(extraReplies, createRepliesForAttachments(replyAttachments[PostMaxAttachments:], reply.User, reply.CreateAt)...)
+			replyAttachments = replyAttachments[:PostMaxAttachments]
 		}
 
 		replyReactions := convertReactionsForExport(reply.Reactions)
@@ -340,14 +349,14 @@ func buildRepliesAndAttachments(post *intermediate.IntermediatePost, team string
 
 func createRepliesForAttachments(attachments []imports.AttachmentImportData, user string, createAt int64) []imports.ReplyImportData {
 	var replies []imports.ReplyImportData
-	for i := 0; i < len(attachments); i += postMaxAttachments {
-		end := i + postMaxAttachments
+	for i := 0; i < len(attachments); i += PostMaxAttachments {
+		end := i + PostMaxAttachments
 		if end > len(attachments) {
 			end = len(attachments)
 		}
 		chunk := attachments[i:end]
 		msg := ""
-		ts := createAt + int64(i/postMaxAttachments+1)
+		ts := createAt + int64(i/PostMaxAttachments+1)
 		replies = append(replies, imports.ReplyImportData{
 			User:        &user,
 			Message:     &msg,
@@ -358,7 +367,7 @@ func createRepliesForAttachments(attachments []imports.AttachmentImportData, use
 	return replies
 }
 
-func convertReactionsForExport(reactions []*intermediate.IntermediateReaction) []imports.ReactionImportData {
+func convertReactionsForExport(reactions []*IntermediateReaction) []imports.ReactionImportData {
 	result := make([]imports.ReactionImportData, 0, len(reactions))
 	for _, r := range reactions {
 		result = append(result, imports.ReactionImportData{
