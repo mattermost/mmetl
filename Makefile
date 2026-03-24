@@ -8,6 +8,24 @@ BUILD_VERSION ?= $(shell git ls-remote --tags --refs https://github.com/mattermo
 LDFLAGS += -X "github.com/mattermost/mmetl/commands.BuildHash=$(BUILD_HASH)"
 LDFLAGS += -X "github.com/mattermost/mmetl/commands.Version=$(BUILD_VERSION)"
 BUILD_COMMAND ?= go build -ldflags '$(LDFLAGS)'
+GO_TEST_FLAGS ?=
+
+GOLANGCI_LINT_VERSION ?= 2.10.1
+TOOLS_BIN := $(shell pwd)/tools/bin
+GOLANGCI_LINT := $(TOOLS_BIN)/golangci-lint
+
+UNAME_S := $(shell uname -s)
+UNAME_M := $(shell uname -m)
+ifeq ($(UNAME_S),Linux)
+  GOLANGCI_LINT_OS := linux
+else ifeq ($(UNAME_S),Darwin)
+  GOLANGCI_LINT_OS := darwin
+endif
+ifeq ($(UNAME_M),x86_64)
+  GOLANGCI_LINT_ARCH := amd64
+else ifneq (,$(filter $(UNAME_M),arm64 aarch64))
+  GOLANGCI_LINT_ARCH := arm64
+endif
 
 all: build
 
@@ -43,15 +61,17 @@ package: check-style
 
 	rm mmetl mmetl.exe
 
-golangci-lint:
-# https://stackoverflow.com/a/677212/1027058 (check if a command exists or not)
-	@if ! [ -x "$$(command -v golangci-lint)" ]; then \
-		echo "golangci-lint is not installed. Please see https://github.com/golangci/golangci-lint#install for installation instructions."; \
-		exit 1; \
-	fi; \
+$(TOOLS_BIN)/golangci-lint-v$(GOLANGCI_LINT_VERSION):
+	@mkdir -p $(TOOLS_BIN)
+	@echo "Downloading golangci-lint v$(GOLANGCI_LINT_VERSION)..."
+	@rm -f $(TOOLS_BIN)/golangci-lint-v* $(TOOLS_BIN)/golangci-lint
+	@curl -sSfL "https://github.com/golangci/golangci-lint/releases/download/v$(GOLANGCI_LINT_VERSION)/golangci-lint-$(GOLANGCI_LINT_VERSION)-$(GOLANGCI_LINT_OS)-$(GOLANGCI_LINT_ARCH).tar.gz" | tar xz -C $(TOOLS_BIN) --strip-components=1 "golangci-lint-$(GOLANGCI_LINT_VERSION)-$(GOLANGCI_LINT_OS)-$(GOLANGCI_LINT_ARCH)/golangci-lint"
+	@mv $(TOOLS_BIN)/golangci-lint $(TOOLS_BIN)/golangci-lint-v$(GOLANGCI_LINT_VERSION)
+	@ln -sf golangci-lint-v$(GOLANGCI_LINT_VERSION) $(TOOLS_BIN)/golangci-lint
 
+golangci-lint: $(TOOLS_BIN)/golangci-lint-v$(GOLANGCI_LINT_VERSION)
 	@echo Running golangci-lint
-	golangci-lint run ./...
+	$(GOLANGCI_LINT) run ./...
 
 gofmt:
 	@echo Running gofmt
@@ -71,7 +91,7 @@ gofmt:
 
 test:
 	@echo Running tests
-	$(GO) test -race -v $(GO_PACKAGES) -count=1
+	$(GO) test -race -v $(GO_PACKAGES) -count=1 $(GO_TEST_FLAGS)
 
 check-style: golangci-lint
 

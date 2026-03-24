@@ -12,6 +12,10 @@ tmp
 
 # IDE and editor files
 .idea
+.vscode
+
+# Locally installed tools
+tools/
 
 # OS files
 .DS_Store
