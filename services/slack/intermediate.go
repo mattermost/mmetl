@@ -15,137 +15,45 @@ import (
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/text/unicode/norm"
+
+	"github.com/mattermost/mmetl/services/intermediate"
 )
 
 const attachmentsInternal = "bulk-export-attachments"
 
+// exitFunc is the function called for fatal errors. Overridable in tests.
 var exitFunc func(code int) = os.Exit
 
-type IntermediateChannel struct {
-	Id               string            `json:"id"`
-	OriginalName     string            `json:"original_name"`
-	Name             string            `json:"name"`
-	DisplayName      string            `json:"display_name"`
-	Members          []string          `json:"members"`
-	MembersUsernames []string          `json:"members_usernames"`
-	Purpose          string            `json:"purpose"`
-	Header           string            `json:"header"`
-	Topic            string            `json:"topic"`
-	Type             model.ChannelType `json:"type"`
+// isValidChannelNameCharacters delegates to the shared package validator.
+// Kept here for backward compatibility with tests in this package.
+var isValidChannelNameCharacters = intermediate.IsValidChannelNameCharacters
+
+// Type aliases for backward compatibility — all types are now defined in the
+// shared intermediate package and re-exported here.
+type IntermediateChannel = intermediate.IntermediateChannel
+type IntermediateUser = intermediate.IntermediateUser
+type IntermediateReaction = intermediate.IntermediateReaction
+type IntermediatePost = intermediate.IntermediatePost
+type Intermediate = intermediate.Intermediate
+
+// syncExitFunc synchronises the slack-package exitFunc with the shared package's
+// ExitFunc so that both packages use the same override in tests.
+func init() {
+	// Wire the shared package ExitFunc so that Sanitise calls use the same func.
+	// The slack package tests override exitFunc; we need to propagate that override
+	// into the shared package. We do this by shadowing Sanitise calls through wrappers.
+	//
+	// Actually, the shared package's Sanitise calls intermediate.ExitFunc directly,
+	// so we need to keep the two in sync. The simplest approach: override
+	// intermediate.ExitFunc here too. But since tests override exitFunc AFTER init(),
+	// we use a trampoline approach — see slackExitFuncTrampoline.
+	intermediate.ExitFunc = slackExitFuncTrampoline
 }
 
-func (c *IntermediateChannel) Sanitise(logger log.FieldLogger) {
-	if c.Type == model.ChannelTypeDirect {
-		return
-	}
-
-	c.Name = strings.Trim(c.Name, "_-")
-	if len(c.Name) > model.ChannelNameMaxLength {
-		logger.Warnf("Channel %s handle exceeds the maximum length. It will be truncated when imported.", c.DisplayName)
-		c.Name = c.Name[0:model.ChannelNameMaxLength]
-	}
-	if len(c.Name) == 1 {
-		c.Name = "slack-channel-" + c.Name
-	}
-	if !isValidChannelNameCharacters(c.Name) {
-		c.Name = strings.ToLower(c.Id)
-	}
-
-	c.DisplayName = strings.Trim(c.DisplayName, "_-")
-	if utf8.RuneCountInString(c.DisplayName) > model.ChannelDisplayNameMaxRunes {
-		logger.Warnf("Channel %s display name exceeds the maximum length. It will be truncated when imported.", c.DisplayName)
-		c.DisplayName = truncateRunes(c.DisplayName, model.ChannelDisplayNameMaxRunes)
-	}
-	if len(c.DisplayName) == 1 {
-		c.DisplayName = "slack-channel-" + c.DisplayName
-	}
-
-	if utf8.RuneCountInString(c.Purpose) > model.ChannelPurposeMaxRunes {
-		logger.Warnf("Channel %s purpose exceeds the maximum length. It will be truncated when imported.", c.DisplayName)
-		c.Purpose = truncateRunes(c.Purpose, model.ChannelPurposeMaxRunes)
-	}
-
-	if utf8.RuneCountInString(c.Header) > model.ChannelHeaderMaxRunes {
-		logger.Warnf("Channel %s header exceeds the maximum length. It will be truncated when imported.", c.DisplayName)
-		c.Header = truncateRunes(c.Header, model.ChannelHeaderMaxRunes)
-	}
-}
-
-type IntermediateUser struct {
-	Id          string   `json:"id"`
-	Username    string   `json:"username"`
-	FirstName   string   `json:"first_name"`
-	LastName    string   `json:"last_name"`
-	Position    string   `json:"position"`
-	Email       string   `json:"email"`
-	Password    string   `json:"password"`
-	Memberships []string `json:"memberships"`
-	DeleteAt    int64    `json:"delete_at"`
-}
-
-func (u *IntermediateUser) Sanitise(logger log.FieldLogger, defaultEmailDomain string, skipEmptyEmails bool) {
-	logger.Debugf("TransformUsers: Sanitise: IntermediateUser receiver: %+v", u)
-
-	if u.Email == "" {
-		if skipEmptyEmails {
-			logger.Warnf("User %s does not have an email address in the Slack export. Using blank email address due to --skip-empty-emails flag.", u.Username)
-			return
-		}
-
-		if defaultEmailDomain != "" {
-			u.Email = u.Username + "@" + defaultEmailDomain
-			logger.Warnf("User %s does not have an email address in the Slack export. Used %s as a placeholder. The user should update their email address once logged in to the system.", u.Username, u.Email)
-		} else {
-			msg := fmt.Sprintf("User %s does not have an email address in the Slack export. Please provide an email domain through the --default-email-domain flag, to assign this user's email address. Alternatively, use the --skip-empty-emails flag to set the user's email to an empty string.", u.Username)
-			logger.Error(msg)
-			fmt.Println(msg)
-			exitFunc(1)
-		}
-	}
-
-	if utf8.RuneCountInString(u.FirstName) > model.UserFirstNameMaxRunes {
-		logger.Warnf("User %s first name exceeds the maximum length. It will be truncated when imported.", u.Username)
-		u.FirstName = truncateRunes(u.FirstName, model.UserFirstNameMaxRunes)
-	}
-
-	if utf8.RuneCountInString(u.LastName) > model.UserLastNameMaxRunes {
-		logger.Warnf("User %s last name exceeds the maximum length. It will be truncated when imported.", u.Username)
-		u.LastName = truncateRunes(u.LastName, model.UserLastNameMaxRunes)
-	}
-
-	if utf8.RuneCountInString(u.Position) > model.UserPositionMaxRunes {
-		logger.Warnf("User %s position exceeds the maximum length. It will be truncated when imported.", u.Username)
-		u.Position = truncateRunes(u.Position, model.UserPositionMaxRunes)
-	}
-}
-
-type IntermediateReaction struct {
-	User      string `json:"user"`
-	EmojiName string `json:"emoji_name"`
-	CreateAt  int64  `json:"create_at"`
-}
-
-type IntermediatePost struct {
-	User           string                  `json:"user"`
-	Channel        string                  `json:"channel"`
-	Message        string                  `json:"message"`
-	Props          model.StringInterface   `json:"props"`
-	CreateAt       int64                   `json:"create_at"`
-	Type           string                  `json:"type"`
-	Attachments    []string                `json:"attachments"`
-	Replies        []*IntermediatePost     `json:"replies"`
-	Reactions      []*IntermediateReaction `json:"reactions"`
-	IsDirect       bool                    `json:"is_direct"`
-	ChannelMembers []string                `json:"channel_members"`
-}
-
-type Intermediate struct {
-	PublicChannels  []*IntermediateChannel       `json:"public_channels"`
-	PrivateChannels []*IntermediateChannel       `json:"private_channels"`
-	GroupChannels   []*IntermediateChannel       `json:"group_channels"`
-	DirectChannels  []*IntermediateChannel       `json:"direct_channels"`
-	UsersById       map[string]*IntermediateUser `json:"users"`
-	Posts           []*IntermediatePost          `json:"posts"`
+// slackExitFuncTrampoline delegates to the slack-package exitFunc so that test
+// overrides of exitFunc are honoured in Sanitise calls made from this package.
+func slackExitFuncTrampoline(code int) {
+	exitFunc(code)
 }
 
 func (t *Transformer) TransformUsers(users []SlackUser, skipEmptyEmails bool, defaultEmailDomain string) {
@@ -172,25 +80,33 @@ func (t *Transformer) TransformUsers(users []SlackUser, skipEmptyEmails bool, de
 		t.Logger.Debugf("TransformUsers: SlackUser.Profile struct: %+v", user.Profile)
 
 		newUser := &IntermediateUser{
-			Id:        user.Id,
-			Username:  user.Username,
-			FirstName: firstName,
-			LastName:  lastName,
-			Position:  user.Profile.Title,
-			Email:     user.Profile.Email,
-			Password:  model.NewId(),
-			DeleteAt:  deleteAt,
+			Id:          user.Id,
+			Username:    user.Username,
+			FirstName:   firstName,
+			LastName:    lastName,
+			DisplayName: user.Profile.RealName,
+			Position:    user.Profile.Title,
+			Email:       user.Profile.Email,
+			Password:    model.NewId(),
+			DeleteAt:    deleteAt,
 		}
 
 		t.Logger.Debugf("TransformUsers: newUser IntermediateUser struct: %+v", newUser)
 
 		if user.IsBot {
-			newUser.Id = user.Profile.BotID
+			if user.Profile.BotID != "" {
+				newUser.Id = user.Profile.BotID
+			} else {
+				t.Logger.Warnf("Bot user %s has no BotID in profile, falling back to user ID %s", user.Username, user.Id)
+			}
+			newUser.IsBot = true
 		}
 
-		newUser.Sanitise(t.Logger, defaultEmailDomain, skipEmptyEmails)
+		if !newUser.IsBot {
+			newUser.Sanitise(t.Logger, defaultEmailDomain, skipEmptyEmails)
+		}
 		resultUsers[newUser.Id] = newUser
-		t.Logger.Debugf("Slack user with email %s and password %s has been imported.", newUser.Email, newUser.Password)
+		t.Logger.Debugf("Slack user with username %s has been imported.", newUser.Username)
 	}
 
 	t.Intermediate.UsersById = resultUsers
@@ -243,7 +159,7 @@ func (t *Transformer) TransformChannels(channels []SlackChannel) []*Intermediate
 			Type:         channel.Type,
 		}
 
-		newChannel.Sanitise(t.Logger)
+		newChannel.SanitiseWithPrefix(t.Logger, "slack-channel-")
 		resultChannels = append(resultChannels, newChannel)
 	}
 
@@ -254,6 +170,9 @@ func (t *Transformer) PopulateUserMemberships() {
 	t.Logger.Info("Populating user memberships")
 
 	for userId, user := range t.Intermediate.UsersById {
+		if user.IsBot {
+			continue
+		}
 		memberships := []string{}
 		for _, channel := range t.Intermediate.PublicChannels {
 			for _, memberId := range channel.Members {
@@ -368,18 +287,18 @@ func AddPostToThreads(original SlackPost, post *IntermediatePost, threads map[st
 	threads[original.TimeStamp] = post
 }
 
-func buildChannelsByOriginalNameMap(intermediate *Intermediate) map[string]*IntermediateChannel {
+func buildChannelsByOriginalNameMap(inter *Intermediate) map[string]*IntermediateChannel {
 	channelsByName := map[string]*IntermediateChannel{}
-	for _, channel := range intermediate.PublicChannels {
+	for _, channel := range inter.PublicChannels {
 		channelsByName[channel.OriginalName] = channel
 	}
-	for _, channel := range intermediate.PrivateChannels {
+	for _, channel := range inter.PrivateChannels {
 		channelsByName[channel.OriginalName] = channel
 	}
-	for _, channel := range intermediate.GroupChannels {
+	for _, channel := range inter.GroupChannels {
 		channelsByName[channel.OriginalName] = channel
 	}
-	for _, channel := range intermediate.DirectChannels {
+	for _, channel := range inter.DirectChannels {
 		channelsByName[channel.OriginalName] = channel
 	}
 	return channelsByName
@@ -480,6 +399,17 @@ func (t *Transformer) CreateIntermediateUser(userID string) {
 	}
 	t.Intermediate.UsersById[userID] = newUser
 	t.Logger.Warnf("Created a new user because the original user was missing from the import files. user=%s", userID)
+}
+
+func (t *Transformer) CreateIntermediateBotUser(userID string) {
+	newUser := &IntermediateUser{
+		Id:          userID,
+		Username:    strings.ToLower(userID),
+		DisplayName: "Unknown Bot",
+		IsBot:       true,
+	}
+	t.Intermediate.UsersById[userID] = newUser
+	t.Logger.Warnf("Created a new bot user because the original bot was missing from the import files. bot_id=%s", userID)
 }
 
 func (t *Transformer) CreateAndAddPostToThreads(post SlackPost, threads map[string]*IntermediatePost, timestamps map[int64]bool, channel *IntermediateChannel) {
@@ -593,33 +523,9 @@ func (t *Transformer) getReactionsFromPost(post SlackPost) []*IntermediateReacti
 	return reactions
 }
 
-// splitPostIntoThread splits a post's message if it exceeds the maximum rune limit.
-// The first chunk becomes/remains the main post, and additional chunks are added as replies.
-// Reactions and attachments are kept only on the first chunk.
+// splitPostIntoThread delegates to the shared intermediate package implementation.
 func splitPostIntoThread(post *IntermediatePost) {
-	if utf8.RuneCountInString(post.Message) <= model.PostMessageMaxRunesV2 {
-		// No splitting needed
-		return
-	}
-
-	chunks := splitTextIntoChunks(post.Message, model.PostMessageMaxRunesV2)
-
-	// First chunk stays as the main message
-	post.Message = chunks[0]
-
-	// Create replies for the remaining chunks
-	for i, chunk := range chunks[1:] {
-		reply := &IntermediatePost{
-			User:           post.User,
-			Channel:        post.Channel,
-			Message:        chunk,
-			CreateAt:       post.CreateAt + int64(i+1), // Increment timestamp to maintain order
-			IsDirect:       post.IsDirect,
-			ChannelMembers: post.ChannelMembers,
-			// No reactions, attachments, or props for continuation chunks
-		}
-		post.Replies = append(post.Replies, reply)
-	}
+	intermediate.SplitPostIntoThread(post)
 }
 
 func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir string, skipAttachments, discardInvalidProps, allowDownload bool) error {
@@ -645,6 +551,54 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 
 		for _, post := range channelPosts {
 			switch {
+			// bot message (checked first since bots can have any subtype)
+			case post.IsBotMessage():
+				botId := post.BotId
+				if botId == "" {
+					// Some Slack exports have subtype "bot_message" but no BotId.
+					// Fall back to User field, then BotUsername, then generate a placeholder.
+					switch {
+					case post.User != "":
+						botId = post.User
+					case post.BotUsername != "":
+						botId = post.BotUsername
+					default:
+						botId = "unknown-bot-" + post.TimeStamp
+					}
+				}
+
+				author := t.Intermediate.UsersById[botId]
+				if author == nil {
+					t.CreateIntermediateBotUser(botId)
+					author = t.Intermediate.UsersById[botId]
+				}
+
+				newPost := &IntermediatePost{
+					User:      author.Username,
+					Channel:   channel.Name,
+					Message:   post.Text,
+					Reactions: t.getReactionsFromPost(post),
+					CreateAt:  SlackConvertTimeStamp(post.TimeStamp),
+				}
+
+				t.AddFilesToPost(&post, skipAttachments, slackExport, attachmentsDir, newPost, allowDownload)
+
+				if len(post.Attachments) > 0 {
+					props, propsB := t.AddAttachmentsToPost(&post, newPost)
+					if utf8.RuneCount(propsB) <= model.PostPropsMaxRunes {
+						newPost.Props = props
+					} else {
+						if discardInvalidProps {
+							t.Logger.Warn("Unable to import the post as props exceed the maximum character count. Skipping as --discard-invalid-props is enabled.")
+							continue
+						} else {
+							t.Logger.Warn("Unable to add the props to post as they exceed the maximum character count.")
+						}
+					}
+				}
+
+				AddPostToThreads(post, newPost, threads, channel, timestamps)
+
 			// plain message that can have files attached
 			case post.IsPlainMessage():
 				if post.User == "" {
@@ -702,48 +656,6 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 					Message:   post.Comment.Comment,
 					Reactions: t.getReactionsFromPost(post),
 					CreateAt:  SlackConvertTimeStamp(post.TimeStamp),
-				}
-
-				AddPostToThreads(post, newPost, threads, channel, timestamps)
-
-			// bot message
-			case post.IsBotMessage():
-				if post.BotId == "" {
-					if post.User == "" {
-						t.Logger.Warn("Unable to import the message as the user field is missing.")
-						continue
-					}
-					post.BotId = post.User
-				}
-
-				author := t.Intermediate.UsersById[post.BotId]
-				if author == nil {
-					t.CreateIntermediateUser(post.BotId)
-					author = t.Intermediate.UsersById[post.BotId]
-				}
-
-				newPost := &IntermediatePost{
-					User:      author.Username,
-					Channel:   channel.Name,
-					Message:   post.Text,
-					Reactions: t.getReactionsFromPost(post),
-					CreateAt:  SlackConvertTimeStamp(post.TimeStamp),
-				}
-
-				t.AddFilesToPost(&post, skipAttachments, slackExport, attachmentsDir, newPost, allowDownload)
-
-				if len(post.Attachments) > 0 {
-					props, propsB := t.AddAttachmentsToPost(&post, newPost)
-					if utf8.RuneCount(propsB) <= model.PostPropsMaxRunes {
-						newPost.Props = props
-					} else {
-						if discardInvalidProps {
-							t.Logger.Warn("Unable to import the post as props exceed the maximum character count. Skipping as --discard-invalid-props is enabled.")
-							continue
-						} else {
-							t.Logger.Warn("Unable to add the props to post as they exceed the maximum character count.")
-						}
-					}
 				}
 
 				AddPostToThreads(post, newPost, threads, channel, timestamps)
@@ -833,59 +745,9 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 			// Split the post if it exceeds the maximum rune limit
 			splitPostIntoThread(post)
 
-			// Also split any existing replies that exceed the limit
-			// We need to iterate carefully because we'll be modifying the replies slice
-			originalReplies := post.Replies
-			post.Replies = []*IntermediatePost{}
-
-			// Build a set of used timestamps from existing replies to avoid duplicates
-			usedTimestamps := make(map[int64]bool)
-			for _, reply := range originalReplies {
-				usedTimestamps[reply.CreateAt] = true
-			}
-
-			for _, reply := range originalReplies {
-				if utf8.RuneCountInString(reply.Message) <= model.PostMessageMaxRunesV2 {
-					// Reply doesn't need splitting, keep as-is
-					post.Replies = append(post.Replies, reply)
-					continue
-				}
-
-				// Reply needs splitting - add all chunks as siblings
-				chunks := splitTextIntoChunks(reply.Message, model.PostMessageMaxRunesV2)
-
-				// First chunk: update the original reply
-				reply.Message = chunks[0]
-				post.Replies = append(post.Replies, reply)
-
-				// Remaining chunks: create new sibling replies
-				for i, chunk := range chunks[1:] {
-					// Find a unique timestamp by incrementing until we find one not in use
-					timestamp := reply.CreateAt + int64(i+1)
-					for usedTimestamps[timestamp] {
-						timestamp++
-					}
-					usedTimestamps[timestamp] = true
-
-					continuationReply := &IntermediatePost{
-						User:           reply.User,
-						Channel:        reply.Channel,
-						Message:        chunk,
-						CreateAt:       timestamp,
-						IsDirect:       reply.IsDirect,
-						ChannelMembers: reply.ChannelMembers,
-						// No reactions, attachments, or props for continuation chunks
-					}
-					post.Replies = append(post.Replies, continuationReply)
-				}
-			}
-
-			// Sort replies by CreateAt to ensure proper ordering
-			// This is important because split chunks may have timestamps that need to be
-			// interleaved with other replies
-			sort.Slice(post.Replies, func(i, j int) bool {
-				return post.Replies[i].CreateAt < post.Replies[j].CreateAt
-			})
+			// Also split any existing replies that exceed the limit,
+			// deduplicate timestamps, and sort by CreateAt.
+			intermediate.SplitOversizedReplies(post)
 
 			channelPosts = append(channelPosts, post)
 		}

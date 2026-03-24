@@ -54,7 +54,7 @@ func TestIntermediateChannelSanitise(t *testing.T) {
 			DisplayName: "-_---_--b----",
 		}
 
-		channel.Sanitise(log.New())
+		channel.SanitiseWithPrefix(log.New(), "slack-channel-")
 
 		assert.Equal(t, "slack-channel-a", channel.Name)
 		assert.Equal(t, "slack-channel-b", channel.DisplayName)
@@ -931,6 +931,304 @@ func TestAddPostToThreads(t *testing.T) {
 				require.EqualValues(t, tc.ExpectedTimestamps, tc.Timestamps)
 			})
 		}
+	})
+}
+
+func TestTransformBotUsers(t *testing.T) {
+	t.Run("Bot users should have IsBot and DisplayName set", func(t *testing.T) {
+		slackTransformer := NewTransformer("test", log.New())
+		users := []SlackUser{
+			{
+				Id:       "U001",
+				Username: "regularuser",
+				Profile: SlackProfile{
+					RealName: "Regular User",
+					Title:    "Engineer",
+					Email:    "regular@example.com",
+				},
+			},
+			{
+				Id:       "U002",
+				Username: "mybot",
+				IsBot:    true,
+				Profile: SlackProfile{
+					BotID:    "B001",
+					RealName: "My Bot",
+					Title:    "Bot Description",
+				},
+			},
+		}
+
+		slackTransformer.TransformUsers(users, false, "")
+
+		// Regular user
+		regularUser := slackTransformer.Intermediate.UsersById["U001"]
+		require.NotNil(t, regularUser)
+		assert.False(t, regularUser.IsBot)
+		assert.Equal(t, "Regular", regularUser.FirstName)
+		assert.Equal(t, "User", regularUser.LastName)
+
+		// Bot user - stored by BotID
+		botUser := slackTransformer.Intermediate.UsersById["B001"]
+		require.NotNil(t, botUser)
+		assert.True(t, botUser.IsBot)
+		assert.Equal(t, "My Bot", botUser.DisplayName)
+		assert.Equal(t, "B001", botUser.Id)
+		assert.Equal(t, "mybot", botUser.Username)
+	})
+
+	t.Run("Bot users should not go through Sanitise", func(t *testing.T) {
+		slackTransformer := NewTransformer("test", log.New())
+		users := []SlackUser{
+			{
+				Id:       "U002",
+				Username: "mybot",
+				IsBot:    true,
+				Profile: SlackProfile{
+					BotID:    "B001",
+					RealName: "My Bot",
+					// No email - bots don't have emails
+				},
+			},
+		}
+
+		// This should NOT panic or exit even though the bot has no email
+		// and no --default-email-domain or --skip-empty-emails is set
+		slackTransformer.TransformUsers(users, false, "")
+
+		botUser := slackTransformer.Intermediate.UsersById["B001"]
+		require.NotNil(t, botUser)
+		assert.True(t, botUser.IsBot)
+		assert.Equal(t, "", botUser.Email) // No email for bots is fine
+	})
+
+	t.Run("Deleted bot users should have DeleteAt set", func(t *testing.T) {
+		slackTransformer := NewTransformer("test", log.New())
+		users := []SlackUser{
+			{
+				Id:       "U002",
+				Username: "deletedbot",
+				IsBot:    true,
+				Deleted:  true,
+				Profile: SlackProfile{
+					BotID:    "B002",
+					RealName: "Deleted Bot",
+				},
+			},
+		}
+
+		slackTransformer.TransformUsers(users, false, "")
+
+		botUser := slackTransformer.Intermediate.UsersById["B002"]
+		require.NotNil(t, botUser)
+		assert.True(t, botUser.IsBot)
+		assert.NotZero(t, botUser.DeleteAt)
+	})
+
+	t.Run("Bot with empty BotID falls back to user ID", func(t *testing.T) {
+		slackTransformer := NewTransformer("test", log.New())
+		users := []SlackUser{
+			{
+				Id:       "U003",
+				Username: "emptyidbot",
+				IsBot:    true,
+				Profile: SlackProfile{
+					BotID:    "",
+					RealName: "Empty ID Bot",
+				},
+			},
+		}
+
+		slackTransformer.TransformUsers(users, false, "")
+
+		// Should be stored under user ID, not empty string
+		botUser := slackTransformer.Intermediate.UsersById["U003"]
+		require.NotNil(t, botUser)
+		assert.True(t, botUser.IsBot)
+		assert.Equal(t, "U003", botUser.Id)
+		assert.Equal(t, "Empty ID Bot", botUser.DisplayName)
+
+		// Ensure no entry at the empty-string key
+		_, exists := slackTransformer.Intermediate.UsersById[""]
+		assert.False(t, exists, "should not have an entry with empty string key")
+	})
+}
+
+func TestCreateIntermediateBotUser(t *testing.T) {
+	slackTransformer := NewTransformer("test", log.New())
+	slackTransformer.Intermediate.UsersById = map[string]*IntermediateUser{}
+
+	slackTransformer.CreateIntermediateBotUser("B999")
+
+	botUser := slackTransformer.Intermediate.UsersById["B999"]
+	require.NotNil(t, botUser)
+	assert.Equal(t, "B999", botUser.Id)
+	assert.Equal(t, "b999", botUser.Username)
+	assert.Equal(t, "Unknown Bot", botUser.DisplayName)
+	assert.True(t, botUser.IsBot)
+	assert.Empty(t, botUser.Email)
+	assert.Empty(t, botUser.Password)
+}
+
+func TestPopulateUserMembershipsSkipsBots(t *testing.T) {
+	slackTransformer := NewTransformer("test", log.New())
+
+	slackTransformer.Intermediate = &Intermediate{
+		UsersById: map[string]*IntermediateUser{
+			"id1": {Username: "user1"},
+			"B01": {Username: "bot1", IsBot: true},
+		},
+		PublicChannels: []*IntermediateChannel{
+			{
+				Name:    "c1",
+				Members: []string{"id1", "B01"},
+			},
+		},
+	}
+
+	slackTransformer.PopulateUserMemberships()
+
+	assert.Equal(t, []string{"c1"}, slackTransformer.Intermediate.UsersById["id1"].Memberships)
+	assert.Nil(t, slackTransformer.Intermediate.UsersById["B01"].Memberships)
+}
+
+func TestTransformPostsBotMessages(t *testing.T) {
+	t.Run("Bot messages from missing bots create bot placeholder users", func(t *testing.T) {
+		slackTransformer := NewTransformer("test", log.New())
+		slackTransformer.Intermediate.UsersById = map[string]*IntermediateUser{
+			"m1": {Username: "m1"},
+		}
+		slackTransformer.Intermediate.PublicChannels = []*IntermediateChannel{
+			{
+				Name:         "channel1",
+				OriginalName: "channel1",
+			},
+		}
+
+		slackExport := &SlackExport{
+			Posts: map[string][]SlackPost{
+				"channel1": {
+					{
+						BotId:     "BUNKNOWN",
+						Text:      "bot message",
+						TimeStamp: "1695219818.000100",
+						SubType:   "bot_message",
+						Type:      "message",
+					},
+				},
+			},
+		}
+
+		err := slackTransformer.TransformPosts(slackExport, "", false, false, false)
+		require.NoError(t, err)
+
+		// Verify the placeholder bot user was created
+		botUser := slackTransformer.Intermediate.UsersById["BUNKNOWN"]
+		require.NotNil(t, botUser)
+		assert.True(t, botUser.IsBot)
+		assert.Equal(t, "Unknown Bot", botUser.DisplayName)
+	})
+
+	t.Run("Bot messages with empty BotId and subtype bot_message are imported", func(t *testing.T) {
+		slackTransformer := NewTransformer("test", log.New())
+		slackTransformer.Intermediate.UsersById = map[string]*IntermediateUser{}
+		slackTransformer.Intermediate.PublicChannels = []*IntermediateChannel{
+			{
+				Name:         "channel1",
+				OriginalName: "channel1",
+			},
+		}
+
+		slackExport := &SlackExport{
+			Posts: map[string][]SlackPost{
+				"channel1": {
+					{
+						User:      "UBOT1",
+						Text:      "bot message no bot_id",
+						TimeStamp: "1695219818.000200",
+						SubType:   "bot_message",
+						Type:      "message",
+					},
+				},
+			},
+		}
+
+		err := slackTransformer.TransformPosts(slackExport, "", false, false, false)
+		require.NoError(t, err)
+
+		// Falls back to User field when BotId is empty
+		botUser := slackTransformer.Intermediate.UsersById["UBOT1"]
+		require.NotNil(t, botUser)
+		assert.True(t, botUser.IsBot)
+		require.Len(t, slackTransformer.Intermediate.Posts, 1)
+		assert.Equal(t, "bot message no bot_id", slackTransformer.Intermediate.Posts[0].Message)
+	})
+
+	t.Run("Bot messages with empty BotId and User falls back to BotUsername", func(t *testing.T) {
+		slackTransformer := NewTransformer("test", log.New())
+		slackTransformer.Intermediate.UsersById = map[string]*IntermediateUser{}
+		slackTransformer.Intermediate.PublicChannels = []*IntermediateChannel{
+			{
+				Name:         "channel1",
+				OriginalName: "channel1",
+			},
+		}
+
+		slackExport := &SlackExport{
+			Posts: map[string][]SlackPost{
+				"channel1": {
+					{
+						BotUsername: "mywebhook",
+						Text:        "webhook message",
+						TimeStamp:   "1695219818.000300",
+						SubType:     "bot_message",
+						Type:        "message",
+					},
+				},
+			},
+		}
+
+		err := slackTransformer.TransformPosts(slackExport, "", false, false, false)
+		require.NoError(t, err)
+
+		botUser := slackTransformer.Intermediate.UsersById["mywebhook"]
+		require.NotNil(t, botUser)
+		assert.True(t, botUser.IsBot)
+		require.Len(t, slackTransformer.Intermediate.Posts, 1)
+		assert.Equal(t, "webhook message", slackTransformer.Intermediate.Posts[0].Message)
+	})
+
+	t.Run("Bot messages with no identifiers uses timestamp fallback", func(t *testing.T) {
+		slackTransformer := NewTransformer("test", log.New())
+		slackTransformer.Intermediate.UsersById = map[string]*IntermediateUser{}
+		slackTransformer.Intermediate.PublicChannels = []*IntermediateChannel{
+			{
+				Name:         "channel1",
+				OriginalName: "channel1",
+			},
+		}
+
+		slackExport := &SlackExport{
+			Posts: map[string][]SlackPost{
+				"channel1": {
+					{
+						Text:      "orphan bot message",
+						TimeStamp: "1695219818.000400",
+						SubType:   "bot_message",
+						Type:      "message",
+					},
+				},
+			},
+		}
+
+		err := slackTransformer.TransformPosts(slackExport, "", false, false, false)
+		require.NoError(t, err)
+
+		botUser := slackTransformer.Intermediate.UsersById["unknown-bot-1695219818.000400"]
+		require.NotNil(t, botUser)
+		assert.True(t, botUser.IsBot)
+		require.Len(t, slackTransformer.Intermediate.Posts, 1)
+		assert.Equal(t, "orphan bot message", slackTransformer.Intermediate.Posts[0].Message)
 	})
 }
 
