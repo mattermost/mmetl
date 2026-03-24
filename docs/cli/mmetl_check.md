@@ -21,5 +21,6 @@ Checks the integrity and entities of export files from different providers.
 ### SEE ALSO
 
 * [mmetl](mmetl.md)	 - ETL tool to transform the export files from different providers to be compatible with Mattermost.
+* [mmetl check rocketchat](mmetl_check_rocketchat.md)	 - Checks the integrity of a Rocket.Chat mongodump export.
 * [mmetl check slack](mmetl_check_slack.md)	 - Checks the integrity of a Slack export.
 
