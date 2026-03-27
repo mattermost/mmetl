@@ -13,6 +13,35 @@ import (
 	"github.com/pkg/errors"
 )
 
+var (
+	slackUserMentionRe    = regexp.MustCompile(`<@(U[A-Z0-9]+)(?:\|[^>]*)?>`)
+	slackChannelMentionRe = regexp.MustCompile(`<#(C[A-Z0-9]+)(?:\|[^>]*)?>`)
+)
+
+// replaceMentions replaces Slack mention patterns in text using a single regex
+// and a lookup map, instead of compiling one regex per entity.
+func replaceMentions(text string, re *regexp.Regexp, prefixLen int, lookup map[string]string) string {
+	return re.ReplaceAllStringFunc(text, func(match string) string {
+		inner := match[prefixLen : len(match)-1] // strip prefix (<@ or <#) and closing >
+		id := inner
+		if pipeIdx := strings.IndexByte(inner, '|'); pipeIdx >= 0 {
+			id = inner[:pipeIdx]
+		}
+		if replacement, ok := lookup[id]; ok {
+			return replacement
+		}
+		return match
+	})
+}
+
+func replaceUserMentionsInText(text string, lookup map[string]string) string {
+	text = strings.ReplaceAll(text, "<!here>", "@here")
+	text = strings.ReplaceAll(text, "<@here>", "@here")
+	text = strings.ReplaceAll(text, "<!channel>", "@channel")
+	text = strings.ReplaceAll(text, "<!everyone>", "@all")
+	return replaceMentions(text, slackUserMentionRe, 2, lookup)
+}
+
 func (t *Transformer) SlackParseUsers(data io.Reader) ([]SlackUser, error) {
 	decoder := json.NewDecoder(data)
 
@@ -57,32 +86,20 @@ func (t *Transformer) SlackParsePosts(data io.Reader) ([]SlackPost, error) {
 }
 
 func (t *Transformer) SlackConvertUserMentions(users []SlackUser, posts map[string][]SlackPost) map[string][]SlackPost {
-	var regexes = make(map[string]*regexp.Regexp, len(users))
+	userLookup := make(map[string]string, len(users))
 	for _, user := range users {
-		r, err := regexp.Compile("<@" + user.Id + `(\|` + user.Username + ")?>")
-		if err != nil {
-			t.Logger.Infof("Slack Import: Unable to compile the @mention, matching regular expression for the Slack user. username=%s user_id=%s", user.Username, user.Id)
-			continue
-		}
-		regexes["@"+user.Username] = r
+		userLookup[user.Id] = "@" + user.Username
 	}
-
-	// Special cases.
-	regexes["@here"], _ = regexp.Compile("<(!|@)here>")
-	regexes["@channel"], _ = regexp.Compile("<!channel>")
-	regexes["@all"], _ = regexp.Compile("<!everyone>")
 
 	convertCount := 0
 	for channelName, channelPosts := range posts {
 		convertCount++
 		t.Logger.Debugf("Slack Import: converting user mentions for channel %s. %v of %v", channelName, convertCount, len(posts))
 		for postIdx := range channelPosts {
-			for mention, r := range regexes {
-				channelPosts[postIdx].Text = r.ReplaceAllString(channelPosts[postIdx].Text, mention)
+			channelPosts[postIdx].Text = replaceUserMentionsInText(channelPosts[postIdx].Text, userLookup)
 
-				for _, attachment := range channelPosts[postIdx].Attachments {
-					attachment.Fallback = r.ReplaceAllString(attachment.Fallback, mention)
-				}
+			for _, attachment := range channelPosts[postIdx].Attachments {
+				attachment.Fallback = replaceUserMentionsInText(attachment.Fallback, userLookup)
 			}
 		}
 	}
@@ -92,14 +109,9 @@ func (t *Transformer) SlackConvertUserMentions(users []SlackUser, posts map[stri
 }
 
 func (t *Transformer) SlackConvertChannelMentions(channels []SlackChannel, posts map[string][]SlackPost) map[string][]SlackPost {
-	var regexes = make(map[string]*regexp.Regexp, len(channels))
+	channelLookup := make(map[string]string, len(channels))
 	for _, channel := range channels {
-		r, err := regexp.Compile("<#" + channel.Id + `(\|` + channel.Name + ")?>")
-		if err != nil {
-			t.Logger.Infof("Slack Import: Unable to compile the !channel, matching regular expression for the Slack channel. channel_id=%s channel_name=%s", channel.Id, channel.Name)
-			continue
-		}
-		regexes["~"+channel.Name] = r
+		channelLookup[channel.Id] = "~" + channel.Name
 	}
 
 	convertCount := 0
@@ -107,12 +119,10 @@ func (t *Transformer) SlackConvertChannelMentions(channels []SlackChannel, posts
 		convertCount++
 		t.Logger.Debugf("Slack Import: converting channel mentions for channel %s. %v of %v", channelName, convertCount, len(posts))
 		for postIdx := range channelPosts {
-			for channelReplace, r := range regexes {
-				channelPosts[postIdx].Text = r.ReplaceAllString(channelPosts[postIdx].Text, channelReplace)
+			channelPosts[postIdx].Text = replaceMentions(channelPosts[postIdx].Text, slackChannelMentionRe, 2, channelLookup)
 
-				for _, attachment := range channelPosts[postIdx].Attachments {
-					attachment.Fallback = r.ReplaceAllString(attachment.Fallback, channelReplace)
-				}
+			for _, attachment := range channelPosts[postIdx].Attachments {
+				attachment.Fallback = replaceMentions(attachment.Fallback, slackChannelMentionRe, 2, channelLookup)
 			}
 		}
 	}
