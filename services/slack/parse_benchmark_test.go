@@ -42,7 +42,10 @@ func generatePosts(numChannels, postsPerChannel, numUsers int) (map[string][]Sla
 		channelName := fmt.Sprintf("channel-%d", ch)
 		channelPosts := make([]SlackPost, postsPerChannel)
 		for p := range postsPerChannel {
-			text := fmt.Sprintf("Hello <@U%06d> and <@U%06d>, check <!here> and <!channel>", p%numUsers, (p+1)%numUsers)
+			text := fmt.Sprintf(
+				"Hello <@U%06d> and <@U%06d>, check <!here> and <!channel>, also see <#C%06d|channel-%d>",
+				p%numUsers, (p+1)%numUsers, p%numChannels, p%numChannels,
+			)
 			channelPosts[p] = SlackPost{
 				User:      fmt.Sprintf("U%06d", p%numUsers),
 				Text:      text,

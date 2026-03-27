@@ -15,7 +15,7 @@ import (
 
 var (
 	slackUserMentionRe    = regexp.MustCompile(`<@(U[A-Z0-9]+)(?:\|[^>]*)?>`)
-	slackChannelMentionRe = regexp.MustCompile(`<#(C[A-Z0-9]+)(?:\|[^>]*)?>`)
+	slackChannelMentionRe = regexp.MustCompile(`<#([CG][A-Z0-9]+)(?:\|[^>]*)?>`)
 )
 
 // replaceMentions replaces Slack mention patterns in text using a single regex
