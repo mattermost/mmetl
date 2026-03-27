@@ -152,6 +152,7 @@ func BenchmarkTransformPipeline(b *testing.B) {
 				// Disable GC during transform so we measure true peak coexistence
 				// of SlackExport + Intermediate, not a mid-transform collection.
 				prevGC := debug.SetGCPercent(-1)
+				defer debug.SetGCPercent(prevGC)
 
 				b.StartTimer()
 
