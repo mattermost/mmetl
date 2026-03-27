@@ -106,28 +106,6 @@ func generateBenchmarkData(numChannels, postsPerChannel int) (*SlackExport, *Tra
 	return slackExport, transformer
 }
 
-// deepCopySlackExport creates an independent copy of SlackExport.Posts so each
-// benchmark iteration starts with a fresh map (since the optimization mutates it).
-func deepCopySlackExport(src *SlackExport) *SlackExport {
-	dst := &SlackExport{
-		Posts: make(map[string][]SlackPost, len(src.Posts)),
-	}
-	for ch, posts := range src.Posts {
-		copied := make([]SlackPost, len(posts))
-		copy(copied, posts)
-		dst.Posts[ch] = copied
-	}
-	return dst
-}
-
-// resetTransformer resets the transformer's accumulated posts/channels so each
-// benchmark iteration starts clean without reallocating the entire transformer.
-func resetTransformer(t *Transformer) {
-	t.Intermediate.Posts = nil
-	t.Intermediate.GroupChannels = nil
-	t.Intermediate.DirectChannels = nil
-}
-
 // BenchmarkTransformPipeline replicates the real application flow:
 //
 //	Parse (all data in memory) → Transform → [measure here] → Export
