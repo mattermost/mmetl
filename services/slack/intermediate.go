@@ -920,9 +920,11 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 			channelPosts = append(channelPosts, post)
 		}
 		resultPosts = append(resultPosts, channelPosts...)
+		delete(slackExport.Posts, originalChannelName)
 	}
 
 	t.Intermediate.Posts = resultPosts
+	slackExport.Posts = nil
 	t.Intermediate.GroupChannels = append(t.Intermediate.GroupChannels, newGroupChannels...)
 	t.Intermediate.DirectChannels = append(t.Intermediate.DirectChannels, newDirectChannels...)
 
