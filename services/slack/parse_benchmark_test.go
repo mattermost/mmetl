@@ -91,6 +91,25 @@ func BenchmarkSlackParseUsers(b *testing.B) {
 	}
 }
 
+func deepCopyPosts(templatePosts map[string][]SlackPost) map[string][]SlackPost {
+	posts := make(map[string][]SlackPost, len(templatePosts))
+	for k, v := range templatePosts {
+		cp := make([]SlackPost, len(v))
+		for i, post := range v {
+			cp[i] = post
+			if len(post.Attachments) > 0 {
+				cp[i].Attachments = make([]*model.SlackAttachment, len(post.Attachments))
+				for j, att := range post.Attachments {
+					attCopy := *att
+					cp[i].Attachments[j] = &attCopy
+				}
+			}
+		}
+		posts[k] = cp
+	}
+	return posts
+}
+
 func BenchmarkSlackConvertUserMentions(b *testing.B) {
 	for _, size := range []struct {
 		channels, posts, users int
@@ -103,19 +122,12 @@ func BenchmarkSlackConvertUserMentions(b *testing.B) {
 			logger.SetLevel(logrus.WarnLevel)
 			transformer := NewTransformer("test", logger)
 
-			// Generate fresh data for each benchmark iteration since the function mutates posts
 			templatePosts, users := generatePosts(size.channels, size.posts/size.channels, size.users)
 
 			b.ReportAllocs()
 			b.ResetTimer()
 			for range b.N {
-				// Deep copy posts for each iteration
-				posts := make(map[string][]SlackPost, len(templatePosts))
-				for k, v := range templatePosts {
-					cp := make([]SlackPost, len(v))
-					copy(cp, v)
-					posts[k] = cp
-				}
+				posts := deepCopyPosts(templatePosts)
 				transformer.SlackConvertUserMentions(users, posts)
 			}
 		})
@@ -140,12 +152,7 @@ func BenchmarkSlackConvertChannelMentions(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for range b.N {
-				posts := make(map[string][]SlackPost, len(templatePosts))
-				for k, v := range templatePosts {
-					cp := make([]SlackPost, len(v))
-					copy(cp, v)
-					posts[k] = cp
-				}
+				posts := deepCopyPosts(templatePosts)
 				transformer.SlackConvertChannelMentions(channels, posts)
 			}
 		})
