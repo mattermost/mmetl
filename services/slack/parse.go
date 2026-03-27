@@ -14,37 +14,17 @@ import (
 )
 
 func (t *Transformer) SlackParseUsers(data io.Reader) ([]SlackUser, error) {
+	decoder := json.NewDecoder(data)
+
 	var users []SlackUser
-
-	b, err := io.ReadAll(data)
-	if err != nil {
-		return users, err
-	}
-
-	t.Logger.Debugf("SlackParseUsers: Raw json input data: %s", string(b))
-
-	err = json.Unmarshal(b, &users)
-	if err != nil {
+	if err := decoder.Decode(&users); err != nil {
 		t.Logger.Warnf("Slack Import: Error occurred when parsing some Slack users. Import may work anyway. err=%v", err)
-
-		// This returns errors that are ignored
 		return users, err
 	}
 
-	usersAsMaps := []map[string]any{}
-	_ = json.Unmarshal(b, &usersAsMaps)
-
-	for i, u := range users {
+	for _, u := range users {
 		t.Logger.Debugf("SlackParseUsers: Parsed user struct data %+v", u)
-		t.Logger.Debugf("SlackParseUsers: Parsed user data as map %+v", usersAsMaps[i])
 	}
-
-	b, err = json.Marshal(users)
-	if err != nil {
-		return users, err
-	}
-
-	t.Logger.Debugf("SlackParseUsers: Marshalled users struct data: %s", string(b))
 
 	return users, nil
 }
@@ -96,15 +76,12 @@ func (t *Transformer) SlackConvertUserMentions(users []SlackUser, posts map[stri
 	for channelName, channelPosts := range posts {
 		convertCount++
 		t.Logger.Debugf("Slack Import: converting user mentions for channel %s. %v of %v", channelName, convertCount, len(posts))
-		for postIdx, post := range channelPosts {
+		for postIdx := range channelPosts {
 			for mention, r := range regexes {
-				post.Text = r.ReplaceAllString(post.Text, mention)
-				posts[channelName][postIdx] = post
+				channelPosts[postIdx].Text = r.ReplaceAllString(channelPosts[postIdx].Text, mention)
 
-				if post.Attachments != nil {
-					for _, attachment := range post.Attachments {
-						attachment.Fallback = r.ReplaceAllString(attachment.Fallback, mention)
-					}
+				for _, attachment := range channelPosts[postIdx].Attachments {
+					attachment.Fallback = r.ReplaceAllString(attachment.Fallback, mention)
 				}
 			}
 		}
@@ -129,15 +106,12 @@ func (t *Transformer) SlackConvertChannelMentions(channels []SlackChannel, posts
 	for channelName, channelPosts := range posts {
 		convertCount++
 		t.Logger.Debugf("Slack Import: converting channel mentions for channel %s. %v of %v", channelName, convertCount, len(posts))
-		for postIdx, post := range channelPosts {
+		for postIdx := range channelPosts {
 			for channelReplace, r := range regexes {
-				post.Text = r.ReplaceAllString(post.Text, channelReplace)
-				posts[channelName][postIdx] = post
+				channelPosts[postIdx].Text = r.ReplaceAllString(channelPosts[postIdx].Text, channelReplace)
 
-				if post.Attachments != nil {
-					for _, attachment := range post.Attachments {
-						attachment.Fallback = r.ReplaceAllString(attachment.Fallback, channelReplace)
-					}
+				for _, attachment := range channelPosts[postIdx].Attachments {
+					attachment.Fallback = r.ReplaceAllString(attachment.Fallback, channelReplace)
 				}
 			}
 		}
@@ -238,16 +212,12 @@ func (t *Transformer) ParseSlackExportFile(zipReader *zip.Reader, skipConvertPos
 			switch file.Name {
 			case "channels.json":
 				slackExport.PublicChannels, _ = t.SlackParseChannels(reader, model.ChannelTypeOpen)
-				slackExport.Channels = append(slackExport.Channels, slackExport.PublicChannels...)
 			case "dms.json":
 				slackExport.DirectChannels, _ = t.SlackParseChannels(reader, model.ChannelTypeDirect)
-				slackExport.Channels = append(slackExport.Channels, slackExport.DirectChannels...)
 			case "groups.json":
 				slackExport.PrivateChannels, _ = t.SlackParseChannels(reader, model.ChannelTypePrivate)
-				slackExport.Channels = append(slackExport.Channels, slackExport.PrivateChannels...)
 			case "mpims.json":
 				slackExport.GroupChannels, _ = t.SlackParseChannels(reader, model.ChannelTypeGroup)
-				slackExport.Channels = append(slackExport.Channels, slackExport.GroupChannels...)
 			case "users.json":
 				usersJSONFileName := os.Getenv("USERS_JSON_FILE")
 				if usersJSONFileName != "" {
@@ -288,7 +258,7 @@ func (t *Transformer) ParseSlackExportFile(zipReader *zip.Reader, skipConvertPos
 		t.Logger.Info("Converting post mentions and markup")
 		start := time.Now()
 		slackExport.Posts = t.SlackConvertUserMentions(slackExport.Users, slackExport.Posts)
-		slackExport.Posts = t.SlackConvertChannelMentions(slackExport.Channels, slackExport.Posts)
+		slackExport.Posts = t.SlackConvertChannelMentions(slackExport.AllChannels(), slackExport.Posts)
 		slackExport.Posts = t.SlackConvertPostsMarkup(slackExport.Posts)
 		elapsed := time.Since(start)
 		t.Logger.Debugf("Converting mentions finished (%s)", elapsed)

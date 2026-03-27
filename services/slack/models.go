@@ -145,7 +145,6 @@ type SlackComment struct {
 // SlackExport represents the complete Slack export data
 type SlackExport struct {
 	TeamName        string
-	Channels        []SlackChannel
 	PublicChannels  []SlackChannel
 	PrivateChannels []SlackChannel
 	GroupChannels   []SlackChannel
@@ -153,4 +152,15 @@ type SlackExport struct {
 	Users           []SlackUser
 	Posts           map[string][]SlackPost
 	Uploads         map[string]*zip.File
+}
+
+// AllChannels returns all channels from all types combined.
+func (e *SlackExport) AllChannels() []SlackChannel {
+	total := len(e.PublicChannels) + len(e.PrivateChannels) + len(e.GroupChannels) + len(e.DirectChannels)
+	all := make([]SlackChannel, 0, total)
+	all = append(all, e.PublicChannels...)
+	all = append(all, e.PrivateChannels...)
+	all = append(all, e.GroupChannels...)
+	all = append(all, e.DirectChannels...)
+	return all
 }
