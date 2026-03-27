@@ -1734,4 +1734,46 @@ func TestTransformPosts(t *testing.T) {
 		// All replies should be ordered by their CreateAt values
 		// This test ensures that sorting works correctly even with split chunks
 	})
+
+	t.Run("posts for unknown channels are skipped and memory is freed", func(t *testing.T) {
+		slackTransformer := NewTransformer("test", log.New())
+		slackTransformer.Intermediate.UsersById = map[string]*IntermediateUser{"m1": {Username: "m1"}}
+		slackTransformer.Intermediate.PublicChannels = []*IntermediateChannel{
+			{
+				Name:         "known-channel",
+				OriginalName: "known-channel",
+			},
+		}
+
+		slackExport := &SlackExport{
+			Posts: map[string][]SlackPost{
+				"known-channel": {
+					{
+						User:      "m1",
+						Text:      "hello from known channel",
+						TimeStamp: "1695219818.000100",
+						Type:      "message",
+					},
+				},
+				"unknown-channel": {
+					{
+						User:      "m1",
+						Text:      "hello from unknown channel",
+						TimeStamp: "1695219818.000200",
+						Type:      "message",
+					},
+				},
+			},
+		}
+
+		err := slackTransformer.TransformPosts(slackExport, "", false, false, false)
+		require.NoError(t, err)
+
+		// Only the known channel's post should be transformed
+		require.Equal(t, 1, len(slackTransformer.Intermediate.Posts))
+		assert.Equal(t, "hello from known channel", slackTransformer.Intermediate.Posts[0].Message)
+
+		// Both entries should be cleaned up from slackExport.Posts
+		assert.Nil(t, slackExport.Posts, "slackExport.Posts should be nil after TransformPosts")
+	})
 }

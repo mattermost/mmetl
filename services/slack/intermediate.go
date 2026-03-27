@@ -658,6 +658,7 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 		channel, ok := channelsByOriginalName[originalChannelName]
 		if !ok {
 			t.Logger.Warnf("--- Couldn't find channel %s referenced by posts", originalChannelName)
+			delete(slackExport.Posts, originalChannelName)
 			continue
 		}
 
