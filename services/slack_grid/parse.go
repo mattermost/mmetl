@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/mattermost/mattermost/server/public/model"
+	"github.com/mattermost/mmetl/services/intermediate"
 	"github.com/mattermost/mmetl/services/slack"
 	"github.com/pkg/errors"
 
@@ -76,8 +77,10 @@ type ChannelsToMove struct {
 func NewGridTransformer(logger log.FieldLogger) *GridTransformer {
 	return &GridTransformer{
 		Transformer: slack.Transformer{
-			Intermediate: &slack.Intermediate{},
-			Logger:       logger,
+			Exporter: intermediate.Exporter{
+				Intermediate: &slack.Intermediate{},
+				Logger:       logger,
+			},
 		},
 	}
 }

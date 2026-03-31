@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/mattermost/mattermost/server/public/model"
+	"github.com/mattermost/mmetl/services/intermediate"
 	"github.com/mattermost/mmetl/services/slack"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
@@ -394,8 +395,10 @@ func TestSlackExportBuilderCanBeParsedByTransformer(t *testing.T) {
 		require.NoError(t, err)
 
 		transformer := &slack.Transformer{
-			TeamName: "testteam",
-			Logger:   logger,
+			Exporter: intermediate.Exporter{
+				TeamName: "testteam",
+				Logger:   logger,
+			},
 		}
 
 		export, err := transformer.ParseSlackExportFile(reader, true)
@@ -433,8 +436,10 @@ func TestSlackExportBuilderCanBeParsedByTransformer(t *testing.T) {
 		require.NoError(t, err)
 
 		transformer := &slack.Transformer{
-			TeamName: "testteam",
-			Logger:   logger,
+			Exporter: intermediate.Exporter{
+				TeamName: "testteam",
+				Logger:   logger,
+			},
 		}
 
 		export, err := transformer.ParseSlackExportFile(reader, true)
@@ -469,8 +474,10 @@ func TestSlackExportBuilderCanBeParsedByTransformer(t *testing.T) {
 		require.NoError(t, err)
 
 		transformer := &slack.Transformer{
-			TeamName: "testteam",
-			Logger:   logger,
+			Exporter: intermediate.Exporter{
+				TeamName: "testteam",
+				Logger:   logger,
+			},
 		}
 
 		export, err := transformer.ParseSlackExportFile(reader, true)
@@ -505,8 +512,10 @@ func TestSlackExportBuilderCanBeParsedByTransformer(t *testing.T) {
 		require.NoError(t, err)
 
 		transformer := &slack.Transformer{
-			TeamName: "testteam",
-			Logger:   logger,
+			Exporter: intermediate.Exporter{
+				TeamName: "testteam",
+				Logger:   logger,
+			},
 		}
 
 		export, err := transformer.ParseSlackExportFile(reader, true)
@@ -539,8 +548,10 @@ func TestSlackExportBuilderCanBeParsedByTransformer(t *testing.T) {
 		require.NoError(t, err)
 
 		transformer := &slack.Transformer{
-			TeamName: "testteam",
-			Logger:   logger,
+			Exporter: intermediate.Exporter{
+				TeamName: "testteam",
+				Logger:   logger,
+			},
 		}
 
 		export, err := transformer.ParseSlackExportFile(reader, true)
@@ -981,8 +992,10 @@ func TestSlackExportBuilderBotFixtures(t *testing.T) {
 		require.NoError(t, err)
 
 		transformer := &slack.Transformer{
-			TeamName: "testteam",
-			Logger:   logger,
+			Exporter: intermediate.Exporter{
+				TeamName: "testteam",
+				Logger:   logger,
+			},
 		}
 
 		export, err := transformer.ParseSlackExportFile(reader, true)
@@ -1040,8 +1053,10 @@ func TestSlackExportBuilderBotFixtures(t *testing.T) {
 		require.NoError(t, err)
 
 		transformer := &slack.Transformer{
-			TeamName: "testteam",
-			Logger:   logger,
+			Exporter: intermediate.Exporter{
+				TeamName: "testteam",
+				Logger:   logger,
+			},
 		}
 
 		export, err := transformer.ParseSlackExportFile(reader, true)
@@ -1084,8 +1099,10 @@ func TestSlackExportBuilderBotFixtures(t *testing.T) {
 		require.NoError(t, err)
 
 		transformer := &slack.Transformer{
-			TeamName: "testteam",
-			Logger:   logger,
+			Exporter: intermediate.Exporter{
+				TeamName: "testteam",
+				Logger:   logger,
+			},
 		}
 
 		export, err := transformer.ParseSlackExportFile(reader, true)

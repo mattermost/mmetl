@@ -54,7 +54,7 @@ func TestIntermediateChannelSanitise(t *testing.T) {
 			DisplayName: "-_---_--b----",
 		}
 
-		channel.Sanitise(log.New())
+		channel.SanitiseWithPrefix(log.New(), "slack-channel-")
 
 		assert.Equal(t, "slack-channel-a", channel.Name)
 		assert.Equal(t, "slack-channel-b", channel.DisplayName)

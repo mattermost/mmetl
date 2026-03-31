@@ -17,5 +17,6 @@ Transforms export files into Mattermost import files
 ### SEE ALSO
 
 * [mmetl](mmetl.md)	 - ETL tool to transform the export files from different providers to be compatible with Mattermost.
+* [mmetl transform rocketchat](mmetl_transform_rocketchat.md)	 - Transforms a Rocket.Chat mongodump export.
 * [mmetl transform slack](mmetl_transform_slack.md)	 - Transforms a Slack export.
 
