@@ -186,9 +186,11 @@ func GetImportLineFromUser(user *IntermediateUser, team string) *imports.LineImp
 	channelMemberships := []imports.UserChannelImportData{}
 	for _, membership := range user.Memberships {
 		ch := imports.UserChannelImportData{
-			Name:         model.NewPointer(membership.Name),
-			Roles:        model.NewPointer(model.ChannelUserRoleId),
-			LastViewedAt: model.NewPointer(membership.LastViewedAt),
+			Name:  model.NewPointer(membership.Name),
+			Roles: model.NewPointer(model.ChannelUserRoleId),
+		}
+		if membership.LastViewedAt > 0 {
+			ch.LastViewedAt = model.NewPointer(membership.LastViewedAt)
 		}
 		if membership.MsgCount > 0 {
 			ch.MsgCount = model.NewPointer(membership.MsgCount)
@@ -413,6 +415,9 @@ func (t *Transformer) ExportChannels(channels []*IntermediateChannel, writer io.
 // valid for group or direct, as they export with members
 func (t *Transformer) ExportDirectChannels(channels []*IntermediateChannel, writer io.Writer) error {
 	for _, channel := range channels {
+		if channel.LastPostAt == 0 && channel.Created < minValidSlackCreatedTimestamp {
+			t.Logger.Warnf("Direct/group channel %s has no valid creation timestamp; using current time for LastViewedAt", channel.Name)
+		}
 		line := GetImportLineFromDirectChannel(t.TeamName, channel)
 		if err := ExportWriteLine(writer, line); err != nil {
 			return err

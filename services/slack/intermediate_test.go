@@ -1026,7 +1026,7 @@ func TestComputeChannelPostStats(t *testing.T) {
 
 		assert.Equal(t, int64(4), ch.MsgCount)      // 2 root + 2 replies
 		assert.Equal(t, int64(2), ch.MsgCountRoot)  // 2 root only
-		assert.Equal(t, int64(2000), ch.LastPostAt) // max root timestamp
+		assert.Equal(t, int64(2000), ch.LastPostAt) // max timestamp across all posts (roots + replies)
 	})
 
 	t.Run("LastPostAt tracks reply timestamps", func(t *testing.T) {

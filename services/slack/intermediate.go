@@ -98,6 +98,8 @@ func (t *Transformer) ComputeChannelPostStats() {
 			continue
 		}
 
+		// Each entry in Intermediate.Posts is a root post; replies are
+		// nested in post.Replies (see AddPostToThreads).
 		ch.MsgCount++
 		ch.MsgCountRoot++
 		if post.CreateAt > ch.LastPostAt {
@@ -405,6 +407,9 @@ func (t *Transformer) applyChannelStatsToMemberships() {
 				user.Memberships[i].MsgCount = ch.MsgCount
 				user.Memberships[i].MsgCountRoot = ch.MsgCountRoot
 			} else {
+				if ch.Created < minValidSlackCreatedTimestamp {
+					t.Logger.Warnf("Channel %s has no valid creation timestamp; using current time for LastViewedAt", ch.Name)
+				}
 				user.Memberships[i].LastViewedAt = ch.CreatedMillis()
 			}
 		}

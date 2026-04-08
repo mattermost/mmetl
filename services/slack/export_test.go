@@ -591,6 +591,24 @@ func TestGetImportLineFromUser(t *testing.T) {
 		assert.Nil(t, channels[0].MsgCountRoot)
 	})
 
+	t.Run("LastViewedAt omitted when zero", func(t *testing.T) {
+		user := &IntermediateUser{
+			Username: "dave",
+			Email:    "dave@example.com",
+			Memberships: []IntermediateMembership{
+				{Name: "orphan-channel"},
+			},
+		}
+
+		line := GetImportLineFromUser(user, "myteam")
+
+		channels := *(*line.User.Teams)[0].Channels
+		require.Len(t, channels, 1)
+		assert.Nil(t, channels[0].LastViewedAt)
+		assert.Nil(t, channels[0].MsgCount)
+		assert.Nil(t, channels[0].MsgCountRoot)
+	})
+
 	t.Run("No memberships produces nil channels", func(t *testing.T) {
 		user := &IntermediateUser{
 			Username: "charlie",
