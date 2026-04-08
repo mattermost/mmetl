@@ -43,6 +43,9 @@ type IntermediateChannel struct {
 	Topic            string            `json:"topic"`
 	Type             model.ChannelType `json:"type"`
 	Created          int64             `json:"created"` // Unix timestamp in seconds from Slack
+	MsgCount         int64             `json:"msg_count"`
+	MsgCountRoot     int64             `json:"msg_count_root"`
+	LastPostAt       int64             `json:"last_post_at"` // milliseconds, computed from posts
 }
 
 // CreatedMillis returns the channel creation time in milliseconds.
@@ -53,6 +56,61 @@ func (c *IntermediateChannel) CreatedMillis() int64 {
 		return c.Created * 1000
 	}
 	return nowFunc().UnixMilli()
+}
+
+// directChannelKey returns a deterministic lookup key for a direct/group
+// channel by sorting and joining the member usernames.
+func directChannelKey(members []string) string {
+	sorted := make([]string, len(members))
+	copy(sorted, members)
+	sort.Strings(sorted)
+	return strings.Join(sorted, ",")
+}
+
+// ComputeChannelPostStats iterates all transformed posts and accumulates
+// MsgCount, MsgCountRoot, and LastPostAt on each IntermediateChannel.
+// Must be called after TransformPosts completes.
+func (t *Transformer) ComputeChannelPostStats() {
+	channelsByName := make(map[string]*IntermediateChannel)
+	for _, ch := range t.Intermediate.PublicChannels {
+		channelsByName[ch.Name] = ch
+	}
+	for _, ch := range t.Intermediate.PrivateChannels {
+		channelsByName[ch.Name] = ch
+	}
+
+	channelsByMembers := make(map[string]*IntermediateChannel)
+	for _, ch := range t.Intermediate.GroupChannels {
+		channelsByMembers[directChannelKey(ch.MembersUsernames)] = ch
+	}
+	for _, ch := range t.Intermediate.DirectChannels {
+		channelsByMembers[directChannelKey(ch.MembersUsernames)] = ch
+	}
+
+	for _, post := range t.Intermediate.Posts {
+		var ch *IntermediateChannel
+		if post.IsDirect {
+			ch = channelsByMembers[directChannelKey(post.ChannelMembers)]
+		} else {
+			ch = channelsByName[post.Channel]
+		}
+		if ch == nil {
+			continue
+		}
+
+		ch.MsgCount++
+		ch.MsgCountRoot++
+		if post.CreateAt > ch.LastPostAt {
+			ch.LastPostAt = post.CreateAt
+		}
+
+		for _, reply := range post.Replies {
+			ch.MsgCount++
+			if reply.CreateAt > ch.LastPostAt {
+				ch.LastPostAt = reply.CreateAt
+			}
+		}
+	}
 }
 
 func (c *IntermediateChannel) Sanitise(logger log.FieldLogger) {
@@ -93,11 +151,13 @@ func (c *IntermediateChannel) Sanitise(logger log.FieldLogger) {
 }
 
 // IntermediateMembership represents a user's membership in a channel,
-// carrying the channel name and a pre-computed LastViewedAt timestamp
+// carrying the channel name and pre-computed read-state fields
 // for the Mattermost bulk import.
 type IntermediateMembership struct {
 	Name         string `json:"name"`
-	LastViewedAt int64  `json:"last_viewed_at"` // Unix timestamp in milliseconds
+	LastViewedAt int64  `json:"last_viewed_at"` // milliseconds
+	MsgCount     int64  `json:"msg_count"`
+	MsgCountRoot int64  `json:"msg_count_root"`
 }
 
 type IntermediateUser struct {
@@ -293,27 +353,16 @@ func (t *Transformer) TransformChannels(channels []SlackChannel) []*Intermediate
 func (t *Transformer) PopulateUserMemberships() {
 	t.Logger.Info("Populating user memberships")
 
-	// Log once per channel with invalid Created, not once per user-channel pair.
-	allChannels := make([]*IntermediateChannel, 0, len(t.Intermediate.PublicChannels)+len(t.Intermediate.PrivateChannels))
-	allChannels = append(allChannels, t.Intermediate.PublicChannels...)
-	allChannels = append(allChannels, t.Intermediate.PrivateChannels...)
-	for _, channel := range allChannels {
-		if channel.Created < minValidSlackCreatedTimestamp {
-			t.Logger.Warnf("Channel %s has no valid creation timestamp; using current time for LastViewedAt", channel.Name)
-		}
-	}
-
 	for userId, user := range t.Intermediate.UsersById {
 		if user.IsBot {
 			continue
 		}
-		memberships := []IntermediateMembership{}
+		var memberships []IntermediateMembership
 		for _, channel := range t.Intermediate.PublicChannels {
 			for _, memberId := range channel.Members {
 				if userId == memberId {
 					memberships = append(memberships, IntermediateMembership{
-						Name:         channel.Name,
-						LastViewedAt: channel.CreatedMillis(),
+						Name: channel.Name,
 					})
 					break
 				}
@@ -323,14 +372,42 @@ func (t *Transformer) PopulateUserMemberships() {
 			for _, memberId := range channel.Members {
 				if userId == memberId {
 					memberships = append(memberships, IntermediateMembership{
-						Name:         channel.Name,
-						LastViewedAt: channel.CreatedMillis(),
+						Name: channel.Name,
 					})
 					break
 				}
 			}
 		}
 		user.Memberships = memberships
+	}
+}
+
+// applyChannelStatsToMemberships updates each user's channel memberships
+// with read-state values computed from post stats. Uses channel.LastPostAt
+// for LastViewedAt (falling back to CreatedMillis for channels with no posts).
+func (t *Transformer) applyChannelStatsToMemberships() {
+	channelsByName := make(map[string]*IntermediateChannel)
+	for _, ch := range t.Intermediate.PublicChannels {
+		channelsByName[ch.Name] = ch
+	}
+	for _, ch := range t.Intermediate.PrivateChannels {
+		channelsByName[ch.Name] = ch
+	}
+
+	for _, user := range t.Intermediate.UsersById {
+		for i, m := range user.Memberships {
+			ch := channelsByName[m.Name]
+			if ch == nil {
+				continue
+			}
+			if ch.LastPostAt > 0 {
+				user.Memberships[i].LastViewedAt = ch.LastPostAt
+				user.Memberships[i].MsgCount = ch.MsgCount
+				user.Memberships[i].MsgCountRoot = ch.MsgCountRoot
+			} else {
+				user.Memberships[i].LastViewedAt = ch.CreatedMillis()
+			}
+		}
 	}
 }
 
@@ -988,6 +1065,9 @@ func (t *Transformer) Transform(slackExport *SlackExport, attachmentsDir string,
 	if err := t.TransformPosts(slackExport, attachmentsDir, skipAttachments, discardInvalidProps, allowDownload); err != nil {
 		return err
 	}
+
+	t.ComputeChannelPostStats()
+	t.applyChannelStatsToMemberships()
 
 	return nil
 }
