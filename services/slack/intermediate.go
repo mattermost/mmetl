@@ -9,6 +9,7 @@ import (
 	"path"
 	"sort"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/mattermost/mattermost/server/public/model"
@@ -19,7 +20,16 @@ import (
 
 const attachmentsInternal = "bulk-export-attachments"
 
+// minValidSlackCreatedTimestamp is the minimum Unix timestamp (seconds) we consider
+// valid for a Slack channel creation time. Slack launched in 2013, so any value
+// before Jan 1, 2013 is treated as a placeholder (e.g. Slack uses "created": 1 for DMs).
+const minValidSlackCreatedTimestamp = 1356998400
+
 var exitFunc func(code int) = os.Exit
+
+// nowFunc is used by CreatedMillis for the fallback timestamp.
+// Tests can override this for deterministic output.
+var nowFunc = time.Now
 
 type IntermediateChannel struct {
 	Id               string            `json:"id"`
@@ -32,6 +42,17 @@ type IntermediateChannel struct {
 	Header           string            `json:"header"`
 	Topic            string            `json:"topic"`
 	Type             model.ChannelType `json:"type"`
+	Created          int64             `json:"created"` // Unix timestamp in seconds from Slack
+}
+
+// CreatedMillis returns the channel creation time in milliseconds.
+// If Created is not a valid timestamp (zero, placeholder, or before Slack's
+// launch in 2013), falls back to the current time.
+func (c *IntermediateChannel) CreatedMillis() int64 {
+	if c.Created >= minValidSlackCreatedTimestamp {
+		return c.Created * 1000
+	}
+	return nowFunc().UnixMilli()
 }
 
 func (c *IntermediateChannel) Sanitise(logger log.FieldLogger) {
@@ -71,18 +92,26 @@ func (c *IntermediateChannel) Sanitise(logger log.FieldLogger) {
 	}
 }
 
+// IntermediateMembership represents a user's membership in a channel,
+// carrying the channel name and a pre-computed LastViewedAt timestamp
+// for the Mattermost bulk import.
+type IntermediateMembership struct {
+	Name         string `json:"name"`
+	LastViewedAt int64  `json:"last_viewed_at"` // Unix timestamp in milliseconds
+}
+
 type IntermediateUser struct {
-	Id          string   `json:"id"`
-	Username    string   `json:"username"`
-	FirstName   string   `json:"first_name"`
-	LastName    string   `json:"last_name"`
-	Position    string   `json:"position"`
-	Email       string   `json:"email"`
-	Password    string   `json:"password"`
-	Memberships []string `json:"memberships"`
-	DeleteAt    int64    `json:"delete_at"`
-	IsBot       bool     `json:"is_bot"`
-	DisplayName string   `json:"display_name"`
+	Id          string                   `json:"id"`
+	Username    string                   `json:"username"`
+	FirstName   string                   `json:"first_name"`
+	LastName    string                   `json:"last_name"`
+	Position    string                   `json:"position"`
+	Email       string                   `json:"email"`
+	Password    string                   `json:"password"`
+	Memberships []IntermediateMembership `json:"memberships"`
+	DeleteAt    int64                    `json:"delete_at"`
+	IsBot       bool                     `json:"is_bot"`
+	DisplayName string                   `json:"display_name"`
 }
 
 func (u *IntermediateUser) Sanitise(logger log.FieldLogger, defaultEmailDomain string, skipEmptyEmails bool) {
@@ -251,6 +280,7 @@ func (t *Transformer) TransformChannels(channels []SlackChannel) []*Intermediate
 			Purpose:      channel.Purpose.Value,
 			Header:       channel.Topic.Value,
 			Type:         channel.Type,
+			Created:      channel.Created,
 		}
 
 		newChannel.Sanitise(t.Logger)
@@ -263,15 +293,28 @@ func (t *Transformer) TransformChannels(channels []SlackChannel) []*Intermediate
 func (t *Transformer) PopulateUserMemberships() {
 	t.Logger.Info("Populating user memberships")
 
+	// Log once per channel with invalid Created, not once per user-channel pair.
+	allChannels := make([]*IntermediateChannel, 0, len(t.Intermediate.PublicChannels)+len(t.Intermediate.PrivateChannels))
+	allChannels = append(allChannels, t.Intermediate.PublicChannels...)
+	allChannels = append(allChannels, t.Intermediate.PrivateChannels...)
+	for _, channel := range allChannels {
+		if channel.Created < minValidSlackCreatedTimestamp {
+			t.Logger.Warnf("Channel %s has no valid creation timestamp; using current time for LastViewedAt", channel.Name)
+		}
+	}
+
 	for userId, user := range t.Intermediate.UsersById {
 		if user.IsBot {
 			continue
 		}
-		memberships := []string{}
+		memberships := []IntermediateMembership{}
 		for _, channel := range t.Intermediate.PublicChannels {
 			for _, memberId := range channel.Members {
 				if userId == memberId {
-					memberships = append(memberships, channel.Name)
+					memberships = append(memberships, IntermediateMembership{
+						Name:         channel.Name,
+						LastViewedAt: channel.CreatedMillis(),
+					})
 					break
 				}
 			}
@@ -279,7 +322,10 @@ func (t *Transformer) PopulateUserMemberships() {
 		for _, channel := range t.Intermediate.PrivateChannels {
 			for _, memberId := range channel.Members {
 				if userId == memberId {
-					memberships = append(memberships, channel.Name)
+					memberships = append(memberships, IntermediateMembership{
+						Name:         channel.Name,
+						LastViewedAt: channel.CreatedMillis(),
+					})
 					break
 				}
 			}

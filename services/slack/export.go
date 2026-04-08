@@ -155,21 +155,32 @@ func GetImportLineFromChannel(team string, channel *IntermediateChannel) *import
 }
 
 func GetImportLineFromDirectChannel(team string, channel *IntermediateChannel) *imports.LineImportData {
+	var participants []*imports.DirectChannelMemberImportData
+	lastViewedAt := channel.CreatedMillis()
+	for _, username := range channel.MembersUsernames {
+		participants = append(participants, &imports.DirectChannelMemberImportData{
+			Username:     model.NewPointer(username),
+			LastViewedAt: model.NewPointer(lastViewedAt),
+		})
+	}
+
 	return &imports.LineImportData{
 		Type: "direct_channel",
 		DirectChannel: &imports.DirectChannelImportData{
-			Header:  &channel.Topic,
-			Members: &channel.MembersUsernames,
+			Header:       &channel.Topic,
+			Members:      &channel.MembersUsernames,
+			Participants: participants,
 		},
 	}
 }
 
 func GetImportLineFromUser(user *IntermediateUser, team string) *imports.LineImportData {
 	channelMemberships := []imports.UserChannelImportData{}
-	for _, channelName := range user.Memberships {
+	for _, membership := range user.Memberships {
 		channelMemberships = append(channelMemberships, imports.UserChannelImportData{
-			Name:  model.NewPointer(channelName),
-			Roles: model.NewPointer(model.ChannelUserRoleId),
+			Name:         model.NewPointer(membership.Name),
+			Roles:        model.NewPointer(model.ChannelUserRoleId),
+			LastViewedAt: model.NewPointer(membership.LastViewedAt),
 		})
 	}
 
@@ -389,6 +400,9 @@ func (t *Transformer) ExportChannels(channels []*IntermediateChannel, writer io.
 // valid for group or direct, as they export with members
 func (t *Transformer) ExportDirectChannels(channels []*IntermediateChannel, writer io.Writer) error {
 	for _, channel := range channels {
+		if channel.Created < minValidSlackCreatedTimestamp {
+			t.Logger.Warnf("Direct/group channel %s has no valid creation timestamp; using current time for LastViewedAt", channel.Name)
+		}
 		line := GetImportLineFromDirectChannel(t.TeamName, channel)
 		if err := ExportWriteLine(writer, line); err != nil {
 			return err

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/v8/channels/app/imports"
@@ -533,5 +534,127 @@ func TestExportUsersWithBots(t *testing.T) {
 		var line0 imports.LineImportData
 		require.NoError(t, json.Unmarshal([]byte(lines[0]), &line0))
 		assert.Equal(t, "user", line0.Type)
+	})
+}
+
+func TestGetImportLineFromUser(t *testing.T) {
+	t.Run("LastViewedAt is set on channel memberships", func(t *testing.T) {
+		user := &IntermediateUser{
+			Username:  "alice",
+			Email:     "alice@example.com",
+			FirstName: "Alice",
+			LastName:  "Smith",
+			Memberships: []IntermediateMembership{
+				{Name: "general", LastViewedAt: 1704067200000},
+				{Name: "random", LastViewedAt: 1704070800000},
+			},
+		}
+
+		line := GetImportLineFromUser(user, "myteam")
+
+		assert.Equal(t, "user", line.Type)
+		require.NotNil(t, line.User)
+		require.NotNil(t, line.User.Teams)
+		require.Len(t, *line.User.Teams, 1)
+
+		team := (*line.User.Teams)[0]
+		require.NotNil(t, team.Channels)
+		channels := *team.Channels
+		require.Len(t, channels, 2)
+
+		assert.Equal(t, "general", *channels[0].Name)
+		require.NotNil(t, channels[0].LastViewedAt)
+		assert.Equal(t, int64(1704067200000), *channels[0].LastViewedAt)
+
+		assert.Equal(t, "random", *channels[1].Name)
+		require.NotNil(t, channels[1].LastViewedAt)
+		assert.Equal(t, int64(1704070800000), *channels[1].LastViewedAt)
+	})
+
+	t.Run("No memberships produces nil channels", func(t *testing.T) {
+		user := &IntermediateUser{
+			Username: "bob",
+			Email:    "bob@example.com",
+		}
+
+		line := GetImportLineFromUser(user, "myteam")
+
+		require.NotNil(t, line.User.Teams)
+		team := (*line.User.Teams)[0]
+		assert.Nil(t, team.Channels)
+	})
+}
+
+func TestGetImportLineFromDirectChannel(t *testing.T) {
+	t.Run("Participants are set with LastViewedAt when Created is set", func(t *testing.T) {
+		channel := &IntermediateChannel{
+			Name:             "dm-channel",
+			Topic:            "DM topic",
+			MembersUsernames: []string{"alice", "bob"},
+			Created:          1704067200,
+		}
+
+		line := GetImportLineFromDirectChannel("myteam", channel)
+
+		assert.Equal(t, "direct_channel", line.Type)
+		require.NotNil(t, line.DirectChannel)
+		require.NotNil(t, line.DirectChannel.Members)
+		assert.Equal(t, []string{"alice", "bob"}, *line.DirectChannel.Members)
+		require.NotNil(t, line.DirectChannel.Participants)
+		require.Len(t, line.DirectChannel.Participants, 2)
+
+		assert.Equal(t, "alice", *line.DirectChannel.Participants[0].Username)
+		require.NotNil(t, line.DirectChannel.Participants[0].LastViewedAt)
+		assert.Equal(t, int64(1704067200000), *line.DirectChannel.Participants[0].LastViewedAt)
+
+		assert.Equal(t, "bob", *line.DirectChannel.Participants[1].Username)
+		require.NotNil(t, line.DirectChannel.Participants[1].LastViewedAt)
+		assert.Equal(t, int64(1704067200000), *line.DirectChannel.Participants[1].LastViewedAt)
+	})
+
+	t.Run("Participants get current time LastViewedAt when Created is 0", func(t *testing.T) {
+		fixedTime := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+		originalNowFunc := nowFunc
+		nowFunc = func() time.Time { return fixedTime }
+		defer func() { nowFunc = originalNowFunc }()
+
+		channel := &IntermediateChannel{
+			Name:             "dm-channel",
+			Topic:            "DM topic",
+			MembersUsernames: []string{"alice", "bob"},
+			Created:          0,
+		}
+
+		line := GetImportLineFromDirectChannel("myteam", channel)
+
+		require.NotNil(t, line.DirectChannel.Participants)
+		require.Len(t, line.DirectChannel.Participants, 2)
+
+		require.NotNil(t, line.DirectChannel.Participants[0].LastViewedAt)
+		assert.Equal(t, fixedTime.UnixMilli(), *line.DirectChannel.Participants[0].LastViewedAt)
+		require.NotNil(t, line.DirectChannel.Participants[1].LastViewedAt)
+		assert.Equal(t, fixedTime.UnixMilli(), *line.DirectChannel.Participants[1].LastViewedAt)
+	})
+
+	t.Run("Treats Slack DM placeholder Created=1 as invalid", func(t *testing.T) {
+		fixedTime := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+		originalNowFunc := nowFunc
+		nowFunc = func() time.Time { return fixedTime }
+		defer func() { nowFunc = originalNowFunc }()
+
+		channel := &IntermediateChannel{
+			Name:             "dm-channel",
+			Topic:            "DM topic",
+			MembersUsernames: []string{"alice", "bob"},
+			Created:          1,
+		}
+
+		line := GetImportLineFromDirectChannel("myteam", channel)
+
+		require.NotNil(t, line.DirectChannel.Participants)
+		require.Len(t, line.DirectChannel.Participants, 2)
+
+		require.NotNil(t, line.DirectChannel.Participants[0].LastViewedAt)
+		assert.Equal(t, fixedTime.UnixMilli(), *line.DirectChannel.Participants[0].LastViewedAt)
 	})
 }
