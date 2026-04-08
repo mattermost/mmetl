@@ -396,6 +396,8 @@ func (t *Transformer) applyChannelStatsToMemberships() {
 		channelsByName[ch.Name] = ch
 	}
 
+	// Cache fallback values and warn once per channel, not once per member.
+	fallbackByChannel := make(map[string]int64)
 	for _, user := range t.Intermediate.UsersById {
 		for i, m := range user.Memberships {
 			ch := channelsByName[m.Name]
@@ -407,10 +409,15 @@ func (t *Transformer) applyChannelStatsToMemberships() {
 				user.Memberships[i].MsgCount = ch.MsgCount
 				user.Memberships[i].MsgCountRoot = ch.MsgCountRoot
 			} else {
-				if ch.Created < minValidSlackCreatedTimestamp {
-					t.Logger.Warnf("Channel %s has no valid creation timestamp; using current time for LastViewedAt", ch.Name)
+				fb, ok := fallbackByChannel[ch.Name]
+				if !ok {
+					if ch.Created < minValidSlackCreatedTimestamp {
+						t.Logger.Warnf("Channel %s has no valid creation timestamp; using current time for LastViewedAt", ch.Name)
+					}
+					fb = ch.CreatedMillis()
+					fallbackByChannel[ch.Name] = fb
 				}
-				user.Memberships[i].LastViewedAt = ch.CreatedMillis()
+				user.Memberships[i].LastViewedAt = fb
 			}
 		}
 	}
