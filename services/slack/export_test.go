@@ -685,3 +685,45 @@ func TestGetImportLineFromDirectChannel(t *testing.T) {
 		assert.Nil(t, line.DirectChannel.Participants[0].MsgCount)
 	})
 }
+
+func TestExportDirectChannels(t *testing.T) {
+	t.Run("writes all channels as JSONL lines", func(t *testing.T) {
+		transformer := NewTransformer("myteam", log.New())
+		channels := []*IntermediateChannel{
+			{
+				Name:             "dm1",
+				MembersUsernames: []string{"alice", "bob"},
+				Created:          1704067200,
+				MsgCount:         5,
+				MsgCountRoot:     3,
+				LastPostAt:       1704099999000,
+			},
+			{
+				Name:             "dm2",
+				MembersUsernames: []string{"charlie", "dave"},
+				Created:          1704067200,
+			},
+		}
+
+		var buf bytes.Buffer
+		err := transformer.ExportDirectChannels(channels, &buf)
+		require.NoError(t, err)
+
+		lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
+		require.Len(t, lines, 2)
+
+		for _, line := range lines {
+			var parsed map[string]json.RawMessage
+			require.NoError(t, json.Unmarshal([]byte(line), &parsed))
+			assert.Equal(t, `"direct_channel"`, string(parsed["type"]))
+		}
+	})
+
+	t.Run("empty channel list produces no output", func(t *testing.T) {
+		transformer := NewTransformer("myteam", log.New())
+		var buf bytes.Buffer
+		err := transformer.ExportDirectChannels([]*IntermediateChannel{}, &buf)
+		require.NoError(t, err)
+		assert.Empty(t, buf.String())
+	})
+}

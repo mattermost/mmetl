@@ -1136,6 +1136,78 @@ func TestApplyChannelStatsToMemberships(t *testing.T) {
 		assert.Equal(t, int64(0), m.MsgCount)
 		assert.Equal(t, int64(0), m.MsgCountRoot)
 	})
+
+	t.Run("sets stats for private channel membership", func(t *testing.T) {
+		slackTransformer := NewTransformer("test", log.New())
+		ch := &IntermediateChannel{
+			Name:         "secret",
+			MsgCount:     3,
+			MsgCountRoot: 2,
+			LastPostAt:   7000,
+		}
+		slackTransformer.Intermediate = &Intermediate{
+			PrivateChannels: []*IntermediateChannel{ch},
+			UsersById: map[string]*IntermediateUser{
+				"id1": {
+					Memberships: []IntermediateMembership{{Name: "secret"}},
+				},
+			},
+		}
+
+		slackTransformer.applyChannelStatsToMemberships()
+
+		m := slackTransformer.Intermediate.UsersById["id1"].Memberships[0]
+		assert.Equal(t, int64(7000), m.LastViewedAt)
+		assert.Equal(t, int64(3), m.MsgCount)
+		assert.Equal(t, int64(2), m.MsgCountRoot)
+	})
+
+	t.Run("skips membership for unknown channel", func(t *testing.T) {
+		slackTransformer := NewTransformer("test", log.New())
+		slackTransformer.Intermediate = &Intermediate{
+			PublicChannels: []*IntermediateChannel{},
+			UsersById: map[string]*IntermediateUser{
+				"id1": {
+					Memberships: []IntermediateMembership{{Name: "deleted-channel"}},
+				},
+			},
+		}
+
+		slackTransformer.applyChannelStatsToMemberships()
+
+		m := slackTransformer.Intermediate.UsersById["id1"].Memberships[0]
+		assert.Equal(t, int64(0), m.LastViewedAt)
+		assert.Equal(t, int64(0), m.MsgCount)
+		assert.Equal(t, int64(0), m.MsgCountRoot)
+	})
+
+	t.Run("multiple users across different channels get correct stats", func(t *testing.T) {
+		slackTransformer := NewTransformer("test", log.New())
+		ch1 := &IntermediateChannel{Name: "general", MsgCount: 10, MsgCountRoot: 5, LastPostAt: 9000}
+		ch2 := &IntermediateChannel{Name: "random", MsgCount: 3, MsgCountRoot: 3, LastPostAt: 4000}
+		slackTransformer.Intermediate = &Intermediate{
+			PublicChannels: []*IntermediateChannel{ch1, ch2},
+			UsersById: map[string]*IntermediateUser{
+				"id1": {Memberships: []IntermediateMembership{{Name: "general"}, {Name: "random"}}},
+				"id2": {Memberships: []IntermediateMembership{{Name: "random"}}},
+			},
+		}
+
+		slackTransformer.applyChannelStatsToMemberships()
+
+		u1 := slackTransformer.Intermediate.UsersById["id1"]
+		assert.Equal(t, int64(9000), u1.Memberships[0].LastViewedAt)
+		assert.Equal(t, int64(10), u1.Memberships[0].MsgCount)
+		assert.Equal(t, int64(5), u1.Memberships[0].MsgCountRoot)
+		assert.Equal(t, int64(4000), u1.Memberships[1].LastViewedAt)
+		assert.Equal(t, int64(3), u1.Memberships[1].MsgCount)
+		assert.Equal(t, int64(3), u1.Memberships[1].MsgCountRoot)
+
+		u2 := slackTransformer.Intermediate.UsersById["id2"]
+		assert.Equal(t, int64(4000), u2.Memberships[0].LastViewedAt)
+		assert.Equal(t, int64(3), u2.Memberships[0].MsgCount)
+		assert.Equal(t, int64(3), u2.Memberships[0].MsgCountRoot)
+	})
 }
 
 func TestTransformBotUsers(t *testing.T) {
