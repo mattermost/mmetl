@@ -8,13 +8,15 @@ import (
 
 // SlackChannel represents a Slack channel in the export
 type SlackChannel struct {
-	Id      string            `json:"id"`
-	Name    string            `json:"name"`
-	Creator string            `json:"creator"`
-	Members []string          `json:"members"`
-	Purpose SlackChannelSub   `json:"purpose"`
-	Topic   SlackChannelSub   `json:"topic"`
-	Type    model.ChannelType `json:"-"` // Computed, not from JSON
+	Id         string            `json:"id"`
+	Name       string            `json:"name"`
+	Creator    string            `json:"creator"`
+	Members    []string          `json:"members"`
+	Purpose    SlackChannelSub   `json:"purpose"`
+	Topic      SlackChannelSub   `json:"topic"`
+	IsArchived bool              `json:"is_archived"`
+	Updated    int64             `json:"updated"` // millisecond timestamp of last settings update; used as a best-effort approximation of archive time
+	Type       model.ChannelType `json:"-"`       // Computed, not from JSON
 }
 
 // SlackChannelSub represents a sub-field in Slack channel data (purpose/topic)

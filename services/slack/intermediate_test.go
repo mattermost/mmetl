@@ -1735,3 +1735,118 @@ func TestTransformPosts(t *testing.T) {
 		// This test ensures that sorting works correctly even with split chunks
 	})
 }
+
+func TestTransformArchivedChannels(t *testing.T) {
+	slackTransformer := NewTransformer("test", log.New())
+	slackTransformer.Intermediate.UsersById = map[string]*IntermediateUser{"m1": {}, "m2": {}, "m3": {}}
+
+	t.Run("Active channel has DeleteAt of zero", func(t *testing.T) {
+		channels := []SlackChannel{
+			{
+				Id:         "id1",
+				Name:       "active-channel",
+				Members:    []string{"m1", "m2", "m3"},
+				Purpose:    SlackChannelSub{Value: "purpose"},
+				Topic:      SlackChannelSub{Value: "topic"},
+				IsArchived: false,
+				Type:       model.ChannelTypeOpen,
+			},
+		}
+
+		result := slackTransformer.TransformChannels(channels)
+		require.Len(t, result, 1)
+		assert.Equal(t, int64(0), result[0].DeleteAt)
+	})
+
+	t.Run("Archived channel with updated timestamp uses that timestamp", func(t *testing.T) {
+		channels := []SlackChannel{
+			{
+				Id:         "id2",
+				Name:       "archived-channel",
+				Members:    []string{"m1", "m2", "m3"},
+				Purpose:    SlackChannelSub{Value: "purpose"},
+				Topic:      SlackChannelSub{Value: "topic"},
+				IsArchived: true,
+				Updated:    1620000000000,
+				Type:       model.ChannelTypeOpen,
+			},
+		}
+
+		result := slackTransformer.TransformChannels(channels)
+		require.Len(t, result, 1)
+		assert.Equal(t, int64(1620000000000), result[0].DeleteAt)
+	})
+
+	t.Run("Archived channel without updated timestamp uses current time", func(t *testing.T) {
+		before := model.GetMillis()
+		channels := []SlackChannel{
+			{
+				Id:         "id3",
+				Name:       "archived-no-ts",
+				Members:    []string{"m1", "m2", "m3"},
+				Purpose:    SlackChannelSub{Value: "purpose"},
+				Topic:      SlackChannelSub{Value: "topic"},
+				IsArchived: true,
+				Updated:    0,
+				Type:       model.ChannelTypeOpen,
+			},
+		}
+
+		result := slackTransformer.TransformChannels(channels)
+		after := model.GetMillis()
+
+		require.Len(t, result, 1)
+		assert.GreaterOrEqual(t, result[0].DeleteAt, before)
+		assert.LessOrEqual(t, result[0].DeleteAt, after)
+	})
+
+	t.Run("Archived private channel preserves archived state", func(t *testing.T) {
+		channels := []SlackChannel{
+			{
+				Id:         "id4",
+				Name:       "archived-private",
+				Members:    []string{"m1", "m2", "m3"},
+				Purpose:    SlackChannelSub{Value: "purpose"},
+				Topic:      SlackChannelSub{Value: "topic"},
+				IsArchived: true,
+				Updated:    1630000000000,
+				Type:       model.ChannelTypePrivate,
+			},
+		}
+
+		result := slackTransformer.TransformChannels(channels)
+		require.Len(t, result, 1)
+		assert.Equal(t, int64(1630000000000), result[0].DeleteAt)
+		assert.Equal(t, model.ChannelTypePrivate, result[0].Type)
+	})
+
+	t.Run("Archived direct or group channels do not get DeleteAt set", func(t *testing.T) {
+		directChannel := SlackChannel{
+			Id:         "D001",
+			Name:       "archived-dm",
+			Members:    []string{"m1", "m2"},
+			IsArchived: true,
+			Updated:    1620000000000,
+			Type:       model.ChannelTypeDirect,
+		}
+		groupChannel := SlackChannel{
+			Id:         "G001",
+			Name:       "archived-group",
+			Members:    []string{"m1", "m2", "m3"},
+			IsArchived: true,
+			Updated:    1620000000000,
+			Type:       model.ChannelTypeGroup,
+		}
+
+		dmResult := slackTransformer.TransformChannels([]SlackChannel{directChannel})
+		// Direct channels with <= 1 valid member are dropped; with 2 they pass through
+		if len(dmResult) > 0 {
+			assert.Equal(t, int64(0), dmResult[0].DeleteAt, "direct channels should not have DeleteAt set")
+		}
+
+		groupResult := slackTransformer.TransformChannels([]SlackChannel{groupChannel})
+		if len(groupResult) > 0 {
+			assert.Equal(t, int64(0), groupResult[0].DeleteAt, "group channels should not have DeleteAt set")
+		}
+	})
+}

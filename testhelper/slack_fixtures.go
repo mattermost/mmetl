@@ -537,3 +537,37 @@ func ExportWithDeletedBot() *SlackExportBuilder {
 			Members: []string{"U001"},
 		})
 }
+
+// ExportWithArchivedChannels creates an export containing both active and archived channels.
+// The archived channel has is_archived=true with an updated timestamp.
+func ExportWithArchivedChannels() *SlackExportBuilder {
+	return NewSlackExportBuilder().
+		AddUser(slack.SlackUser{
+			Id:       "U001",
+			Username: "john.doe",
+			Profile: slack.SlackProfile{
+				RealName: "John Doe",
+				Email:    "john.doe@example.com",
+				Title:    "Software Engineer",
+			},
+		}).
+		AddChannel(slack.SlackChannel{
+			Id:         "C001",
+			Name:       "general",
+			Creator:    "U001",
+			Members:    []string{"U001"},
+			Purpose:    slack.SlackChannelSub{Value: "General discussion"},
+			Topic:      slack.SlackChannelSub{Value: "Welcome!"},
+			IsArchived: false,
+		}).
+		AddChannel(slack.SlackChannel{
+			Id:         "C002",
+			Name:       "old-project",
+			Creator:    "U001",
+			Members:    []string{"U001"},
+			Purpose:    slack.SlackChannelSub{Value: "Old project channel"},
+			Topic:      slack.SlackChannelSub{Value: ""},
+			IsArchived: true,
+			Updated:    1620000000000, // ms timestamp used as archive time
+		})
+}
