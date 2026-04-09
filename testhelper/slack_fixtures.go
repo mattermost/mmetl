@@ -110,9 +110,16 @@ func (b *SlackExportBuilder) validate() error {
 
 	allCh := b.allChannels()
 
-	channelNames := make(map[string]bool)
+	// Build lookup by both name and ID. DM/group channels have no Name in
+	// Slack exports, so their posts are stored in directories named by ID.
+	channelLookup := make(map[string]bool)
 	for _, channel := range allCh {
-		channelNames[channel.Name] = true
+		if channel.Name != "" {
+			channelLookup[channel.Name] = true
+		}
+		if channel.Id != "" {
+			channelLookup[channel.Id] = true
+		}
 	}
 
 	// Validate channel creators and members reference existing users
@@ -129,7 +136,7 @@ func (b *SlackExportBuilder) validate() error {
 
 	// Validate posts reference existing channels and users
 	for channelName, posts := range b.posts {
-		if !channelNames[channelName] {
+		if !channelLookup[channelName] {
 			return fmt.Errorf("posts exist for non-existent channel %q", channelName)
 		}
 		for i, post := range posts {
@@ -540,5 +547,41 @@ func ExportWithDeletedBot() *SlackExportBuilder {
 			Creator: "U001",
 			Created: 1704067200,
 			Members: []string{"U001"},
+		})
+}
+
+// ExportWithDirectMessages creates an export with two users, public channels with
+// posts, and a direct message channel with posts. Used to verify that last_viewed_at
+// is set correctly on both regular channel members and DM participants after import.
+func ExportWithDirectMessages() *SlackExportBuilder {
+	return SlackBasicExport().
+		AddPost("general", slack.SlackPost{
+			User:      "U001",
+			Text:      "Hello everyone!",
+			TimeStamp: "1704067200.000100",
+			Type:      "message",
+		}).
+		AddPost("general", slack.SlackPost{
+			User:      "U002",
+			Text:      "Welcome to the team!",
+			TimeStamp: "1704067260.000200",
+			Type:      "message",
+		}).
+		AddDirectChannel(slack.SlackChannel{
+			Id:      "D001",
+			Created: 1704067200,
+			Members: []string{"U001", "U002"},
+		}).
+		AddPost("D001", slack.SlackPost{
+			User:      "U001",
+			Text:      "Hey, want to grab lunch?",
+			TimeStamp: "1704067500.000100",
+			Type:      "message",
+		}).
+		AddPost("D001", slack.SlackPost{
+			User:      "U002",
+			Text:      "Sure, let's go!",
+			TimeStamp: "1704067560.000200",
+			Type:      "message",
 		})
 }

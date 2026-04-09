@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mmetl/commands"
 	"github.com/mattermost/mmetl/testhelper"
 	"github.com/spf13/cobra"
@@ -737,5 +738,192 @@ func TestTransformSlackE2EBotImport(t *testing.T) {
 			"bot owner should be the raw username string when the user doesn't exist")
 		assert.Equal(t, fakeOwner, alertBot.OwnerId,
 			"bot owner should be the raw username string when the user doesn't exist")
+	})
+}
+
+// TestTransformSlackE2ELastViewedAt verifies that after a Slack-to-Mattermost import
+// channels do not appear as unread: last_viewed_at is set on channel memberships and
+// DM participants so users see all pre-import messages as already read.
+func TestTransformSlackE2ELastViewedAt(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	th := testhelper.SetupHelper(t)
+	defer th.TearDown()
+	t.Cleanup(func() { os.Remove(transformLogFile) })
+
+	t.Run("channel members have last_viewed_at set after import", func(t *testing.T) {
+		ctx := context.Background()
+		tempDir := t.TempDir()
+		slackExportPath := filepath.Join(tempDir, "slack_export.zip")
+		mmExportPath := filepath.Join(tempDir, "mattermost_import.jsonl")
+		teamName := uniqueTeamName("lva")
+
+		err := testhelper.ExportWithPosts().Build(slackExportPath)
+		require.NoError(t, err)
+
+		team := th.CreateTeam(ctx, teamName, "LastViewedAt E2E Team")
+		require.NotNil(t, team)
+
+		args := []string{
+			"transform", "slack",
+			"--team", teamName,
+			"--file", slackExportPath,
+			"--output", mmExportPath,
+			"--skip-attachments",
+		}
+		c := commands.RootCmd
+		resetCobraFlags(c)
+		c.SetArgs(args)
+		err = c.Execute()
+		require.NoError(t, err)
+
+		err = th.ImportBulkData(ctx, mmExportPath)
+		require.NoError(t, err)
+
+		johnUser := th.AssertUserExists(ctx, "john.doe")
+		janeUser := th.AssertUserExists(ctx, "jane.smith")
+
+		// Verify both users have last_viewed_at > 0 in the general channel.
+		// ExportWithPosts has posts up to ts 1704067260 in general, so
+		// LastViewedAt should be 1704067260000 (ms).
+		generalChannel := th.AssertChannelExists(ctx, teamName, "general")
+		members, err := th.GetChannelMembers(ctx, generalChannel.Id)
+		require.NoError(t, err)
+
+		memberLastViewedAt := make(map[string]int64)
+		for _, m := range members {
+			memberLastViewedAt[m.UserId] = m.LastViewedAt
+		}
+
+		assert.Greater(t, memberLastViewedAt[johnUser.Id], int64(0),
+			"john.doe should have last_viewed_at set in general channel")
+		assert.Greater(t, memberLastViewedAt[janeUser.Id], int64(0),
+			"jane.smith should have last_viewed_at set in general channel")
+
+		// Also check the random channel — different LastPostAt value.
+		randomChannel := th.AssertChannelExists(ctx, teamName, "random")
+		randomMembers, err := th.GetChannelMembers(ctx, randomChannel.Id)
+		require.NoError(t, err)
+
+		randomLastViewedAt := make(map[string]int64)
+		for _, m := range randomMembers {
+			randomLastViewedAt[m.UserId] = m.LastViewedAt
+		}
+		assert.Greater(t, randomLastViewedAt[johnUser.Id], int64(0),
+			"john.doe should have last_viewed_at set in random channel")
+		assert.Greater(t, randomLastViewedAt[janeUser.Id], int64(0),
+			"jane.smith should have last_viewed_at set in random channel")
+	})
+
+	t.Run("DM participants have last_viewed_at set after import", func(t *testing.T) {
+		ctx := context.Background()
+		tempDir := t.TempDir()
+		slackExportPath := filepath.Join(tempDir, "slack_export.zip")
+		mmExportPath := filepath.Join(tempDir, "mattermost_import.jsonl")
+		teamName := uniqueTeamName("lvadm")
+
+		err := testhelper.ExportWithDirectMessages().Build(slackExportPath)
+		require.NoError(t, err)
+
+		team := th.CreateTeam(ctx, teamName, "LastViewedAt DM E2E Team")
+		require.NotNil(t, team)
+
+		args := []string{
+			"transform", "slack",
+			"--team", teamName,
+			"--file", slackExportPath,
+			"--output", mmExportPath,
+			"--skip-attachments",
+		}
+		c := commands.RootCmd
+		resetCobraFlags(c)
+		c.SetArgs(args)
+		err = c.Execute()
+		require.NoError(t, err)
+
+		err = th.ImportBulkData(ctx, mmExportPath)
+		require.NoError(t, err)
+
+		johnUser := th.AssertUserExists(ctx, "john.doe")
+		janeUser := th.AssertUserExists(ctx, "jane.smith")
+
+		// Retrieve the DM channel created by the import. CreateDirectChannel is
+		// idempotent — it returns the existing channel without modifying member state.
+		dmChannel, _, err := th.Client.CreateDirectChannel(ctx, johnUser.Id, janeUser.Id)
+		require.NoError(t, err)
+		require.NotNil(t, dmChannel)
+
+		members, err := th.GetChannelMembers(ctx, dmChannel.Id)
+		require.NoError(t, err)
+
+		memberLastViewedAt := make(map[string]int64)
+		for _, m := range members {
+			memberLastViewedAt[m.UserId] = m.LastViewedAt
+		}
+
+		assert.Greater(t, memberLastViewedAt[johnUser.Id], int64(0),
+			"john.doe should have last_viewed_at set as DM participant")
+		assert.Greater(t, memberLastViewedAt[janeUser.Id], int64(0),
+			"jane.smith should have last_viewed_at set as DM participant")
+	})
+
+	t.Run("channels and DMs are not marked as unread after import", func(t *testing.T) {
+		ctx := context.Background()
+		tempDir := t.TempDir()
+		slackExportPath := filepath.Join(tempDir, "slack_export.zip")
+		mmExportPath := filepath.Join(tempDir, "mattermost_import.jsonl")
+		teamName := uniqueTeamName("unread")
+
+		err := testhelper.ExportWithDirectMessages().Build(slackExportPath)
+		require.NoError(t, err)
+
+		team := th.CreateTeam(ctx, teamName, "Unread E2E Team")
+		require.NotNil(t, team)
+
+		args := []string{
+			"transform", "slack",
+			"--team", teamName,
+			"--file", slackExportPath,
+			"--output", mmExportPath,
+			"--skip-attachments",
+		}
+		c := commands.RootCmd
+		resetCobraFlags(c)
+		c.SetArgs(args)
+		err = c.Execute()
+		require.NoError(t, err)
+
+		err = th.ImportBulkData(ctx, mmExportPath)
+		require.NoError(t, err)
+
+		johnUser := th.AssertUserExists(ctx, "john.doe")
+		janeUser := th.AssertUserExists(ctx, "jane.smith")
+
+		// Verify neither user has unread messages in the general channel.
+		// GetChannelUnread returns the unread count from the server's perspective;
+		// MsgCount == 0 means the channel does not appear as unread.
+		generalChannel := th.AssertChannelExists(ctx, teamName, "general")
+		var unread *model.ChannelUnread
+		for _, user := range []*model.User{johnUser, janeUser} {
+			unread, _, err = th.Client.GetChannelUnread(ctx, generalChannel.Id, user.Id)
+			require.NoError(t, err)
+			assert.Equal(t, int64(0), unread.MsgCount,
+				"%s should have no unread messages in general channel after import", user.Username)
+		}
+
+		// Verify neither participant has unread messages in the DM channel.
+		var dmChannel *model.Channel
+		dmChannel, _, err = th.Client.CreateDirectChannel(ctx, johnUser.Id, janeUser.Id)
+		require.NoError(t, err)
+		require.NotNil(t, dmChannel)
+
+		for _, user := range []*model.User{johnUser, janeUser} {
+			unread, _, err = th.Client.GetChannelUnread(ctx, dmChannel.Id, user.Id)
+			require.NoError(t, err)
+			assert.Equal(t, int64(0), unread.MsgCount,
+				"%s should have no unread messages in DM after import", user.Username)
+		}
 	})
 }
