@@ -926,4 +926,73 @@ func TestTransformSlackE2ELastViewedAt(t *testing.T) {
 				"%s should have no unread messages in DM after import", user.Username)
 		}
 	})
+
+	t.Run("member MsgCount matches imported post count", func(t *testing.T) {
+		ctx := context.Background()
+		tempDir := t.TempDir()
+		slackExportPath := filepath.Join(tempDir, "slack_export.zip")
+		mmExportPath := filepath.Join(tempDir, "mattermost_import.jsonl")
+		teamName := uniqueTeamName("msgcnt")
+
+		// ExportWithDirectMessages adds:
+		//   general: 2 root posts (no replies)
+		//   random:  0 posts
+		//   D001:    2 root posts (no replies)
+		err := testhelper.ExportWithDirectMessages().Build(slackExportPath)
+		require.NoError(t, err)
+
+		team := th.CreateTeam(ctx, teamName, "MsgCount E2E Team")
+		require.NotNil(t, team)
+
+		args := []string{
+			"transform", "slack",
+			"--team", teamName,
+			"--file", slackExportPath,
+			"--output", mmExportPath,
+			"--skip-attachments",
+		}
+		c := commands.RootCmd
+		resetCobraFlags(c)
+		c.SetArgs(args)
+		err = c.Execute()
+		require.NoError(t, err)
+
+		err = th.ImportBulkData(ctx, mmExportPath)
+		require.NoError(t, err)
+
+		johnUser := th.AssertUserExists(ctx, "john.doe")
+		janeUser := th.AssertUserExists(ctx, "jane.smith")
+
+		// Verify MsgCount on general channel members matches the 2 imported posts.
+		generalChannel := th.AssertChannelExists(ctx, teamName, "general")
+		generalMembers, err := th.GetChannelMembers(ctx, generalChannel.Id)
+		require.NoError(t, err)
+
+		for _, m := range generalMembers {
+			if m.UserId == johnUser.Id || m.UserId == janeUser.Id {
+				assert.Equal(t, int64(2), m.MsgCount,
+					"general channel member should have MsgCount=2 (2 root posts)")
+				assert.Equal(t, int64(2), m.MsgCountRoot,
+					"general channel member should have MsgCountRoot=2 (2 root posts)")
+			}
+		}
+
+		// Verify MsgCount on DM participants matches the 2 imported DM posts.
+		var dmChannel *model.Channel
+		dmChannel, _, err = th.Client.CreateDirectChannel(ctx, johnUser.Id, janeUser.Id)
+		require.NoError(t, err)
+		require.NotNil(t, dmChannel)
+
+		dmMembers, err := th.GetChannelMembers(ctx, dmChannel.Id)
+		require.NoError(t, err)
+
+		for _, m := range dmMembers {
+			if m.UserId == johnUser.Id || m.UserId == janeUser.Id {
+				assert.Equal(t, int64(2), m.MsgCount,
+					"DM participant should have MsgCount=2 (2 root posts)")
+				assert.Equal(t, int64(2), m.MsgCountRoot,
+					"DM participant should have MsgCountRoot=2 (2 root posts)")
+			}
+		}
+	})
 }
