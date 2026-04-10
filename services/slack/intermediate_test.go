@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
@@ -74,6 +75,48 @@ func TestIntermediateChannelSanitise(t *testing.T) {
 	})
 }
 
+func TestCreatedMillis(t *testing.T) {
+	t.Run("Returns milliseconds when Created is set", func(t *testing.T) {
+		channel := &IntermediateChannel{Created: 1704067200}
+		assert.Equal(t, int64(1704067200000), channel.CreatedMillis())
+	})
+
+	t.Run("Falls back to current time when Created is 0", func(t *testing.T) {
+		fixedTime := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+		originalNowFunc := nowFunc
+		nowFunc = func() time.Time { return fixedTime }
+		defer func() { nowFunc = originalNowFunc }()
+
+		channel := &IntermediateChannel{Created: 0}
+		assert.Equal(t, fixedTime.UnixMilli(), channel.CreatedMillis())
+	})
+
+	t.Run("Treats Slack placeholder Created=1 as invalid", func(t *testing.T) {
+		fixedTime := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+		originalNowFunc := nowFunc
+		nowFunc = func() time.Time { return fixedTime }
+		defer func() { nowFunc = originalNowFunc }()
+
+		channel := &IntermediateChannel{Created: 1}
+		assert.Equal(t, fixedTime.UnixMilli(), channel.CreatedMillis())
+	})
+
+	t.Run("Accepts Created exactly at minimum threshold", func(t *testing.T) {
+		channel := &IntermediateChannel{Created: minValidSlackCreatedTimestamp}
+		assert.Equal(t, int64(minValidSlackCreatedTimestamp)*1000, channel.CreatedMillis())
+	})
+
+	t.Run("Rejects Created one second below minimum threshold", func(t *testing.T) {
+		fixedTime := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+		originalNowFunc := nowFunc
+		nowFunc = func() time.Time { return fixedTime }
+		defer func() { nowFunc = originalNowFunc }()
+
+		channel := &IntermediateChannel{Created: minValidSlackCreatedTimestamp - 1}
+		assert.Equal(t, fixedTime.UnixMilli(), channel.CreatedMillis())
+	})
+}
+
 func TestTransformPublicChannels(t *testing.T) {
 	slackTransformer := NewTransformer("test", log.New())
 	slackTransformer.Intermediate.UsersById = map[string]*IntermediateUser{"m1": {}, "m2": {}, "m3": {}}
@@ -83,6 +126,7 @@ func TestTransformPublicChannels(t *testing.T) {
 			Id:      "id1",
 			Name:    "channel-name-1",
 			Creator: "creator1",
+			Created: 1704067200,
 			Members: []string{"m1", "m2", "m3"},
 			Purpose: SlackChannelSub{
 				Value: "purpose1",
@@ -96,6 +140,7 @@ func TestTransformPublicChannels(t *testing.T) {
 			Id:      "id2",
 			Name:    "channel-name-2",
 			Creator: "creator2",
+			Created: 1704070800,
 			Members: []string{"m1", "m2", "m3"},
 			Purpose: SlackChannelSub{
 				Value: "purpose2",
@@ -109,6 +154,7 @@ func TestTransformPublicChannels(t *testing.T) {
 			Id:      "id3",
 			Name:    "channel-name-3",
 			Creator: "creator3",
+			Created: 1704074400,
 			Members: []string{"m1", "m2", "m3"},
 			Purpose: SlackChannelSub{
 				Value: "purpose3",
@@ -123,6 +169,7 @@ func TestTransformPublicChannels(t *testing.T) {
 	result := slackTransformer.TransformChannels(publicChannels)
 	require.Len(t, result, len(publicChannels))
 
+	expectedCreated := []int64{1704067200, 1704070800, 1704074400}
 	for i := range result {
 		assert.Equal(t, fmt.Sprintf("channel-name-%d", i+1), result[i].Name)
 		assert.Equal(t, fmt.Sprintf("channel-name-%d", i+1), result[i].DisplayName)
@@ -130,6 +177,7 @@ func TestTransformPublicChannels(t *testing.T) {
 		assert.Equal(t, fmt.Sprintf("purpose%d", i+1), result[i].Purpose)
 		assert.Equal(t, fmt.Sprintf("topic%d", i+1), result[i].Header)
 		assert.Equal(t, model.ChannelTypeOpen, result[i].Type)
+		assert.Equal(t, expectedCreated[i], result[i].Created)
 	}
 }
 
@@ -831,25 +879,38 @@ func TestPopulateUserMemberships(t *testing.T) {
 			{
 				Name:    "c1",
 				Members: []string{"id1", "id3"},
+				Created: 1704067200,
 			},
 			{
 				Name:    "c2",
 				Members: []string{"id1", "id2"},
+				Created: 1704070800,
 			},
 		},
 		PrivateChannels: []*IntermediateChannel{
 			{
 				Name:    "c3",
 				Members: []string{"id3"},
+				Created: 1704074400,
 			},
 		},
 	}
 
 	slackTransformer.PopulateUserMemberships()
 
-	assert.Equal(t, []string{"c1", "c2"}, slackTransformer.Intermediate.UsersById["id1"].Memberships)
-	assert.Equal(t, []string{"c2"}, slackTransformer.Intermediate.UsersById["id2"].Memberships)
-	assert.Equal(t, []string{"c1", "c3"}, slackTransformer.Intermediate.UsersById["id3"].Memberships)
+	// PopulateUserMemberships only records channel names;
+	// read-state fields are set later by applyChannelStatsToMemberships.
+	assert.Equal(t, []IntermediateMembership{
+		{Name: "c1"},
+		{Name: "c2"},
+	}, slackTransformer.Intermediate.UsersById["id1"].Memberships)
+	assert.Equal(t, []IntermediateMembership{
+		{Name: "c2"},
+	}, slackTransformer.Intermediate.UsersById["id2"].Memberships)
+	assert.Equal(t, []IntermediateMembership{
+		{Name: "c1"},
+		{Name: "c3"},
+	}, slackTransformer.Intermediate.UsersById["id3"].Memberships)
 }
 
 func TestPopulateChannelMemberships(t *testing.T) {
@@ -931,6 +992,221 @@ func TestAddPostToThreads(t *testing.T) {
 				require.EqualValues(t, tc.ExpectedTimestamps, tc.Timestamps)
 			})
 		}
+	})
+}
+
+func TestDirectChannelKey(t *testing.T) {
+	assert.Equal(t, directChannelKey([]string{"bob", "alice"}), directChannelKey([]string{"alice", "bob"}))
+	assert.Equal(t, "alice,bob", directChannelKey([]string{"bob", "alice"}))
+	assert.Equal(t, "alice,bob,charlie", directChannelKey([]string{"charlie", "alice", "bob"}))
+}
+
+func TestComputeChannelPostStats(t *testing.T) {
+	t.Run("regular channel counts root posts and replies", func(t *testing.T) {
+		slackTransformer := NewTransformer("test", log.New())
+		ch := &IntermediateChannel{Name: "general", Type: model.ChannelTypeOpen}
+		slackTransformer.Intermediate = &Intermediate{
+			PublicChannels: []*IntermediateChannel{ch},
+			Posts: []*IntermediatePost{
+				{
+					Channel:  "general",
+					CreateAt: 1000,
+					Replies: []*IntermediatePost{
+						{CreateAt: 1001},
+						{CreateAt: 1002},
+					},
+				},
+				{
+					Channel:  "general",
+					CreateAt: 2000,
+				},
+			},
+		}
+		slackTransformer.ComputeChannelPostStats()
+
+		assert.Equal(t, int64(4), ch.MsgCount)      // 2 root + 2 replies
+		assert.Equal(t, int64(2), ch.MsgCountRoot)  // 2 root only
+		assert.Equal(t, int64(2000), ch.LastPostAt) // max timestamp across all posts (roots + replies)
+	})
+
+	t.Run("LastPostAt tracks reply timestamps", func(t *testing.T) {
+		slackTransformer := NewTransformer("test", log.New())
+		ch := &IntermediateChannel{Name: "general", Type: model.ChannelTypeOpen}
+		slackTransformer.Intermediate = &Intermediate{
+			PublicChannels: []*IntermediateChannel{ch},
+			Posts: []*IntermediatePost{
+				{
+					Channel:  "general",
+					CreateAt: 1000,
+					Replies: []*IntermediatePost{
+						{CreateAt: 5000},
+					},
+				},
+			},
+		}
+		slackTransformer.ComputeChannelPostStats()
+
+		assert.Equal(t, int64(5000), ch.LastPostAt) // reply timestamp > root
+	})
+
+	t.Run("direct channel matched by sorted members", func(t *testing.T) {
+		slackTransformer := NewTransformer("test", log.New())
+		ch := &IntermediateChannel{
+			Name:             "dm",
+			Type:             model.ChannelTypeDirect,
+			MembersUsernames: []string{"alice", "bob"},
+		}
+		slackTransformer.Intermediate = &Intermediate{
+			DirectChannels: []*IntermediateChannel{ch},
+			Posts: []*IntermediatePost{
+				{
+					IsDirect:       true,
+					ChannelMembers: []string{"bob", "alice"}, // reversed order
+					CreateAt:       3000,
+				},
+			},
+		}
+		slackTransformer.ComputeChannelPostStats()
+
+		assert.Equal(t, int64(1), ch.MsgCount)
+		assert.Equal(t, int64(1), ch.MsgCountRoot)
+		assert.Equal(t, int64(3000), ch.LastPostAt)
+	})
+
+	t.Run("channel with no posts has zero stats", func(t *testing.T) {
+		slackTransformer := NewTransformer("test", log.New())
+		ch := &IntermediateChannel{Name: "empty", Type: model.ChannelTypeOpen}
+		slackTransformer.Intermediate = &Intermediate{
+			PublicChannels: []*IntermediateChannel{ch},
+			Posts:          []*IntermediatePost{},
+		}
+		slackTransformer.ComputeChannelPostStats()
+
+		assert.Equal(t, int64(0), ch.MsgCount)
+		assert.Equal(t, int64(0), ch.MsgCountRoot)
+		assert.Equal(t, int64(0), ch.LastPostAt)
+	})
+}
+
+func TestApplyChannelStatsToMemberships(t *testing.T) {
+	t.Run("sets stats from post data", func(t *testing.T) {
+		slackTransformer := NewTransformer("test", log.New())
+		ch := &IntermediateChannel{
+			Name:         "general",
+			MsgCount:     10,
+			MsgCountRoot: 5,
+			LastPostAt:   9000,
+		}
+		slackTransformer.Intermediate = &Intermediate{
+			PublicChannels: []*IntermediateChannel{ch},
+			UsersById: map[string]*IntermediateUser{
+				"id1": {
+					Memberships: []IntermediateMembership{{Name: "general"}},
+				},
+			},
+		}
+
+		slackTransformer.applyChannelStatsToMemberships()
+
+		m := slackTransformer.Intermediate.UsersById["id1"].Memberships[0]
+		assert.Equal(t, int64(9000), m.LastViewedAt)
+		assert.Equal(t, int64(10), m.MsgCount)
+		assert.Equal(t, int64(5), m.MsgCountRoot)
+	})
+
+	t.Run("falls back to CreatedMillis when no posts", func(t *testing.T) {
+		slackTransformer := NewTransformer("test", log.New())
+		ch := &IntermediateChannel{
+			Name:    "empty",
+			Created: 1704067200,
+		}
+		slackTransformer.Intermediate = &Intermediate{
+			PublicChannels: []*IntermediateChannel{ch},
+			UsersById: map[string]*IntermediateUser{
+				"id1": {
+					Memberships: []IntermediateMembership{{Name: "empty"}},
+				},
+			},
+		}
+
+		slackTransformer.applyChannelStatsToMemberships()
+
+		m := slackTransformer.Intermediate.UsersById["id1"].Memberships[0]
+		assert.Equal(t, int64(1704067200000), m.LastViewedAt)
+		assert.Equal(t, int64(0), m.MsgCount)
+		assert.Equal(t, int64(0), m.MsgCountRoot)
+	})
+
+	t.Run("sets stats for private channel membership", func(t *testing.T) {
+		slackTransformer := NewTransformer("test", log.New())
+		ch := &IntermediateChannel{
+			Name:         "secret",
+			MsgCount:     3,
+			MsgCountRoot: 2,
+			LastPostAt:   7000,
+		}
+		slackTransformer.Intermediate = &Intermediate{
+			PrivateChannels: []*IntermediateChannel{ch},
+			UsersById: map[string]*IntermediateUser{
+				"id1": {
+					Memberships: []IntermediateMembership{{Name: "secret"}},
+				},
+			},
+		}
+
+		slackTransformer.applyChannelStatsToMemberships()
+
+		m := slackTransformer.Intermediate.UsersById["id1"].Memberships[0]
+		assert.Equal(t, int64(7000), m.LastViewedAt)
+		assert.Equal(t, int64(3), m.MsgCount)
+		assert.Equal(t, int64(2), m.MsgCountRoot)
+	})
+
+	t.Run("skips membership for unknown channel", func(t *testing.T) {
+		slackTransformer := NewTransformer("test", log.New())
+		slackTransformer.Intermediate = &Intermediate{
+			PublicChannels: []*IntermediateChannel{},
+			UsersById: map[string]*IntermediateUser{
+				"id1": {
+					Memberships: []IntermediateMembership{{Name: "deleted-channel"}},
+				},
+			},
+		}
+
+		slackTransformer.applyChannelStatsToMemberships()
+
+		m := slackTransformer.Intermediate.UsersById["id1"].Memberships[0]
+		assert.Equal(t, int64(0), m.LastViewedAt)
+		assert.Equal(t, int64(0), m.MsgCount)
+		assert.Equal(t, int64(0), m.MsgCountRoot)
+	})
+
+	t.Run("multiple users across different channels get correct stats", func(t *testing.T) {
+		slackTransformer := NewTransformer("test", log.New())
+		ch1 := &IntermediateChannel{Name: "general", MsgCount: 10, MsgCountRoot: 5, LastPostAt: 9000}
+		ch2 := &IntermediateChannel{Name: "random", MsgCount: 3, MsgCountRoot: 3, LastPostAt: 4000}
+		slackTransformer.Intermediate = &Intermediate{
+			PublicChannels: []*IntermediateChannel{ch1, ch2},
+			UsersById: map[string]*IntermediateUser{
+				"id1": {Memberships: []IntermediateMembership{{Name: "general"}, {Name: "random"}}},
+				"id2": {Memberships: []IntermediateMembership{{Name: "random"}}},
+			},
+		}
+
+		slackTransformer.applyChannelStatsToMemberships()
+
+		u1 := slackTransformer.Intermediate.UsersById["id1"]
+		assert.Equal(t, int64(9000), u1.Memberships[0].LastViewedAt)
+		assert.Equal(t, int64(10), u1.Memberships[0].MsgCount)
+		assert.Equal(t, int64(5), u1.Memberships[0].MsgCountRoot)
+		assert.Equal(t, int64(4000), u1.Memberships[1].LastViewedAt)
+		assert.Equal(t, int64(3), u1.Memberships[1].MsgCount)
+		assert.Equal(t, int64(3), u1.Memberships[1].MsgCountRoot)
+
+		u2 := slackTransformer.Intermediate.UsersById["id2"]
+		assert.Equal(t, int64(4000), u2.Memberships[0].LastViewedAt)
+		assert.Equal(t, int64(3), u2.Memberships[0].MsgCount)
+		assert.Equal(t, int64(3), u2.Memberships[0].MsgCountRoot)
 	})
 }
 
@@ -1082,13 +1358,16 @@ func TestPopulateUserMembershipsSkipsBots(t *testing.T) {
 			{
 				Name:    "c1",
 				Members: []string{"id1", "B01"},
+				Created: 1704067200,
 			},
 		},
 	}
 
 	slackTransformer.PopulateUserMemberships()
 
-	assert.Equal(t, []string{"c1"}, slackTransformer.Intermediate.UsersById["id1"].Memberships)
+	assert.Equal(t, []IntermediateMembership{
+		{Name: "c1"},
+	}, slackTransformer.Intermediate.UsersById["id1"].Memberships)
 	assert.Nil(t, slackTransformer.Intermediate.UsersById["B01"].Memberships)
 }
 

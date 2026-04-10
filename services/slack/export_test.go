@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/v8/channels/app/imports"
@@ -533,5 +534,196 @@ func TestExportUsersWithBots(t *testing.T) {
 		var line0 imports.LineImportData
 		require.NoError(t, json.Unmarshal([]byte(lines[0]), &line0))
 		assert.Equal(t, "user", line0.Type)
+	})
+}
+
+func TestGetImportLineFromUser(t *testing.T) {
+	t.Run("read state fields are set on channel memberships", func(t *testing.T) {
+		user := &IntermediateUser{
+			Username:  "alice",
+			Email:     "alice@example.com",
+			FirstName: "Alice",
+			LastName:  "Smith",
+			Memberships: []IntermediateMembership{
+				{Name: "general", LastViewedAt: 5000, MsgCount: 10, MsgCountRoot: 5},
+				{Name: "random", LastViewedAt: 9000, MsgCount: 20, MsgCountRoot: 12},
+			},
+		}
+
+		line := GetImportLineFromUser(user, "myteam")
+
+		assert.Equal(t, "user", line.Type)
+		require.NotNil(t, line.User)
+		require.NotNil(t, line.User.Teams)
+		require.Len(t, *line.User.Teams, 1)
+
+		team := (*line.User.Teams)[0]
+		require.NotNil(t, team.Channels)
+		channels := *team.Channels
+		require.Len(t, channels, 2)
+
+		assert.Equal(t, "general", *channels[0].Name)
+		assert.Equal(t, int64(5000), *channels[0].LastViewedAt)
+		assert.Equal(t, int64(10), *channels[0].MsgCount)
+		assert.Equal(t, int64(5), *channels[0].MsgCountRoot)
+
+		assert.Equal(t, "random", *channels[1].Name)
+		assert.Equal(t, int64(9000), *channels[1].LastViewedAt)
+		assert.Equal(t, int64(20), *channels[1].MsgCount)
+		assert.Equal(t, int64(12), *channels[1].MsgCountRoot)
+	})
+
+	t.Run("MsgCount omitted when zero", func(t *testing.T) {
+		user := &IntermediateUser{
+			Username: "bob",
+			Email:    "bob@example.com",
+			Memberships: []IntermediateMembership{
+				{Name: "empty-channel", LastViewedAt: 1000},
+			},
+		}
+
+		line := GetImportLineFromUser(user, "myteam")
+
+		channels := *(*line.User.Teams)[0].Channels
+		require.Len(t, channels, 1)
+		assert.Equal(t, int64(1000), *channels[0].LastViewedAt)
+		assert.Nil(t, channels[0].MsgCount)
+		assert.Nil(t, channels[0].MsgCountRoot)
+	})
+
+	t.Run("LastViewedAt omitted when zero", func(t *testing.T) {
+		user := &IntermediateUser{
+			Username: "dave",
+			Email:    "dave@example.com",
+			Memberships: []IntermediateMembership{
+				{Name: "orphan-channel"},
+			},
+		}
+
+		line := GetImportLineFromUser(user, "myteam")
+
+		channels := *(*line.User.Teams)[0].Channels
+		require.Len(t, channels, 1)
+		assert.Nil(t, channels[0].LastViewedAt)
+		assert.Nil(t, channels[0].MsgCount)
+		assert.Nil(t, channels[0].MsgCountRoot)
+	})
+
+	t.Run("No memberships produces nil channels", func(t *testing.T) {
+		user := &IntermediateUser{
+			Username: "charlie",
+			Email:    "charlie@example.com",
+		}
+
+		line := GetImportLineFromUser(user, "myteam")
+
+		require.NotNil(t, line.User.Teams)
+		team := (*line.User.Teams)[0]
+		assert.Nil(t, team.Channels)
+	})
+}
+
+func TestGetImportLineFromDirectChannel(t *testing.T) {
+	t.Run("uses LastPostAt and post stats when posts exist", func(t *testing.T) {
+		channel := &IntermediateChannel{
+			Name:             "dm-channel",
+			Topic:            "DM topic",
+			MembersUsernames: []string{"alice", "bob"},
+			Created:          1704067200,
+			MsgCount:         8,
+			MsgCountRoot:     5,
+			LastPostAt:       1704099999000,
+		}
+
+		line := GetImportLineFromDirectChannel("myteam", channel)
+
+		assert.Equal(t, "direct_channel", line.Type)
+		require.NotNil(t, line.DirectChannel)
+		require.NotNil(t, line.DirectChannel.Members)
+		assert.Equal(t, []string{"alice", "bob"}, *line.DirectChannel.Members)
+		require.Len(t, line.DirectChannel.Participants, 2)
+
+		for _, p := range line.DirectChannel.Participants {
+			assert.Equal(t, int64(1704099999000), *p.LastViewedAt)
+			assert.Equal(t, int64(8), *p.MsgCount)
+			assert.Equal(t, int64(5), *p.MsgCountRoot)
+		}
+	})
+
+	t.Run("falls back to CreatedMillis when no posts", func(t *testing.T) {
+		channel := &IntermediateChannel{
+			Name:             "dm-channel",
+			Topic:            "DM topic",
+			MembersUsernames: []string{"alice", "bob"},
+			Created:          1704067200,
+		}
+
+		line := GetImportLineFromDirectChannel("myteam", channel)
+
+		require.Len(t, line.DirectChannel.Participants, 2)
+		assert.Equal(t, int64(1704067200000), *line.DirectChannel.Participants[0].LastViewedAt)
+		assert.Nil(t, line.DirectChannel.Participants[0].MsgCount)
+	})
+
+	t.Run("falls back to current time when Created is invalid", func(t *testing.T) {
+		fixedTime := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+		originalNowFunc := nowFunc
+		nowFunc = func() time.Time { return fixedTime }
+		defer func() { nowFunc = originalNowFunc }()
+
+		channel := &IntermediateChannel{
+			Name:             "dm-channel",
+			Topic:            "DM topic",
+			MembersUsernames: []string{"alice", "bob"},
+			Created:          1, // Slack DM placeholder
+		}
+
+		line := GetImportLineFromDirectChannel("myteam", channel)
+
+		require.Len(t, line.DirectChannel.Participants, 2)
+		assert.Equal(t, fixedTime.UnixMilli(), *line.DirectChannel.Participants[0].LastViewedAt)
+		assert.Nil(t, line.DirectChannel.Participants[0].MsgCount)
+	})
+}
+
+func TestExportDirectChannels(t *testing.T) {
+	t.Run("writes all channels as JSONL lines", func(t *testing.T) {
+		transformer := NewTransformer("myteam", log.New())
+		channels := []*IntermediateChannel{
+			{
+				Name:             "dm1",
+				MembersUsernames: []string{"alice", "bob"},
+				Created:          1704067200,
+				MsgCount:         5,
+				MsgCountRoot:     3,
+				LastPostAt:       1704099999000,
+			},
+			{
+				Name:             "dm2",
+				MembersUsernames: []string{"charlie", "dave"},
+				Created:          1704067200,
+			},
+		}
+
+		var buf bytes.Buffer
+		err := transformer.ExportDirectChannels(channels, &buf)
+		require.NoError(t, err)
+
+		lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
+		require.Len(t, lines, 2)
+
+		for _, line := range lines {
+			var parsed map[string]json.RawMessage
+			require.NoError(t, json.Unmarshal([]byte(line), &parsed))
+			assert.Equal(t, `"direct_channel"`, string(parsed["type"]))
+		}
+	})
+
+	t.Run("empty channel list produces no output", func(t *testing.T) {
+		transformer := NewTransformer("myteam", log.New())
+		var buf bytes.Buffer
+		err := transformer.ExportDirectChannels([]*IntermediateChannel{}, &buf)
+		require.NoError(t, err)
+		assert.Empty(t, buf.String())
 	})
 }

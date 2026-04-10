@@ -155,22 +155,48 @@ func GetImportLineFromChannel(team string, channel *IntermediateChannel) *import
 }
 
 func GetImportLineFromDirectChannel(team string, channel *IntermediateChannel) *imports.LineImportData {
+	var participants []*imports.DirectChannelMemberImportData
+	lastViewedAt := channel.LastPostAt
+	if lastViewedAt == 0 {
+		lastViewedAt = channel.CreatedMillis()
+	}
+	for _, username := range channel.MembersUsernames {
+		p := &imports.DirectChannelMemberImportData{
+			Username:     model.NewPointer(username),
+			LastViewedAt: model.NewPointer(lastViewedAt),
+		}
+		if channel.MsgCount > 0 {
+			p.MsgCount = model.NewPointer(channel.MsgCount)
+			p.MsgCountRoot = model.NewPointer(channel.MsgCountRoot)
+		}
+		participants = append(participants, p)
+	}
+
 	return &imports.LineImportData{
 		Type: "direct_channel",
 		DirectChannel: &imports.DirectChannelImportData{
-			Header:  &channel.Topic,
-			Members: &channel.MembersUsernames,
+			Header:       &channel.Topic,
+			Members:      &channel.MembersUsernames,
+			Participants: participants,
 		},
 	}
 }
 
 func GetImportLineFromUser(user *IntermediateUser, team string) *imports.LineImportData {
 	channelMemberships := []imports.UserChannelImportData{}
-	for _, channelName := range user.Memberships {
-		channelMemberships = append(channelMemberships, imports.UserChannelImportData{
-			Name:  model.NewPointer(channelName),
+	for _, membership := range user.Memberships {
+		ch := imports.UserChannelImportData{
+			Name:  model.NewPointer(membership.Name),
 			Roles: model.NewPointer(model.ChannelUserRoleId),
-		})
+		}
+		if membership.LastViewedAt > 0 {
+			ch.LastViewedAt = model.NewPointer(membership.LastViewedAt)
+		}
+		if membership.MsgCount > 0 {
+			ch.MsgCount = model.NewPointer(membership.MsgCount)
+			ch.MsgCountRoot = model.NewPointer(membership.MsgCountRoot)
+		}
+		channelMemberships = append(channelMemberships, ch)
 	}
 
 	var channelsPtr *[]imports.UserChannelImportData
@@ -389,6 +415,9 @@ func (t *Transformer) ExportChannels(channels []*IntermediateChannel, writer io.
 // valid for group or direct, as they export with members
 func (t *Transformer) ExportDirectChannels(channels []*IntermediateChannel, writer io.Writer) error {
 	for _, channel := range channels {
+		if channel.LastPostAt == 0 && channel.Created < minValidSlackCreatedTimestamp {
+			t.Logger.Warnf("Direct/group channel %s has no valid creation timestamp; using current time for LastViewedAt", channel.Name)
+		}
 		line := GetImportLineFromDirectChannel(t.TeamName, channel)
 		if err := ExportWriteLine(writer, line); err != nil {
 			return err
