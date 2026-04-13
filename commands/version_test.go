@@ -4,6 +4,7 @@
 package commands
 
 import (
+	"runtime/debug"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -27,6 +28,40 @@ func TestGetVersion(t *testing.T) {
 		Version = ""
 		assert.Equal(t, "dev", getVersion())
 	})
+
+	t.Run("returns module version from build info", func(t *testing.T) {
+		origVersion := Version
+		origReader := readBuildInfo
+		t.Cleanup(func() {
+			Version = origVersion
+			readBuildInfo = origReader
+		})
+
+		Version = ""
+		readBuildInfo = func() (*debug.BuildInfo, bool) {
+			return &debug.BuildInfo{
+				Main: debug.Module{Version: "v0.9.0"},
+			}, true
+		}
+		assert.Equal(t, "v0.9.0", getVersion())
+	})
+
+	t.Run("returns dev when build info version is (devel)", func(t *testing.T) {
+		origVersion := Version
+		origReader := readBuildInfo
+		t.Cleanup(func() {
+			Version = origVersion
+			readBuildInfo = origReader
+		})
+
+		Version = ""
+		readBuildInfo = func() (*debug.BuildInfo, bool) {
+			return &debug.BuildInfo{
+				Main: debug.Module{Version: "(devel)"},
+			}, true
+		}
+		assert.Equal(t, "dev", getVersion())
+	})
 }
 
 func TestGetBuildHash(t *testing.T) {
@@ -45,6 +80,46 @@ func TestGetBuildHash(t *testing.T) {
 		// In test binaries, info.Main.Version is "(devel)",
 		// so getBuildHash should skip vcs.revision and return "dev mode".
 		BuildHash = ""
+		assert.Equal(t, "dev mode", getBuildHash())
+	})
+
+	t.Run("returns vcs.revision from build info", func(t *testing.T) {
+		origHash := BuildHash
+		origReader := readBuildInfo
+		t.Cleanup(func() {
+			BuildHash = origHash
+			readBuildInfo = origReader
+		})
+
+		BuildHash = ""
+		readBuildInfo = func() (*debug.BuildInfo, bool) {
+			return &debug.BuildInfo{
+				Main: debug.Module{Version: "v0.9.0"},
+				Settings: []debug.BuildSetting{
+					{Key: "vcs.revision", Value: "deadbeef1234"},
+				},
+			}, true
+		}
+		assert.Equal(t, "deadbeef1234", getBuildHash())
+	})
+
+	t.Run("returns dev mode when version is (devel)", func(t *testing.T) {
+		origHash := BuildHash
+		origReader := readBuildInfo
+		t.Cleanup(func() {
+			BuildHash = origHash
+			readBuildInfo = origReader
+		})
+
+		BuildHash = ""
+		readBuildInfo = func() (*debug.BuildInfo, bool) {
+			return &debug.BuildInfo{
+				Main: debug.Module{Version: "(devel)"},
+				Settings: []debug.BuildSetting{
+					{Key: "vcs.revision", Value: "deadbeef1234"},
+				},
+			}, true
+		}
 		assert.Equal(t, "dev mode", getBuildHash())
 	})
 }

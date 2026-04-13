@@ -13,6 +13,10 @@ import (
 var (
 	BuildHash = ""
 	Version   = ""
+
+	// readBuildInfo is an indirection for runtime/debug.ReadBuildInfo so
+	// tests can inject controlled stubs.
+	readBuildInfo = debug.ReadBuildInfo
 )
 
 var VersionCmd = &cobra.Command{
@@ -34,7 +38,7 @@ func getVersion() string {
 		return Version
 	}
 
-	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" && info.Main.Version != "(devel)" {
+	if info, ok := readBuildInfo(); ok && info.Main.Version != "" && info.Main.Version != "(devel)" {
 		return info.Main.Version
 	}
 
@@ -49,7 +53,7 @@ func getBuildHash() string {
 		return BuildHash
 	}
 
-	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "(devel)" {
+	if info, ok := readBuildInfo(); ok && info.Main.Version != "(devel)" {
 		for _, setting := range info.Settings {
 			if setting.Key == "vcs.revision" {
 				return setting.Value
