@@ -49,7 +49,7 @@ func getBuildHash() string {
 		return BuildHash
 	}
 
-	if info, ok := debug.ReadBuildInfo(); ok {
+	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "(devel)" {
 		for _, setting := range info.Settings {
 			if setting.Key == "vcs.revision" {
 				return setting.Value
