@@ -9,6 +9,7 @@ import (
 	"path"
 	"sort"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/mattermost/mattermost/server/public/model"
@@ -19,7 +20,16 @@ import (
 
 const attachmentsInternal = "bulk-export-attachments"
 
+// minValidSlackCreatedTimestamp is the minimum Unix timestamp (seconds) we consider
+// valid for a Slack channel creation time. Slack launched in 2013, so any value
+// before Jan 1, 2013 is treated as a placeholder (e.g. Slack uses "created": 1 for DMs).
+const minValidSlackCreatedTimestamp = 1356998400
+
 var exitFunc func(code int) = os.Exit
+
+// nowFunc is used by CreatedMillis for the fallback timestamp.
+// Tests can override this for deterministic output.
+var nowFunc = time.Now
 
 type IntermediateChannel struct {
 	Id               string            `json:"id"`
@@ -33,6 +43,77 @@ type IntermediateChannel struct {
 	Topic            string            `json:"topic"`
 	Type             model.ChannelType `json:"type"`
 	DeleteAt         int64             `json:"delete_at"`
+	Created          int64             `json:"created"` // Unix timestamp in seconds from Slack
+	MsgCount         int64             `json:"msg_count"`
+	MsgCountRoot     int64             `json:"msg_count_root"`
+	LastPostAt       int64             `json:"last_post_at"` // milliseconds, computed from posts
+}
+
+// CreatedMillis returns the channel creation time in milliseconds.
+// If Created is not a valid timestamp (zero, placeholder, or before Slack's
+// launch in 2013), falls back to the current time.
+func (c *IntermediateChannel) CreatedMillis() int64 {
+	if c.Created >= minValidSlackCreatedTimestamp {
+		return c.Created * 1000
+	}
+	return nowFunc().UnixMilli()
+}
+
+// directChannelKey returns a deterministic lookup key for a direct/group
+// channel by sorting and joining the member usernames.
+func directChannelKey(members []string) string {
+	sorted := make([]string, len(members))
+	copy(sorted, members)
+	sort.Strings(sorted)
+	return strings.Join(sorted, ",")
+}
+
+// ComputeChannelPostStats iterates all transformed posts and accumulates
+// MsgCount, MsgCountRoot, and LastPostAt on each IntermediateChannel.
+// Must be called after TransformPosts completes.
+func (t *Transformer) ComputeChannelPostStats() {
+	channelsByName := make(map[string]*IntermediateChannel)
+	for _, ch := range t.Intermediate.PublicChannels {
+		channelsByName[ch.Name] = ch
+	}
+	for _, ch := range t.Intermediate.PrivateChannels {
+		channelsByName[ch.Name] = ch
+	}
+
+	channelsByMembers := make(map[string]*IntermediateChannel)
+	for _, ch := range t.Intermediate.GroupChannels {
+		channelsByMembers[directChannelKey(ch.MembersUsernames)] = ch
+	}
+	for _, ch := range t.Intermediate.DirectChannels {
+		channelsByMembers[directChannelKey(ch.MembersUsernames)] = ch
+	}
+
+	for _, post := range t.Intermediate.Posts {
+		var ch *IntermediateChannel
+		if post.IsDirect {
+			ch = channelsByMembers[directChannelKey(post.ChannelMembers)]
+		} else {
+			ch = channelsByName[post.Channel]
+		}
+		if ch == nil {
+			continue
+		}
+
+		// Each entry in Intermediate.Posts is a root post; replies are
+		// nested in post.Replies (see AddPostToThreads).
+		ch.MsgCount++
+		ch.MsgCountRoot++
+		if post.CreateAt > ch.LastPostAt {
+			ch.LastPostAt = post.CreateAt
+		}
+
+		for _, reply := range post.Replies {
+			ch.MsgCount++
+			if reply.CreateAt > ch.LastPostAt {
+				ch.LastPostAt = reply.CreateAt
+			}
+		}
+	}
 }
 
 func (c *IntermediateChannel) Sanitise(logger log.FieldLogger) {
@@ -72,18 +153,28 @@ func (c *IntermediateChannel) Sanitise(logger log.FieldLogger) {
 	}
 }
 
+// IntermediateMembership represents a user's membership in a channel,
+// carrying the channel name and pre-computed read-state fields
+// for the Mattermost bulk import.
+type IntermediateMembership struct {
+	Name         string `json:"name"`
+	LastViewedAt int64  `json:"last_viewed_at"` // milliseconds
+	MsgCount     int64  `json:"msg_count"`
+	MsgCountRoot int64  `json:"msg_count_root"`
+}
+
 type IntermediateUser struct {
-	Id          string   `json:"id"`
-	Username    string   `json:"username"`
-	FirstName   string   `json:"first_name"`
-	LastName    string   `json:"last_name"`
-	Position    string   `json:"position"`
-	Email       string   `json:"email"`
-	Password    string   `json:"password"`
-	Memberships []string `json:"memberships"`
-	DeleteAt    int64    `json:"delete_at"`
-	IsBot       bool     `json:"is_bot"`
-	DisplayName string   `json:"display_name"`
+	Id          string                   `json:"id"`
+	Username    string                   `json:"username"`
+	FirstName   string                   `json:"first_name"`
+	LastName    string                   `json:"last_name"`
+	Position    string                   `json:"position"`
+	Email       string                   `json:"email"`
+	Password    string                   `json:"password"`
+	Memberships []IntermediateMembership `json:"memberships"`
+	DeleteAt    int64                    `json:"delete_at"`
+	IsBot       bool                     `json:"is_bot"`
+	DisplayName string                   `json:"display_name"`
 }
 
 func (u *IntermediateUser) Sanitise(logger log.FieldLogger, defaultEmailDomain string, skipEmptyEmails bool) {
@@ -252,6 +343,7 @@ func (t *Transformer) TransformChannels(channels []SlackChannel) []*Intermediate
 			Purpose:      channel.Purpose.Value,
 			Header:       channel.Topic.Value,
 			Type:         channel.Type,
+			Created:      channel.Created,
 		}
 
 		// Only public and private channels support DeletedAt in the Mattermost import
@@ -281,11 +373,13 @@ func (t *Transformer) PopulateUserMemberships() {
 		if user.IsBot {
 			continue
 		}
-		memberships := []string{}
+		var memberships []IntermediateMembership
 		for _, channel := range t.Intermediate.PublicChannels {
 			for _, memberId := range channel.Members {
 				if userId == memberId {
-					memberships = append(memberships, channel.Name)
+					memberships = append(memberships, IntermediateMembership{
+						Name: channel.Name,
+					})
 					break
 				}
 			}
@@ -293,12 +387,53 @@ func (t *Transformer) PopulateUserMemberships() {
 		for _, channel := range t.Intermediate.PrivateChannels {
 			for _, memberId := range channel.Members {
 				if userId == memberId {
-					memberships = append(memberships, channel.Name)
+					memberships = append(memberships, IntermediateMembership{
+						Name: channel.Name,
+					})
 					break
 				}
 			}
 		}
 		user.Memberships = memberships
+	}
+}
+
+// applyChannelStatsToMemberships updates each user's channel memberships
+// with read-state values computed from post stats. Uses channel.LastPostAt
+// for LastViewedAt (falling back to CreatedMillis for channels with no posts).
+func (t *Transformer) applyChannelStatsToMemberships() {
+	channelsByName := make(map[string]*IntermediateChannel)
+	for _, ch := range t.Intermediate.PublicChannels {
+		channelsByName[ch.Name] = ch
+	}
+	for _, ch := range t.Intermediate.PrivateChannels {
+		channelsByName[ch.Name] = ch
+	}
+
+	// Cache fallback values and warn once per channel, not once per member.
+	fallbackByChannel := make(map[string]int64)
+	for _, user := range t.Intermediate.UsersById {
+		for i, m := range user.Memberships {
+			ch := channelsByName[m.Name]
+			if ch == nil {
+				continue
+			}
+			if ch.LastPostAt > 0 {
+				user.Memberships[i].LastViewedAt = ch.LastPostAt
+				user.Memberships[i].MsgCount = ch.MsgCount
+				user.Memberships[i].MsgCountRoot = ch.MsgCountRoot
+			} else {
+				fb, ok := fallbackByChannel[ch.Name]
+				if !ok {
+					if ch.Created < minValidSlackCreatedTimestamp {
+						t.Logger.Warnf("Channel %s has no valid creation timestamp; using current time for LastViewedAt", ch.Name)
+					}
+					fb = ch.CreatedMillis()
+					fallbackByChannel[ch.Name] = fb
+				}
+				user.Memberships[i].LastViewedAt = fb
+			}
+		}
 	}
 }
 
@@ -956,6 +1091,9 @@ func (t *Transformer) Transform(slackExport *SlackExport, attachmentsDir string,
 	if err := t.TransformPosts(slackExport, attachmentsDir, skipAttachments, discardInvalidProps, allowDownload); err != nil {
 		return err
 	}
+
+	t.ComputeChannelPostStats()
+	t.applyChannelStatsToMemberships()
 
 	return nil
 }

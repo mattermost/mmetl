@@ -11,6 +11,7 @@ type SlackChannel struct {
 	Id         string            `json:"id"`
 	Name       string            `json:"name"`
 	Creator    string            `json:"creator"`
+	Created    int64             `json:"created"`
 	Members    []string          `json:"members"`
 	Purpose    SlackChannelSub   `json:"purpose"`
 	Topic      SlackChannelSub   `json:"topic"`
