@@ -772,6 +772,7 @@ func TestTransformSlackE2EBotImport(t *testing.T) {
 		c.SetArgs(args)
 		err = c.Execute()
 		require.NoError(t, err, "transform command should succeed")
+		defer os.Remove(transformLogFile)
 
 		// 4. Verify the JSONL contains deleted_at for the archived channel
 		t.Log("Checking JSONL output for archived channel...")

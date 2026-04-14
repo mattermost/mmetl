@@ -2118,14 +2118,11 @@ func TestTransformArchivedChannels(t *testing.T) {
 		}
 
 		dmResult := slackTransformer.TransformChannels([]SlackChannel{directChannel})
-		// Direct channels with <= 1 valid member are dropped; with 2 they pass through
-		if len(dmResult) > 0 {
-			assert.Equal(t, int64(0), dmResult[0].DeleteAt, "direct channels should not have DeleteAt set")
-		}
+		require.Len(t, dmResult, 1, "direct channel with 2 valid members should be transformed")
+		assert.Equal(t, int64(0), dmResult[0].DeleteAt, "direct channels should not have DeleteAt set")
 
 		groupResult := slackTransformer.TransformChannels([]SlackChannel{groupChannel})
-		if len(groupResult) > 0 {
-			assert.Equal(t, int64(0), groupResult[0].DeleteAt, "group channels should not have DeleteAt set")
-		}
+		require.Len(t, groupResult, 1, "group channel with 3 valid members should be transformed")
+		assert.Equal(t, int64(0), groupResult[0].DeleteAt, "group channels should not have DeleteAt set")
 	})
 }
