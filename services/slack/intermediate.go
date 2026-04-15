@@ -793,6 +793,7 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 		channel, ok := channelsByOriginalName[originalChannelName]
 		if !ok {
 			t.Logger.Warnf("--- Couldn't find channel %s referenced by posts", originalChannelName)
+			delete(slackExport.Posts, originalChannelName)
 			continue
 		}
 
@@ -1055,9 +1056,11 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 			channelPosts = append(channelPosts, post)
 		}
 		resultPosts = append(resultPosts, channelPosts...)
+		delete(slackExport.Posts, originalChannelName)
 	}
 
 	t.Intermediate.Posts = resultPosts
+	slackExport.Posts = nil
 	t.Intermediate.GroupChannels = append(t.Intermediate.GroupChannels, newGroupChannels...)
 	t.Intermediate.DirectChannels = append(t.Intermediate.DirectChannels, newDirectChannels...)
 
