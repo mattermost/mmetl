@@ -323,6 +323,8 @@ func getOriginalName(channel SlackChannel) string {
 func (t *Transformer) TransformChannels(channels []SlackChannel) []*IntermediateChannel {
 	resultChannels := []*IntermediateChannel{}
 	for _, channel := range channels {
+		// Capture the original type before the oversized-MPIM rewrite below,
+		// so the archive gate checks against the real Slack channel type.
 		originalType := channel.Type
 		validMembers := t.filterValidMembers(channel.Members, t.Intermediate.UsersById)
 		if (channel.Type == model.ChannelTypeDirect || channel.Type == model.ChannelTypeGroup) && len(validMembers) <= 1 {
@@ -352,12 +354,16 @@ func (t *Transformer) TransformChannels(channels []SlackChannel) []*Intermediate
 		// that has no DeletedAt field, so archiving those is not supported.
 		if channel.IsArchived && originalType != model.ChannelTypeDirect && originalType != model.ChannelTypeGroup {
 			if channel.Updated > 0 {
-				// Use the Slack "updated" timestamp as a best-effort approximation of
-				// the archive time. Slack exports do not include a dedicated archive timestamp.
+				// Use the Slack "updated" timestamp (already in milliseconds) as a
+				// best-effort approximation of the archive time. Slack exports do not
+				// include a dedicated archive timestamp.
 				newChannel.DeleteAt = channel.Updated
 			} else {
+				t.Logger.Warnf("Archived channel %s has no updated timestamp; using current time as DeleteAt", channel.Name)
 				newChannel.DeleteAt = model.GetMillis()
 			}
+		} else if channel.IsArchived {
+			t.Logger.Warnf("Channel %s is archived in Slack but is a %s channel; Mattermost import does not support archiving this channel type", channel.Name, originalType)
 		}
 
 		newChannel.Sanitise(t.Logger)

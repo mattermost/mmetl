@@ -16,7 +16,7 @@ type SlackChannel struct {
 	Purpose    SlackChannelSub   `json:"purpose"`
 	Topic      SlackChannelSub   `json:"topic"`
 	IsArchived bool              `json:"is_archived"`
-	Updated    int64             `json:"updated"` // millisecond timestamp of last settings update; used as a best-effort approximation of archive time
+	Updated    int64             `json:"updated"` // Millisecond timestamp of last settings update (note: unlike Created which is seconds, Slack's "updated" field is already in milliseconds per https://docs.slack.dev/reference/objects/conversation-object)
 	Type       model.ChannelType `json:"-"`       // Computed, not from JSON
 }
 
