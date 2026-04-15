@@ -2099,6 +2099,37 @@ func TestTransformArchivedChannels(t *testing.T) {
 		assert.Equal(t, model.ChannelTypePrivate, result[0].Type)
 	})
 
+	t.Run("Oversized archived MPIM rewritten to private does not get DeleteAt set", func(t *testing.T) {
+		// An MPIM with more members than ChannelGroupMaxUsers (8) gets rewritten
+		// to ChannelTypePrivate. The archive gate must use the original type so
+		// this channel does NOT receive a DeleteAt value.
+		bigTransformer := NewTransformer("test", log.New())
+		bigTransformer.Intermediate.UsersById = make(map[string]*IntermediateUser)
+		members := make([]string, model.ChannelGroupMaxUsers+1)
+		for i := range members {
+			id := fmt.Sprintf("u%d", i)
+			members[i] = id
+			bigTransformer.Intermediate.UsersById[id] = &IntermediateUser{}
+		}
+
+		channels := []SlackChannel{
+			{
+				Id:         "G999",
+				Name:       "",
+				Members:    members,
+				Purpose:    SlackChannelSub{Value: "big-group-purpose"},
+				IsArchived: true,
+				Updated:    1620000000000,
+				Type:       model.ChannelTypeGroup,
+			},
+		}
+
+		result := bigTransformer.TransformChannels(channels)
+		require.Len(t, result, 1)
+		assert.Equal(t, model.ChannelTypePrivate, result[0].Type, "oversized MPIM should be rewritten to private")
+		assert.Equal(t, int64(0), result[0].DeleteAt, "rewritten MPIM should not have DeleteAt set")
+	})
+
 	t.Run("Archived direct or group channels do not get DeleteAt set", func(t *testing.T) {
 		directChannel := SlackChannel{
 			Id:         "D001",

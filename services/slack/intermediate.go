@@ -323,6 +323,7 @@ func getOriginalName(channel SlackChannel) string {
 func (t *Transformer) TransformChannels(channels []SlackChannel) []*IntermediateChannel {
 	resultChannels := []*IntermediateChannel{}
 	for _, channel := range channels {
+		originalType := channel.Type
 		validMembers := t.filterValidMembers(channel.Members, t.Intermediate.UsersById)
 		if (channel.Type == model.ChannelTypeDirect || channel.Type == model.ChannelTypeGroup) && len(validMembers) <= 1 {
 			t.Logger.Warnf("Bulk export for direct channels containing a single member is not supported. Not importing channel %s", channel.Name)
@@ -349,7 +350,7 @@ func (t *Transformer) TransformChannels(channels []SlackChannel) []*Intermediate
 		// Only public and private channels support DeletedAt in the Mattermost import
 		// format. Direct and group channels use a separate import type (direct_channel)
 		// that has no DeletedAt field, so archiving those is not supported.
-		if channel.IsArchived && channel.Type != model.ChannelTypeDirect && channel.Type != model.ChannelTypeGroup {
+		if channel.IsArchived && originalType != model.ChannelTypeDirect && originalType != model.ChannelTypeGroup {
 			if channel.Updated > 0 {
 				// Use the Slack "updated" timestamp as a best-effort approximation of
 				// the archive time. Slack exports do not include a dedicated archive timestamp.
