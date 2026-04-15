@@ -387,9 +387,19 @@ func ExportWithThreads() *SlackExportBuilder {
 		})
 }
 
-// ExportWithMentions creates an export with user and channel mentions
+// ExportWithMentions creates an export with user and channel mentions,
+// including pipe-aliased special mentions and W-prefix enterprise Grid user IDs.
 func ExportWithMentions() *SlackExportBuilder {
 	return SlackBasicExport().
+		AddUser(slack.SlackUser{
+			Id:       "W003",
+			Username: "grid.user",
+			IsBot:    false,
+			Profile: slack.SlackProfile{
+				RealName: "Grid User",
+				Email:    "grid.user@example.com",
+			},
+		}).
 		AddPost("general", slack.SlackPost{
 			User:      "U001",
 			Text:      "Hey <@U002>, can you review my PR?",
@@ -406,6 +416,18 @@ func ExportWithMentions() *SlackExportBuilder {
 			User:      "U001",
 			Text:      "<!here> important announcement!",
 			TimeStamp: "1704067320.000300",
+			Type:      "message",
+		}).
+		AddPost("general", slack.SlackPost{
+			User:      "U001",
+			Text:      "<!here|here> pipe-aliased here and <!channel|@channel> pipe-aliased channel",
+			TimeStamp: "1704067380.000400",
+			Type:      "message",
+		}).
+		AddPost("general", slack.SlackPost{
+			User:      "U001",
+			Text:      "Hey <@W003> and <@W003|grid.user>, welcome to the team!",
+			TimeStamp: "1704067440.000500",
 			Type:      "message",
 		})
 }

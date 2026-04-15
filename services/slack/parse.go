@@ -14,8 +14,13 @@ import (
 )
 
 var (
-	slackUserMentionRe    = regexp.MustCompile(`<@(U[A-Z0-9]+)(?:\|[^>]*)?>`)
+	// Slack user IDs start with U (or W for enterprise Grid), channel IDs with C or G
+	// (private channels and group DMs), followed by alphanumeric characters
+	// (e.g., U0A1B2C3D, W0A1B2C3D, C04MXABCD, G024BE91L).
+	slackUserMentionRe    = regexp.MustCompile(`<@([UW][A-Z0-9]+)(?:\|[^>]*)?>`)
 	slackChannelMentionRe = regexp.MustCompile(`<#([CG][A-Z0-9]+)(?:\|[^>]*)?>`)
+	// Matches special broadcast mentions in both bare and pipe-aliased forms, e.g. <!here>, <!here|here>, <@here>.
+	slackSpecialMentionRe = regexp.MustCompile(`<!(here|channel|everyone)(?:\|[^>]*)?>|<@here>`)
 )
 
 // replaceMentions replaces Slack mention patterns in text using a single regex
@@ -35,10 +40,17 @@ func replaceMentions(text string, re *regexp.Regexp, prefixLen int, lookup map[s
 }
 
 func replaceUserMentionsInText(text string, lookup map[string]string) string {
-	text = strings.ReplaceAll(text, "<!here>", "@here")
-	text = strings.ReplaceAll(text, "<@here>", "@here")
-	text = strings.ReplaceAll(text, "<!channel>", "@channel")
-	text = strings.ReplaceAll(text, "<!everyone>", "@all")
+	text = slackSpecialMentionRe.ReplaceAllStringFunc(text, func(match string) string {
+		switch {
+		case strings.Contains(match, "here"):
+			return "@here"
+		case strings.Contains(match, "channel"):
+			return "@channel"
+		case strings.Contains(match, "everyone"):
+			return "@all"
+		}
+		return match
+	})
 	return replaceMentions(text, slackUserMentionRe, 2, lookup)
 }
 

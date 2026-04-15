@@ -43,8 +43,13 @@ func TestSlackConvertUserMentions(t *testing.T) {
 		{name: "special: <@here>", mention: "<@here>", expected: "@here"},
 		{name: "special: <!channel>", mention: "<!channel>", expected: "@channel"},
 		{name: "special: <!everyone>", mention: "<!everyone>", expected: "@all"},
+		{name: "special pipe-aliased: <!here|here>", mention: "<!here|here>", expected: "@here"},
+		{name: "special pipe-aliased: <!channel|@channel>", mention: "<!channel|@channel>", expected: "@channel"},
+		{name: "special pipe-aliased: <!everyone|all>", mention: "<!everyone|all>", expected: "@all"},
 		{name: "user ID without pipe", mention: "<@U100>", expected: "@user1"},
 		{name: "user ID with pipe and username", mention: "<@U100|user1>", expected: "@user1"},
+		{name: "enterprise Grid W-prefix user ID", mention: "<@W100>", expected: "@user2"},
+		{name: "enterprise Grid W-prefix user ID with pipe", mention: "<@W100|user2>", expected: "@user2"},
 		{name: "lowercase username is not converted", mention: "<@user1>", expected: "<@user1>"},
 		{name: "unknown user ID left unchanged", mention: "<@U999>", expected: "<@U999>"},
 		{name: "multiple mentions in one message", mention: "Hey <@U100> and <!here>", expected: "Hey @user1 and @here"},
@@ -57,6 +62,10 @@ func TestSlackConvertUserMentions(t *testing.T) {
 		{
 			Id:       "U100",
 			Username: "user1",
+		},
+		{
+			Id:       "W100",
+			Username: "user2",
 		},
 	}
 	transformer := NewTransformer("test", logrus.New())

@@ -315,9 +315,38 @@ func TestTransformSlackE2E(t *testing.T) {
 			if strings.Contains(msg, "@here") {
 				foundHereMention = true
 				assert.NotContains(t, msg, "<!here>", "raw Slack <!here> should not remain in export")
+				assert.NotContains(t, msg, "<!here|", "raw Slack <!here|...> should not remain in export")
 			}
 		}
 		assert.True(t, foundHereMention, "<!here> should be converted to @here")
+
+		// Verify pipe-aliased special mentions: <!here|here> → @here, <!channel|@channel> → @channel
+		var foundPipeAliasedHere, foundPipeAliasedChannel bool
+		for _, msg := range postMessages {
+			if strings.Contains(msg, "pipe-aliased here") {
+				foundPipeAliasedHere = true
+				assert.Contains(t, msg, "@here", "pipe-aliased <!here|here> should become @here")
+				assert.NotContains(t, msg, "<!here|here>", "raw pipe-aliased <!here|here> should not remain")
+			}
+			if strings.Contains(msg, "pipe-aliased channel") {
+				foundPipeAliasedChannel = true
+				assert.Contains(t, msg, "@channel", "pipe-aliased <!channel|@channel> should become @channel")
+				assert.NotContains(t, msg, "<!channel|", "raw pipe-aliased <!channel|...> should not remain")
+			}
+		}
+		assert.True(t, foundPipeAliasedHere, "pipe-aliased <!here|here> should be converted to @here")
+		assert.True(t, foundPipeAliasedChannel, "pipe-aliased <!channel|@channel> should be converted to @channel")
+
+		// Verify W-prefix enterprise Grid user mention: <@W003> → @grid.user
+		var foundWPrefixMention bool
+		for _, msg := range postMessages {
+			if strings.Contains(msg, "@grid.user") {
+				foundWPrefixMention = true
+				assert.NotContains(t, msg, "<@W003>", "raw W-prefix mention should not remain in export")
+				assert.NotContains(t, msg, "<@W003|", "raw W-prefix pipe mention should not remain in export")
+			}
+		}
+		assert.True(t, foundWPrefixMention, "W-prefix user mention <@W003> should be converted to @grid.user")
 
 		// 5. Import into Mattermost and verify posts are correct
 		t.Log("Importing data with mentions into Mattermost...")
@@ -331,6 +360,7 @@ func TestTransformSlackE2E(t *testing.T) {
 		require.NoError(t, err)
 
 		var foundUserMentionInMM, foundChannelMentionInMM, foundHereMentionInMM bool
+		var foundWPrefixInMM, foundPipeAliasedInMM bool
 		for _, postID := range posts.Order {
 			post := posts.Posts[postID]
 			if strings.Contains(post.Message, "@jane.smith") {
@@ -342,10 +372,18 @@ func TestTransformSlackE2E(t *testing.T) {
 			if strings.Contains(post.Message, "@here") {
 				foundHereMentionInMM = true
 			}
+			if strings.Contains(post.Message, "@grid.user") {
+				foundWPrefixInMM = true
+			}
+			if strings.Contains(post.Message, "@channel") {
+				foundPipeAliasedInMM = true
+			}
 		}
 		assert.True(t, foundUserMentionInMM, "user mention @jane.smith should be present in Mattermost")
 		assert.True(t, foundChannelMentionInMM, "channel mention ~random should be present in Mattermost")
 		assert.True(t, foundHereMentionInMM, "@here mention should be present in Mattermost")
+		assert.True(t, foundWPrefixInMM, "W-prefix user @grid.user should be present in Mattermost")
+		assert.True(t, foundPipeAliasedInMM, "pipe-aliased @channel should be present in Mattermost")
 	})
 
 	t.Run("deleted user is imported with deactivated status", func(t *testing.T) {
