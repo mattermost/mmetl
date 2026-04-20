@@ -232,7 +232,7 @@ func TestTransformSlackE2E(t *testing.T) {
 		assert.True(t, foundCoffee, "should find 'coffee' post in random channel")
 	})
 
-	t.Run("user mentions are correctly converted", func(t *testing.T) {
+	t.Run("mentions are correctly converted in export and import", func(t *testing.T) {
 		ctx := context.Background()
 		tempDir := t.TempDir()
 		slackExportPath := filepath.Join(tempDir, "slack_export.zip")
@@ -262,32 +262,129 @@ func TestTransformSlackE2E(t *testing.T) {
 		err = c.Execute()
 		require.NoError(t, err)
 
-		// 4. Import into Mattermost
+		// 4. Verify the JSONL export contains correctly converted mentions
+		t.Log("Verifying mention conversion in JSONL export...")
+		exportData, err := os.ReadFile(mmExportPath)
+		require.NoError(t, err)
+
+		var postMessages []string
+		for _, line := range strings.Split(string(exportData), "\n") {
+			if line == "" {
+				continue
+			}
+			var importLine map[string]json.RawMessage
+			err = json.Unmarshal([]byte(line), &importLine)
+			require.NoError(t, err)
+
+			if string(importLine["type"]) != `"post"` {
+				continue
+			}
+
+			var postData struct {
+				Message string `json:"message"`
+			}
+			err = json.Unmarshal(importLine["post"], &postData)
+			require.NoError(t, err)
+			postMessages = append(postMessages, postData.Message)
+		}
+
+		require.NotEmpty(t, postMessages, "should have posts in export")
+
+		// Verify user mention: Slack <@U002> → Mattermost @jane.smith
+		var foundUserMention bool
+		for _, msg := range postMessages {
+			if strings.Contains(msg, "@jane.smith") {
+				foundUserMention = true
+				assert.NotContains(t, msg, "<@U002>", "raw Slack user mention should not remain in export")
+			}
+		}
+		assert.True(t, foundUserMention, "user mention <@U002> should be converted to @jane.smith")
+
+		// Verify channel mention: Slack <#C002|random> → Mattermost ~random
+		var foundChannelMention bool
+		for _, msg := range postMessages {
+			if strings.Contains(msg, "~random") {
+				foundChannelMention = true
+				assert.NotContains(t, msg, "<#C002", "raw Slack channel mention should not remain in export")
+			}
+		}
+		assert.True(t, foundChannelMention, "channel mention <#C002|random> should be converted to ~random")
+
+		// Verify special mention: Slack <!here> → Mattermost @here
+		var foundHereMention bool
+		for _, msg := range postMessages {
+			if strings.Contains(msg, "@here") {
+				foundHereMention = true
+				assert.NotContains(t, msg, "<!here>", "raw Slack <!here> should not remain in export")
+				assert.NotContains(t, msg, "<!here|", "raw Slack <!here|...> should not remain in export")
+			}
+		}
+		assert.True(t, foundHereMention, "<!here> should be converted to @here")
+
+		// Verify pipe-aliased special mentions: <!here|here> → @here, <!channel|@channel> → @channel
+		var foundPipeAliasedHere, foundPipeAliasedChannel bool
+		for _, msg := range postMessages {
+			if strings.Contains(msg, "pipe-aliased here") {
+				foundPipeAliasedHere = true
+				assert.Contains(t, msg, "@here", "pipe-aliased <!here|here> should become @here")
+				assert.NotContains(t, msg, "<!here|here>", "raw pipe-aliased <!here|here> should not remain")
+			}
+			if strings.Contains(msg, "pipe-aliased channel") {
+				foundPipeAliasedChannel = true
+				assert.Contains(t, msg, "@channel", "pipe-aliased <!channel|@channel> should become @channel")
+				assert.NotContains(t, msg, "<!channel|", "raw pipe-aliased <!channel|...> should not remain")
+			}
+		}
+		assert.True(t, foundPipeAliasedHere, "pipe-aliased <!here|here> should be converted to @here")
+		assert.True(t, foundPipeAliasedChannel, "pipe-aliased <!channel|@channel> should be converted to @channel")
+
+		// Verify W-prefix enterprise Grid user mention: <@W003> → @grid.user
+		var foundWPrefixMention bool
+		for _, msg := range postMessages {
+			if strings.Contains(msg, "@grid.user") {
+				foundWPrefixMention = true
+				assert.NotContains(t, msg, "<@W003>", "raw W-prefix mention should not remain in export")
+				assert.NotContains(t, msg, "<@W003|", "raw W-prefix pipe mention should not remain in export")
+			}
+		}
+		assert.True(t, foundWPrefixMention, "W-prefix user mention <@W003> should be converted to @grid.user")
+
+		// 5. Import into Mattermost and verify posts are correct
 		t.Log("Importing data with mentions into Mattermost...")
 		err = th.ImportBulkData(ctx, mmExportPath)
 		require.NoError(t, err, "import should succeed")
 
-		// 5. Verify mentions were converted correctly
 		t.Log("Verifying mentions in Mattermost...")
 		generalChannel := th.AssertChannelExists(ctx, teamName, "general")
 
 		posts, err := th.GetChannelPosts(ctx, generalChannel.Id, 0, 100)
 		require.NoError(t, err)
 
-		var foundUserMention, foundHereMention bool
+		var foundUserMentionInMM, foundChannelMentionInMM, foundHereMentionInMM bool
+		var foundWPrefixInMM, foundPipeAliasedInMM bool
 		for _, postID := range posts.Order {
 			post := posts.Posts[postID]
-			// Slack <@U002> should be converted to @jane.smith
 			if strings.Contains(post.Message, "@jane.smith") {
-				foundUserMention = true
+				foundUserMentionInMM = true
 			}
-			// Slack <!here> should be converted to @here
+			if strings.Contains(post.Message, "~random") {
+				foundChannelMentionInMM = true
+			}
 			if strings.Contains(post.Message, "@here") {
-				foundHereMention = true
+				foundHereMentionInMM = true
+			}
+			if strings.Contains(post.Message, "@grid.user") {
+				foundWPrefixInMM = true
+			}
+			if strings.Contains(post.Message, "@channel") {
+				foundPipeAliasedInMM = true
 			}
 		}
-		assert.True(t, foundUserMention, "user mention should be converted to @jane.smith")
-		assert.True(t, foundHereMention, "@here mention should be present")
+		assert.True(t, foundUserMentionInMM, "user mention @jane.smith should be present in Mattermost")
+		assert.True(t, foundChannelMentionInMM, "channel mention ~random should be present in Mattermost")
+		assert.True(t, foundHereMentionInMM, "@here mention should be present in Mattermost")
+		assert.True(t, foundWPrefixInMM, "W-prefix user @grid.user should be present in Mattermost")
+		assert.True(t, foundPipeAliasedInMM, "pipe-aliased @channel should be present in Mattermost")
 	})
 
 	t.Run("deleted user is imported with deactivated status", func(t *testing.T) {
