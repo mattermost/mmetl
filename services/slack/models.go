@@ -8,16 +8,19 @@ import (
 
 // SlackChannel represents a Slack channel in the export
 type SlackChannel struct {
-	Id         string            `json:"id"`
-	Name       string            `json:"name"`
-	Creator    string            `json:"creator"`
-	Created    int64             `json:"created"`
-	Members    []string          `json:"members"`
-	Purpose    SlackChannelSub   `json:"purpose"`
-	Topic      SlackChannelSub   `json:"topic"`
-	IsArchived bool              `json:"is_archived"`
-	Updated    int64             `json:"updated"` // Millisecond timestamp of last settings update (note: unlike Created which is seconds, Slack's "updated" field is already in milliseconds per https://docs.slack.dev/reference/objects/conversation-object)
-	Type       model.ChannelType `json:"-"`       // Computed, not from JSON
+	Id         string          `json:"id"`
+	Name       string          `json:"name"`
+	Creator    string          `json:"creator"`
+	Created    int64           `json:"created"`
+	Members    []string        `json:"members"`
+	Purpose    SlackChannelSub `json:"purpose"`
+	Topic      SlackChannelSub `json:"topic"`
+	IsArchived bool            `json:"is_archived"`
+	// Updated is the millisecond timestamp of the last channel settings update.
+	// Unlike Created (seconds), Slack's "updated" field is already in milliseconds.
+	// See https://docs.slack.dev/reference/objects/conversation-object
+	Updated int64             `json:"updated"`
+	Type    model.ChannelType `json:"-"` // Computed, not from JSON
 }
 
 // SlackChannelSub represents a sub-field in Slack channel data (purpose/topic)

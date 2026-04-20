@@ -2099,10 +2099,10 @@ func TestTransformArchivedChannels(t *testing.T) {
 		assert.Equal(t, model.ChannelTypePrivate, result[0].Type)
 	})
 
-	t.Run("Oversized archived MPIM rewritten to private does not get DeleteAt set", func(t *testing.T) {
+	t.Run("Oversized archived MPIM rewritten to private retains DeleteAt", func(t *testing.T) {
 		// An MPIM with more members than ChannelGroupMaxUsers (8) gets rewritten
-		// to ChannelTypePrivate. The archive gate must use the original type so
-		// this channel does NOT receive a DeleteAt value.
+		// to ChannelTypePrivate and is exported as a regular private channel,
+		// which supports DeletedAt — so the archived state must be preserved.
 		bigTransformer := NewTransformer("test", log.New())
 		bigTransformer.Intermediate.UsersById = make(map[string]*IntermediateUser)
 		members := make([]string, model.ChannelGroupMaxUsers+1)
@@ -2127,7 +2127,7 @@ func TestTransformArchivedChannels(t *testing.T) {
 		result := bigTransformer.TransformChannels(channels)
 		require.Len(t, result, 1)
 		assert.Equal(t, model.ChannelTypePrivate, result[0].Type, "oversized MPIM should be rewritten to private")
-		assert.Equal(t, int64(0), result[0].DeleteAt, "rewritten MPIM should not have DeleteAt set")
+		assert.Equal(t, int64(1620000000000), result[0].DeleteAt, "rewritten MPIM should retain DeleteAt")
 	})
 
 	t.Run("Archived direct or group channels do not get DeleteAt set", func(t *testing.T) {
