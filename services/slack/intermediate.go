@@ -42,6 +42,7 @@ type IntermediateChannel struct {
 	Header           string            `json:"header"`
 	Topic            string            `json:"topic"`
 	Type             model.ChannelType `json:"type"`
+	DeleteAt         int64             `json:"delete_at"`
 	Created          int64             `json:"created"` // Unix timestamp in seconds from Slack
 	MsgCount         int64             `json:"msg_count"`
 	MsgCountRoot     int64             `json:"msg_count_root"`
@@ -343,6 +344,22 @@ func (t *Transformer) TransformChannels(channels []SlackChannel) []*Intermediate
 			Header:       channel.Topic.Value,
 			Type:         channel.Type,
 			Created:      channel.Created,
+		}
+
+		// Public and private channels support DeletedAt in the Mattermost import
+		// format. Direct and group channels use a separate import type (direct_channel)
+		// that has no DeletedAt field, so archiving those is not supported. Oversized
+		// MPIMs are rewritten to ChannelTypePrivate above, so they're eligible here.
+		if channel.IsArchived && channel.Type != model.ChannelTypeDirect && channel.Type != model.ChannelTypeGroup {
+			if channel.Updated > 0 {
+				// Use the Slack "updated" timestamp (already in milliseconds) as a
+				// best-effort approximation of the archive time. Slack exports do not
+				// include a dedicated archive timestamp.
+				newChannel.DeleteAt = channel.Updated
+			} else {
+				t.Logger.Warnf("Archived channel %s has no updated timestamp; using current time as DeleteAt", channel.Name)
+				newChannel.DeleteAt = model.GetMillis()
+			}
 		}
 
 		newChannel.Sanitise(t.Logger)

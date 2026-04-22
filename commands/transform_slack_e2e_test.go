@@ -783,8 +783,10 @@ func TestTransformSlackE2EBotImport(t *testing.T) {
 	// unresolvable owner. This test documents that behaviour so we notice if
 	// the server-side semantics ever change.
 	t.Run("import succeeds with non-existent bot owner username", func(t *testing.T) {
-		th := testhelper.SetupHelper(t)
-		defer th.TearDown()
+		// This subtest needs its own isolated Mattermost instance because the
+		// bot owner validation test must run on a clean server state.
+		subTH := testhelper.SetupHelper(t)
+		defer subTH.TearDown()
 
 		ctx := context.Background()
 		tempDir := t.TempDir()
@@ -797,7 +799,7 @@ func TestTransformSlackE2EBotImport(t *testing.T) {
 		require.NoError(t, err)
 
 		// Create team
-		team := th.CreateTeam(ctx, teamName, "Bad Owner E2E Team")
+		team := subTH.CreateTeam(ctx, teamName, "Bad Owner E2E Team")
 		require.NotNil(t, team)
 
 		// Run transform with a --bot-owner that does not exist in Mattermost
@@ -819,14 +821,14 @@ func TestTransformSlackE2EBotImport(t *testing.T) {
 		defer os.Remove(transformLogFile)
 
 		// Import succeeds even though the owner username doesn't exist
-		err = th.ImportBulkData(ctx, mmExportPath)
+		err = subTH.ImportBulkData(ctx, mmExportPath)
 		require.NoError(t, err, "import should succeed even with non-existent bot owner")
 
 		// Bots should still be created with correct properties
-		deployBot := th.AssertBotExists(ctx, "deploybot")
+		deployBot := subTH.AssertBotExists(ctx, "deploybot")
 		assert.Equal(t, "Deploy Bot", deployBot.DisplayName)
 
-		alertBot := th.AssertBotExists(ctx, "alertbot")
+		alertBot := subTH.AssertBotExists(ctx, "alertbot")
 		assert.Equal(t, "Alert Bot", alertBot.DisplayName)
 
 		// OwnerId is the raw username string (plugin-owner fallback),
@@ -835,6 +837,85 @@ func TestTransformSlackE2EBotImport(t *testing.T) {
 			"bot owner should be the raw username string when the user doesn't exist")
 		assert.Equal(t, fakeOwner, alertBot.OwnerId,
 			"bot owner should be the raw username string when the user doesn't exist")
+	})
+
+	t.Run("archived channels are imported as archived in Mattermost", func(t *testing.T) {
+		// Reuses the outer th; isolation is provided by the unique team name.
+		ctx := context.Background()
+		tempDir := t.TempDir()
+		slackExportPath := filepath.Join(tempDir, "slack_export.zip")
+		mmExportPath := filepath.Join(tempDir, "mattermost_import.jsonl")
+		teamName := uniqueTeamName("archived")
+
+		// 1. Create Slack export with an archived channel
+		err := testhelper.ExportWithArchivedChannels().Build(slackExportPath)
+		require.NoError(t, err, "failed to create Slack export fixture with archived channels")
+
+		// 2. Create team
+		team := th.CreateTeam(ctx, teamName, "Archived Channels E2E Team")
+		require.NotNil(t, team)
+
+		// 3. Run transform
+		args := []string{
+			"transform", "slack",
+			"--team", teamName,
+			"--file", slackExportPath,
+			"--output", mmExportPath,
+			"--skip-attachments",
+		}
+
+		c := commands.RootCmd
+		resetCobraFlags(c)
+		c.SetArgs(args)
+		err = c.Execute()
+		require.NoError(t, err, "transform command should succeed")
+		defer os.Remove(transformLogFile)
+
+		// 4. Verify the JSONL contains deleted_at for the archived channel
+		t.Log("Checking JSONL output for archived channel...")
+		outputBytes, err := os.ReadFile(mmExportPath)
+		require.NoError(t, err)
+
+		var foundArchivedChannel bool
+		for _, line := range strings.Split(string(outputBytes), "\n") {
+			if line == "" {
+				continue
+			}
+			var importLine map[string]json.RawMessage
+			require.NoError(t, json.Unmarshal([]byte(line), &importLine))
+			if string(importLine["type"]) != `"channel"` {
+				continue
+			}
+			var channel struct {
+				Name      string `json:"name"`
+				DeletedAt *int64 `json:"deleted_at"`
+			}
+			require.NoError(t, json.Unmarshal(importLine["channel"], &channel))
+			if channel.Name == "old-project" {
+				require.NotNil(t, channel.DeletedAt, "archived channel should have deleted_at set")
+				assert.Greater(t, *channel.DeletedAt, int64(0), "deleted_at should be positive")
+				foundArchivedChannel = true
+			}
+		}
+		require.True(t, foundArchivedChannel, "should find archived channel 'old-project' in JSONL output")
+
+		// 5. Validate and import
+		t.Log("Validating import file...")
+		th.ValidateImportFileOrFail(ctx, mmExportPath)
+
+		t.Log("Importing data into Mattermost...")
+		err = th.ImportBulkData(ctx, mmExportPath)
+		require.NoError(t, err, "import should succeed")
+
+		// 6. Verify active channel exists normally
+		t.Log("Verifying active channel is not archived...")
+		generalChannel := th.AssertChannelExists(ctx, teamName, "general")
+		assert.Equal(t, int64(0), generalChannel.DeleteAt, "general channel should not be archived")
+
+		// 7. Verify the archived channel is archived in Mattermost
+		t.Log("Verifying archived channel is archived in Mattermost...")
+		archivedChannel := th.AssertChannelIsArchived(ctx, teamName, "old-project")
+		assert.Greater(t, archivedChannel.DeleteAt, int64(0), "old-project channel should be archived (DeleteAt > 0)")
 	})
 }
 

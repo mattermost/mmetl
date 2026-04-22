@@ -409,6 +409,28 @@ func (th *TestHelper) AssertChannelExists(ctx context.Context, teamName, channel
 	return channel
 }
 
+// AssertChannelIsArchived verifies that a channel exists in a team and is archived (DeleteAt > 0).
+// It uses GetDeletedChannelsForTeam to locate soft-deleted channels since the standard
+// GetChannelByName endpoint excludes archived channels.
+func (th *TestHelper) AssertChannelIsArchived(ctx context.Context, teamName, channelName string) *model.Channel {
+	team, err := th.GetTeam(ctx, teamName)
+	require.NoError(th.t, err, "team %s should exist", teamName)
+	require.NotNil(th.t, team, "team %s should not be nil", teamName)
+
+	deletedChannels, _, err := th.Client.GetDeletedChannelsForTeam(ctx, team.Id, 0, defaultPaginationLimit, "")
+	require.NoError(th.t, err, "failed to get deleted channels for team %s", teamName)
+
+	for _, ch := range deletedChannels {
+		if ch.Name == channelName {
+			require.Greater(th.t, ch.DeleteAt, int64(0), "channel %s should have a non-zero DeleteAt", channelName)
+			return ch
+		}
+	}
+
+	require.Fail(th.t, "archived channel not found", "channel %s in team %s should be archived", channelName, teamName)
+	return nil
+}
+
 // AssertUserInTeam verifies that a user is a member of a team
 func (th *TestHelper) AssertUserInTeam(ctx context.Context, teamID, userID string) {
 	members, err := th.GetTeamMembers(ctx, teamID)
