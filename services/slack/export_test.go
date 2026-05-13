@@ -537,6 +537,60 @@ func TestExportUsersWithBots(t *testing.T) {
 	})
 }
 
+func TestGetImportLineFromChannel(t *testing.T) {
+	t.Run("Active channel has no deleted_at in output", func(t *testing.T) {
+		channel := &IntermediateChannel{
+			Name:        "general",
+			DisplayName: "General",
+			Type:        model.ChannelTypeOpen,
+			Header:      "Welcome",
+			Purpose:     "General discussion",
+			DeleteAt:    0,
+		}
+
+		line := GetImportLineFromChannel("myteam", channel)
+
+		assert.Equal(t, "channel", line.Type)
+		require.NotNil(t, line.Channel)
+		assert.Equal(t, "myteam", *line.Channel.Team)
+		assert.Equal(t, "general", *line.Channel.Name)
+		assert.Equal(t, "General", *line.Channel.DisplayName)
+		assert.Nil(t, line.Channel.DeletedAt)
+	})
+
+	t.Run("Archived channel has deleted_at set in output", func(t *testing.T) {
+		channel := &IntermediateChannel{
+			Name:        "old-project",
+			DisplayName: "Old Project",
+			Type:        model.ChannelTypeOpen,
+			Header:      "",
+			Purpose:     "",
+			DeleteAt:    1620000000000,
+		}
+
+		line := GetImportLineFromChannel("myteam", channel)
+
+		assert.Equal(t, "channel", line.Type)
+		require.NotNil(t, line.Channel)
+		require.NotNil(t, line.Channel.DeletedAt)
+		assert.Equal(t, int64(1620000000000), *line.Channel.DeletedAt)
+	})
+
+	t.Run("Archived channel with sentinel value has deleted_at set", func(t *testing.T) {
+		channel := &IntermediateChannel{
+			Name:        "another-old",
+			DisplayName: "Another Old",
+			Type:        model.ChannelTypePrivate,
+			DeleteAt:    1,
+		}
+
+		line := GetImportLineFromChannel("myteam", channel)
+
+		require.NotNil(t, line.Channel.DeletedAt)
+		assert.Equal(t, int64(1), *line.Channel.DeletedAt)
+	})
+}
+
 func TestGetImportLineFromUser(t *testing.T) {
 	t.Run("read state fields are set on channel memberships", func(t *testing.T) {
 		user := &IntermediateUser{

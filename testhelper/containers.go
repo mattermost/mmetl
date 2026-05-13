@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -229,10 +230,16 @@ func CreateMattermostContainer(ctx context.Context, networkName string) (testcon
 	// Use the internal Docker network address for PostgreSQL
 	postgresConnStr := GetPostgresInternalConnStr()
 
+	imagePlatform := ""
+	if runtime.GOOS == "darwin" {
+		imagePlatform = "linux/amd64"
+	}
+
 	req := testcontainers.ContainerRequest{
-		Image:        resolveMattermostImage(),
-		ExposedPorts: []string{mattermostPort},
-		Networks:     []string{networkName},
+		Image:         resolveMattermostImage(),
+		ImagePlatform: imagePlatform,
+		ExposedPorts:  []string{mattermostPort},
+		Networks:      []string{networkName},
 		Env: map[string]string{
 			"MM_SQLSETTINGS_DRIVERNAME": "postgres",
 			"MM_SQLSETTINGS_DATASOURCE": postgresConnStr,

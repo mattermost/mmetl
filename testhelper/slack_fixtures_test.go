@@ -513,12 +513,16 @@ func TestSlackExportBuilderCanBeParsedByTransformer(t *testing.T) {
 		require.NoError(t, err)
 
 		posts := export.Posts["general"]
-		require.Len(t, posts, 3)
+		require.Len(t, posts, 5)
 
 		// Verify mention formats are present
 		assert.Contains(t, posts[0].Text, "<@U002>")
 		assert.Contains(t, posts[1].Text, "<#C002|random>")
 		assert.Contains(t, posts[2].Text, "<!here>")
+		assert.Contains(t, posts[3].Text, "<!here|here>")
+		assert.Contains(t, posts[3].Text, "<!channel|@channel>")
+		assert.Contains(t, posts[4].Text, "<@W003>")
+		assert.Contains(t, posts[4].Text, "<@W003|grid.user>")
 	})
 
 	t.Run("ExportWithDeletedUser can be parsed", func(t *testing.T) {

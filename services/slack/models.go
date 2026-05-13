@@ -8,13 +8,18 @@ import (
 
 // SlackChannel represents a Slack channel in the export
 type SlackChannel struct {
-	Id      string            `json:"id"`
-	Name    string            `json:"name"`
-	Creator string            `json:"creator"`
-	Created int64             `json:"created"`
-	Members []string          `json:"members"`
-	Purpose SlackChannelSub   `json:"purpose"`
-	Topic   SlackChannelSub   `json:"topic"`
+	Id         string          `json:"id"`
+	Name       string          `json:"name"`
+	Creator    string          `json:"creator"`
+	Created    int64           `json:"created"`
+	Members    []string        `json:"members"`
+	Purpose    SlackChannelSub `json:"purpose"`
+	Topic      SlackChannelSub `json:"topic"`
+	IsArchived bool            `json:"is_archived"`
+	// Updated is the millisecond timestamp of the last channel settings update.
+	// Unlike Created (seconds), Slack's "updated" field is already in milliseconds.
+	// See https://docs.slack.dev/reference/objects/conversation-object
+	Updated int64             `json:"updated"`
 	Type    model.ChannelType `json:"-"` // Computed, not from JSON
 }
 
@@ -146,7 +151,6 @@ type SlackComment struct {
 // SlackExport represents the complete Slack export data
 type SlackExport struct {
 	TeamName        string
-	Channels        []SlackChannel
 	PublicChannels  []SlackChannel
 	PrivateChannels []SlackChannel
 	GroupChannels   []SlackChannel
@@ -154,4 +158,15 @@ type SlackExport struct {
 	Users           []SlackUser
 	Posts           map[string][]SlackPost
 	Uploads         map[string]*zip.File
+}
+
+// AllChannels returns all channels from all types combined.
+func (e *SlackExport) AllChannels() []SlackChannel {
+	total := len(e.PublicChannels) + len(e.PrivateChannels) + len(e.GroupChannels) + len(e.DirectChannels)
+	all := make([]SlackChannel, 0, total)
+	all = append(all, e.PublicChannels...)
+	all = append(all, e.PrivateChannels...)
+	all = append(all, e.GroupChannels...)
+	all = append(all, e.DirectChannels...)
+	return all
 }

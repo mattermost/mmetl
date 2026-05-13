@@ -148,6 +148,10 @@ func GetImportLineFromChannel(team string, channel *IntermediateChannel) *import
 		Purpose:     &channel.Purpose,
 	}
 
+	if channel.DeleteAt > 0 {
+		newChannel.DeletedAt = model.NewPointer(channel.DeleteAt)
+	}
+
 	return &imports.LineImportData{
 		Type:    "channel",
 		Channel: newChannel,
