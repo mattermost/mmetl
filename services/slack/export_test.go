@@ -800,7 +800,7 @@ func TestExportDirectChannels(t *testing.T) {
 			},
 		}
 
-		transformer.DeduplicateGroupChannelsByMembers()
+		transformer.DeduplicateDirectAndGroupChannelsByMembers()
 
 		var buf bytes.Buffer
 		err := transformer.ExportDirectChannels(transformer.Intermediate.GroupChannels, &buf)

@@ -1001,7 +1001,7 @@ func TestDirectChannelKey(t *testing.T) {
 	assert.Equal(t, "alice,bob,charlie", directChannelKey([]string{"charlie", "alice", "bob"}))
 }
 
-func TestDeduplicateGroupChannelsByMembers(t *testing.T) {
+func TestDeduplicateDirectAndGroupChannelsByMembers(t *testing.T) {
 	t.Run("merges two group channels with identical member sets", func(t *testing.T) {
 		slackTransformer := NewTransformer("test", log.New())
 		ch1 := &IntermediateChannel{
@@ -1022,7 +1022,7 @@ func TestDeduplicateGroupChannelsByMembers(t *testing.T) {
 			GroupChannels: []*IntermediateChannel{ch1, ch2},
 		}
 
-		slackTransformer.DeduplicateGroupChannelsByMembers()
+		slackTransformer.DeduplicateDirectAndGroupChannelsByMembers()
 
 		require.Len(t, slackTransformer.Intermediate.GroupChannels, 1)
 		canonical := slackTransformer.Intermediate.GroupChannels[0]
@@ -1050,7 +1050,7 @@ func TestDeduplicateGroupChannelsByMembers(t *testing.T) {
 			GroupChannels: []*IntermediateChannel{ch1, ch2},
 		}
 
-		slackTransformer.DeduplicateGroupChannelsByMembers()
+		slackTransformer.DeduplicateDirectAndGroupChannelsByMembers()
 
 		require.Len(t, slackTransformer.Intermediate.GroupChannels, 2)
 		assert.Empty(t, slackTransformer.Intermediate.GroupChannelAliases)
@@ -1074,7 +1074,7 @@ func TestDeduplicateGroupChannelsByMembers(t *testing.T) {
 			DirectChannels: []*IntermediateChannel{ch1, ch2},
 		}
 
-		slackTransformer.DeduplicateGroupChannelsByMembers()
+		slackTransformer.DeduplicateDirectAndGroupChannelsByMembers()
 
 		require.Len(t, slackTransformer.Intermediate.DirectChannels, 1)
 		assert.Equal(t, "D001", slackTransformer.Intermediate.DirectChannels[0].Id)
@@ -1099,7 +1099,7 @@ func TestDeduplicateGroupChannelsByMembers(t *testing.T) {
 			}
 			slackTransformer := NewTransformer("test", log.New())
 			slackTransformer.Intermediate = &Intermediate{GroupChannels: channels}
-			slackTransformer.DeduplicateGroupChannelsByMembers()
+			slackTransformer.DeduplicateDirectAndGroupChannelsByMembers()
 
 			require.Len(t, slackTransformer.Intermediate.GroupChannels, 1)
 			assert.Equal(t, "C01", slackTransformer.Intermediate.GroupChannels[0].Id,
@@ -1131,7 +1131,7 @@ func TestDeduplicateGroupChannelsByMembers(t *testing.T) {
 			GroupChannels: []*IntermediateChannel{canonicalCh, duplicateCh},
 		}
 
-		slackTransformer.DeduplicateGroupChannelsByMembers()
+		slackTransformer.DeduplicateDirectAndGroupChannelsByMembers()
 
 		require.Len(t, slackTransformer.Intermediate.GroupChannels, 1)
 		canonical := slackTransformer.Intermediate.GroupChannels[0]
@@ -1166,7 +1166,7 @@ func TestDeduplicateGroupChannelsByMembers(t *testing.T) {
 			},
 		}
 
-		slackTransformer.DeduplicateGroupChannelsByMembers()
+		slackTransformer.DeduplicateDirectAndGroupChannelsByMembers()
 		slackTransformer.ComputeChannelPostStats()
 
 		require.Len(t, slackTransformer.Intermediate.GroupChannels, 1)
@@ -1188,8 +1188,8 @@ func TestDeduplicateGroupChannelsByMembers(t *testing.T) {
 			GroupChannels: []*IntermediateChannel{ch},
 		}
 
-		slackTransformer.DeduplicateGroupChannelsByMembers()
-		slackTransformer.DeduplicateGroupChannelsByMembers()
+		slackTransformer.DeduplicateDirectAndGroupChannelsByMembers()
+		slackTransformer.DeduplicateDirectAndGroupChannelsByMembers()
 
 		require.Len(t, slackTransformer.Intermediate.GroupChannels, 1)
 		assert.Empty(t, slackTransformer.Intermediate.GroupChannelAliases)
@@ -1212,7 +1212,7 @@ func TestDeduplicateGroupChannelsByMembers(t *testing.T) {
 			GroupChannels: []*IntermediateChannel{ch1, ch2},
 		}
 
-		slackTransformer.DeduplicateGroupChannelsByMembers()
+		slackTransformer.DeduplicateDirectAndGroupChannelsByMembers()
 
 		require.Len(t, slackTransformer.Intermediate.GroupChannels, 2,
 			"empty-member channels should never be merged with each other")

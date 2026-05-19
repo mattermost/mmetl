@@ -476,7 +476,7 @@ func (t *Transformer) PopulateChannelMemberships() {
 	}
 }
 
-// DeduplicateGroupChannelsByMembers collapses group/direct channels that share
+// DeduplicateDirectAndGroupChannelsByMembers collapses group/direct channels that share
 // the same member set (per directChannelKey) into a single canonical
 // IntermediateChannel. Slack allows multiple MPIMs with identical members but
 // Mattermost cannot represent that — emitting two `direct_channel` lines with
@@ -494,7 +494,7 @@ func (t *Transformer) PopulateChannelMemberships() {
 //
 // Must run after PopulateChannelMemberships (the key uses MembersUsernames)
 // and before TransformPosts (so post lookup sees the deduplicated slices).
-func (t *Transformer) DeduplicateGroupChannelsByMembers() {
+func (t *Transformer) DeduplicateDirectAndGroupChannelsByMembers() {
 	t.Logger.Info("Deduplicating group and direct channels by member set")
 
 	if t.Intermediate.GroupChannelAliases == nil {
@@ -542,9 +542,9 @@ func (t *Transformer) dedupByMembers(channels []*IntermediateChannel) []*Interme
 		})
 
 		canonical := bucket[0]
+		dupSummaries := make([]string, 0, len(bucket)-1)
 		for _, dup := range bucket[1:] {
-			t.Logger.Warnf("Merging duplicate group channel: members=%s canonical_id=%s canonical_name=%s duplicate_id=%s duplicate_name=%s",
-				key, canonical.Id, canonical.OriginalName, dup.Id, dup.OriginalName)
+			dupSummaries = append(dupSummaries, fmt.Sprintf("%s (%s)", dup.Id, dup.OriginalName))
 			if canonical.Topic == "" && dup.Topic != "" {
 				canonical.Topic = dup.Topic
 			}
@@ -559,6 +559,8 @@ func (t *Transformer) dedupByMembers(channels []*IntermediateChannel) []*Interme
 			}
 			t.Intermediate.GroupChannelAliases[dup.OriginalName] = canonical.OriginalName
 		}
+		t.Logger.Infof("Merged %d duplicate channel(s) into canonical %s (%s) keyed by members=%s: [%s]",
+			len(dupSummaries), canonical.Id, canonical.OriginalName, key, strings.Join(dupSummaries, ", "))
 		result = append(result, canonical)
 	}
 
@@ -1198,7 +1200,7 @@ func (t *Transformer) Transform(slackExport *SlackExport, attachmentsDir string,
 
 	t.PopulateUserMemberships()
 	t.PopulateChannelMemberships()
-	t.DeduplicateGroupChannelsByMembers()
+	t.DeduplicateDirectAndGroupChannelsByMembers()
 
 	if err := t.TransformPosts(slackExport, attachmentsDir, skipAttachments, discardInvalidProps, allowDownload); err != nil {
 		return err
