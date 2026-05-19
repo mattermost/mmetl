@@ -497,9 +497,10 @@ func (t *Transformer) PopulateChannelMemberships() {
 func (t *Transformer) DeduplicateDirectAndGroupChannelsByMembers() {
 	t.Logger.Info("Deduplicating group and direct channels by member set")
 
-	if t.Intermediate.GroupChannelAliases == nil {
-		t.Intermediate.GroupChannelAliases = map[string]string{}
-	}
+	// Reset on every run so a reused Transformer doesn't carry aliases from
+	// a previous Transform() over to the current one — buildChannelsByOriginalNameMap
+	// would otherwise overlay stale Slack channel names onto the new export.
+	t.Intermediate.GroupChannelAliases = map[string]string{}
 
 	t.Intermediate.GroupChannels = t.dedupByMembers(t.Intermediate.GroupChannels)
 	t.Intermediate.DirectChannels = t.dedupByMembers(t.Intermediate.DirectChannels)
@@ -554,7 +555,13 @@ func (t *Transformer) dedupByMembers(channels []*IntermediateChannel) []*Interme
 			if canonical.Purpose == "" && dup.Purpose != "" {
 				canonical.Purpose = dup.Purpose
 			}
-			if dup.Created > 0 && (canonical.Created == 0 || dup.Created < canonical.Created) {
+			// Slack uses placeholder Created values (e.g. 1 for DMs) that
+			// CreatedMillis() treats as invalid. Ignore them here so a real
+			// timestamp on the canonical isn't replaced by a placeholder from
+			// a duplicate.
+			canonicalCreatedValid := canonical.Created >= minValidSlackCreatedTimestamp
+			dupCreatedValid := dup.Created >= minValidSlackCreatedTimestamp
+			if dupCreatedValid && (!canonicalCreatedValid || dup.Created < canonical.Created) {
 				canonical.Created = dup.Created
 			}
 			t.Intermediate.GroupChannelAliases[dup.OriginalName] = canonical.OriginalName
