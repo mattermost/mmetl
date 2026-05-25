@@ -168,6 +168,7 @@ func GetImportLineFromDirectChannel(team string, channel *IntermediateChannel) *
 		p := &imports.DirectChannelMemberImportData{
 			Username:     model.NewPointer(username),
 			LastViewedAt: model.NewPointer(lastViewedAt),
+			SchemeUser:   model.NewPointer(true),
 		}
 		if channel.MsgCount > 0 {
 			p.MsgCount = model.NewPointer(channel.MsgCount)
