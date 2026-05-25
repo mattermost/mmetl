@@ -701,6 +701,8 @@ func TestGetImportLineFromDirectChannel(t *testing.T) {
 			assert.Equal(t, int64(1704099999000), *p.LastViewedAt)
 			assert.Equal(t, int64(8), *p.MsgCount)
 			assert.Equal(t, int64(5), *p.MsgCountRoot)
+			require.NotNil(t, p.SchemeUser, "SchemeUser must be populated so the server import does not default it to false (MM-68915)")
+			assert.True(t, *p.SchemeUser)
 		}
 	})
 
