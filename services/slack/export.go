@@ -148,6 +148,10 @@ func GetImportLineFromChannel(team string, channel *IntermediateChannel) *import
 		Purpose:     &channel.Purpose,
 	}
 
+	if channel.DeleteAt > 0 {
+		newChannel.DeletedAt = model.NewPointer(channel.DeleteAt)
+	}
+
 	return &imports.LineImportData{
 		Type:    "channel",
 		Channel: newChannel,
@@ -164,6 +168,7 @@ func GetImportLineFromDirectChannel(team string, channel *IntermediateChannel) *
 		p := &imports.DirectChannelMemberImportData{
 			Username:     model.NewPointer(username),
 			LastViewedAt: model.NewPointer(lastViewedAt),
+			SchemeUser:   model.NewPointer(true),
 		}
 		if channel.MsgCount > 0 {
 			p.MsgCount = model.NewPointer(channel.MsgCount)
