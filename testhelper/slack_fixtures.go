@@ -641,3 +641,135 @@ func ExportWithDirectMessages() *SlackExportBuilder {
 			Type:      "message",
 		})
 }
+
+// ExportWithDuplicateMpims creates an export with three users and two distinct
+// Slack MPIMs (group DMs) that share the exact same member set. Slack permits
+// multiple MPIMs with identical membership, but Mattermost keys group channels
+// by member-set hash — so emitting two `direct_channel` JSONL lines for these
+// crashes the bulk importer (see MM-68736). Used to verify that mmetl
+// deduplicates them and preserves posts from both Slack channels.
+func ExportWithDuplicateMpims() *SlackExportBuilder {
+	return NewSlackExportBuilder().
+		AddUser(slack.SlackUser{
+			Id:       "U001",
+			Username: "alice",
+			Profile: slack.SlackProfile{
+				RealName: "Alice Anderson",
+				Email:    "alice@example.com",
+			},
+		}).
+		AddUser(slack.SlackUser{
+			Id:       "U002",
+			Username: "bob",
+			Profile: slack.SlackProfile{
+				RealName: "Bob Baker",
+				Email:    "bob@example.com",
+			},
+		}).
+		AddUser(slack.SlackUser{
+			Id:       "U003",
+			Username: "charlie",
+			Profile: slack.SlackProfile{
+				RealName: "Charlie Carter",
+				Email:    "charlie@example.com",
+			},
+		}).
+		// First MPIM. Created earlier; later sorted as the canonical via its
+		// lexicographically smaller Id (G001).
+		AddGroupChannel(slack.SlackChannel{
+			Id:      "G001",
+			Name:    "mpdm-alice--bob--charlie-1",
+			Creator: "U001",
+			Created: 1704067200,
+			Members: []string{"U001", "U002", "U003"},
+			Topic:   slack.SlackChannelSub{Value: "first mpim topic"},
+		}).
+		// Second MPIM with identical members but a different Slack channel.
+		AddGroupChannel(slack.SlackChannel{
+			Id:      "G002",
+			Name:    "mpdm-alice--bob--charlie-2",
+			Creator: "U002",
+			Created: 1704070800,
+			Members: []string{"U001", "U002", "U003"},
+		}).
+		// Two posts in the first MPIM directory.
+		AddPost("mpdm-alice--bob--charlie-1", slack.SlackPost{
+			User:      "U001",
+			Text:      "Message from the first MPIM",
+			TimeStamp: "1704067200.000100",
+			Type:      "message",
+		}).
+		AddPost("mpdm-alice--bob--charlie-1", slack.SlackPost{
+			User:      "U002",
+			Text:      "Reply in the first MPIM",
+			TimeStamp: "1704067260.000200",
+			Type:      "message",
+		}).
+		// Two posts in the second MPIM directory — must still appear after dedup.
+		AddPost("mpdm-alice--bob--charlie-2", slack.SlackPost{
+			User:      "U003",
+			Text:      "Message from the second MPIM",
+			TimeStamp: "1704070900.000100",
+			Type:      "message",
+		}).
+		AddPost("mpdm-alice--bob--charlie-2", slack.SlackPost{
+			User:      "U001",
+			Text:      "Another message from the second MPIM",
+			TimeStamp: "1704070960.000200",
+			Type:      "message",
+		})
+}
+
+// ExportWithOverlappingMpims creates an export with two MPIMs that share two
+// of three members but differ in the third. They must NOT be deduplicated:
+// Mattermost keys group channels by full member set, so {alice,bob,charlie}
+// and {alice,bob,dave} are distinct channels and both must survive.
+func ExportWithOverlappingMpims() *SlackExportBuilder {
+	return NewSlackExportBuilder().
+		AddUser(slack.SlackUser{
+			Id:       "U001",
+			Username: "alice",
+			Profile:  slack.SlackProfile{RealName: "Alice Anderson", Email: "alice@example.com"},
+		}).
+		AddUser(slack.SlackUser{
+			Id:       "U002",
+			Username: "bob",
+			Profile:  slack.SlackProfile{RealName: "Bob Baker", Email: "bob@example.com"},
+		}).
+		AddUser(slack.SlackUser{
+			Id:       "U003",
+			Username: "charlie",
+			Profile:  slack.SlackProfile{RealName: "Charlie Carter", Email: "charlie@example.com"},
+		}).
+		AddUser(slack.SlackUser{
+			Id:       "U004",
+			Username: "dave",
+			Profile:  slack.SlackProfile{RealName: "Dave Dawson", Email: "dave@example.com"},
+		}).
+		AddGroupChannel(slack.SlackChannel{
+			Id:      "G001",
+			Name:    "mpdm-alice--bob--charlie",
+			Creator: "U001",
+			Created: 1704067200,
+			Members: []string{"U001", "U002", "U003"},
+		}).
+		AddGroupChannel(slack.SlackChannel{
+			Id:      "G002",
+			Name:    "mpdm-alice--bob--dave",
+			Creator: "U001",
+			Created: 1704070800,
+			Members: []string{"U001", "U002", "U004"},
+		}).
+		AddPost("mpdm-alice--bob--charlie", slack.SlackPost{
+			User:      "U001",
+			Text:      "Hi charlie group",
+			TimeStamp: "1704067200.000100",
+			Type:      "message",
+		}).
+		AddPost("mpdm-alice--bob--dave", slack.SlackPost{
+			User:      "U002",
+			Text:      "Hi dave group",
+			TimeStamp: "1704070900.000100",
+			Type:      "message",
+		})
+}

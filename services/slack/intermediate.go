@@ -240,6 +240,17 @@ type Intermediate struct {
 	DirectChannels  []*IntermediateChannel       `json:"direct_channels"`
 	UsersById       map[string]*IntermediateUser `json:"users"`
 	Posts           []*IntermediatePost          `json:"posts"`
+
+	// GroupChannelAliases maps a duplicate group/direct channel's OriginalName
+	// to the OriginalName of the canonical channel it was merged into. Slack
+	// permits multiple MPIMs with identical member sets, but Mattermost keys
+	// group channels by member-set hash so two such MPIMs collapse server-side.
+	// We deduplicate here to avoid emitting two `direct_channel` lines for the
+	// same hash (which crashes the bulk importer when one MPIM's members aren't
+	// fully written yet — see MM-68736), and route posts from every aliased
+	// Slack channel name to the surviving IntermediateChannel via
+	// buildChannelsByOriginalNameMap.
+	GroupChannelAliases map[string]string `json:"-"`
 }
 
 func (t *Transformer) TransformUsers(users []SlackUser, skipEmptyEmails bool, defaultEmailDomain string) {
@@ -465,6 +476,104 @@ func (t *Transformer) PopulateChannelMemberships() {
 	}
 }
 
+// DeduplicateDirectAndGroupChannelsByMembers collapses group/direct channels that share
+// the same member set (per directChannelKey) into a single canonical
+// IntermediateChannel. Slack allows multiple MPIMs with identical members but
+// Mattermost cannot represent that — emitting two `direct_channel` lines with
+// the same hash crashes the bulk importer (see MM-68736).
+//
+// The canonical channel is the one with the lexicographically smallest Slack
+// Id, so the choice is deterministic across runs. Topic/Header/Purpose fall
+// back to the first non-empty value in canonical order; Created is the minimum.
+// Post-derived stats are left zero and recomputed by ComputeChannelPostStats
+// after dedup.
+//
+// Each dropped duplicate's OriginalName is added to GroupChannelAliases so
+// buildChannelsByOriginalNameMap routes posts from every colliding Slack
+// channel name to the canonical IntermediateChannel.
+//
+// Must run after PopulateChannelMemberships (the key uses MembersUsernames)
+// and before TransformPosts (so post lookup sees the deduplicated slices).
+func (t *Transformer) DeduplicateDirectAndGroupChannelsByMembers() {
+	t.Logger.Info("Deduplicating group and direct channels by member set")
+
+	// Reset on every run so a reused Transformer doesn't carry aliases from
+	// a previous Transform() over to the current one — buildChannelsByOriginalNameMap
+	// would otherwise overlay stale Slack channel names onto the new export.
+	t.Intermediate.GroupChannelAliases = map[string]string{}
+
+	t.Intermediate.GroupChannels = t.dedupByMembers(t.Intermediate.GroupChannels)
+	t.Intermediate.DirectChannels = t.dedupByMembers(t.Intermediate.DirectChannels)
+}
+
+func (t *Transformer) dedupByMembers(channels []*IntermediateChannel) []*IntermediateChannel {
+	if len(channels) <= 1 {
+		return channels
+	}
+
+	groups := map[string][]*IntermediateChannel{}
+	keyOrder := []string{}
+	for _, ch := range channels {
+		if len(ch.MembersUsernames) == 0 {
+			// Defensive: a channel with no resolvable members can't be keyed and
+			// shouldn't be merged with anything. Keep it as its own bucket using
+			// the Slack Id so it survives untouched.
+			key := "__noMembers__" + ch.Id
+			groups[key] = append(groups[key], ch)
+			keyOrder = append(keyOrder, key)
+			continue
+		}
+		key := directChannelKey(ch.MembersUsernames)
+		if _, seen := groups[key]; !seen {
+			keyOrder = append(keyOrder, key)
+		}
+		groups[key] = append(groups[key], ch)
+	}
+
+	result := make([]*IntermediateChannel, 0, len(channels))
+	for _, key := range keyOrder {
+		bucket := groups[key]
+		if len(bucket) == 1 {
+			result = append(result, bucket[0])
+			continue
+		}
+
+		sort.SliceStable(bucket, func(i, j int) bool {
+			return bucket[i].Id < bucket[j].Id
+		})
+
+		canonical := bucket[0]
+		dupSummaries := make([]string, 0, len(bucket)-1)
+		for _, dup := range bucket[1:] {
+			dupSummaries = append(dupSummaries, fmt.Sprintf("%s (%s)", dup.Id, dup.OriginalName))
+			if canonical.Topic == "" && dup.Topic != "" {
+				canonical.Topic = dup.Topic
+			}
+			if canonical.Header == "" && dup.Header != "" {
+				canonical.Header = dup.Header
+			}
+			if canonical.Purpose == "" && dup.Purpose != "" {
+				canonical.Purpose = dup.Purpose
+			}
+			// Slack uses placeholder Created values (e.g. 1 for DMs) that
+			// CreatedMillis() treats as invalid. Ignore them here so a real
+			// timestamp on the canonical isn't replaced by a placeholder from
+			// a duplicate.
+			canonicalCreatedValid := canonical.Created >= minValidSlackCreatedTimestamp
+			dupCreatedValid := dup.Created >= minValidSlackCreatedTimestamp
+			if dupCreatedValid && (!canonicalCreatedValid || dup.Created < canonical.Created) {
+				canonical.Created = dup.Created
+			}
+			t.Intermediate.GroupChannelAliases[dup.OriginalName] = canonical.OriginalName
+		}
+		t.Logger.Infof("Merged %d duplicate channel(s) into canonical %s (%s) keyed by members=%s: [%s]",
+			len(dupSummaries), canonical.Id, canonical.OriginalName, key, strings.Join(dupSummaries, ", "))
+		result = append(result, canonical)
+	}
+
+	return result
+}
+
 func (t *Transformer) TransformAllChannels(slackExport *SlackExport) error {
 	t.Logger.Info("Transforming channels")
 
@@ -546,6 +655,11 @@ func buildChannelsByOriginalNameMap(intermediate *Intermediate) map[string]*Inte
 	}
 	for _, channel := range intermediate.DirectChannels {
 		channelsByName[channel.OriginalName] = channel
+	}
+	for alias, canonical := range intermediate.GroupChannelAliases {
+		if ch, ok := channelsByName[canonical]; ok {
+			channelsByName[alias] = ch
+		}
 	}
 	return channelsByName
 }
@@ -1093,6 +1207,7 @@ func (t *Transformer) Transform(slackExport *SlackExport, attachmentsDir string,
 
 	t.PopulateUserMemberships()
 	t.PopulateChannelMemberships()
+	t.DeduplicateDirectAndGroupChannelsByMembers()
 
 	if err := t.TransformPosts(slackExport, attachmentsDir, skipAttachments, discardInvalidProps, allowDownload); err != nil {
 		return err

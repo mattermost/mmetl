@@ -782,4 +782,37 @@ func TestExportDirectChannels(t *testing.T) {
 		require.NoError(t, err)
 		assert.Empty(t, buf.String())
 	})
+
+	t.Run("emits exactly one line per unique member set after dedup", func(t *testing.T) {
+		transformer := NewTransformer("myteam", log.New())
+		transformer.Intermediate = &Intermediate{
+			GroupChannels: []*IntermediateChannel{
+				{
+					Id:               "C002",
+					OriginalName:     "mpdm-2",
+					Type:             model.ChannelTypeGroup,
+					MembersUsernames: []string{"alice", "bob", "charlie"},
+				},
+				{
+					Id:               "C001",
+					OriginalName:     "mpdm-1",
+					Type:             model.ChannelTypeGroup,
+					MembersUsernames: []string{"charlie", "alice", "bob"},
+				},
+			},
+		}
+
+		transformer.DeduplicateDirectAndGroupChannelsByMembers()
+
+		var buf bytes.Buffer
+		err := transformer.ExportDirectChannels(transformer.Intermediate.GroupChannels, &buf)
+		require.NoError(t, err)
+
+		lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
+		require.Len(t, lines, 1, "duplicate MPIMs should collapse to one direct_channel line")
+
+		var parsed map[string]json.RawMessage
+		require.NoError(t, json.Unmarshal([]byte(lines[0]), &parsed))
+		assert.Equal(t, `"direct_channel"`, string(parsed["type"]))
+	})
 }

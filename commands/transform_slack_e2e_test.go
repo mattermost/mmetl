@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -1057,4 +1058,295 @@ func TestTransformSlackE2ELastViewedAt(t *testing.T) {
 			}
 		}
 	})
+}
+
+// TestTransformSlackE2EMpimDedup verifies the mmetl-side fix for MM-68736:
+// when a Slack export contains two MPIMs that share the same member set, mmetl
+// should emit exactly one `direct_channel` JSONL line, preserve posts from
+// both Slack channels, and the resulting import should succeed against
+// Mattermost without crashing on `ChannelMember not found`.
+func TestTransformSlackE2EMpimDedup(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	th := testhelper.SetupHelper(t)
+	defer th.TearDown()
+	t.Cleanup(func() { os.Remove(transformLogFile) })
+
+	ctx := context.Background()
+	tempDir := t.TempDir()
+	slackExportPath := filepath.Join(tempDir, "slack_export.zip")
+	mmExportPath := filepath.Join(tempDir, "mattermost_import.jsonl")
+	teamName := uniqueTeamName("mpim")
+
+	require.NoError(t, testhelper.ExportWithDuplicateMpims().Build(slackExportPath),
+		"failed to build duplicate-MPIM Slack export fixture")
+
+	team := th.CreateTeam(ctx, teamName, "MPIM Dedup E2E Team")
+	require.NotNil(t, team)
+
+	c := commands.RootCmd
+	resetCobraFlags(c)
+	c.SetArgs([]string{
+		"transform", "slack",
+		"--team", teamName,
+		"--file", slackExportPath,
+		"--output", mmExportPath,
+		"--skip-attachments",
+	})
+	require.NoError(t, c.Execute(), "transform command should succeed")
+
+	content, err := os.ReadFile(mmExportPath)
+	require.NoError(t, err)
+
+	var directChannelLines []map[string]json.RawMessage
+	var directPostLines []map[string]json.RawMessage
+	for _, line := range strings.Split(strings.TrimSpace(string(content)), "\n") {
+		if line == "" {
+			continue
+		}
+		var entry map[string]json.RawMessage
+		require.NoError(t, json.Unmarshal([]byte(line), &entry))
+		switch string(entry["type"]) {
+		case `"direct_channel"`:
+			directChannelLines = append(directChannelLines, entry)
+		case `"direct_post"`:
+			directPostLines = append(directPostLines, entry)
+		}
+	}
+
+	require.Len(t, directChannelLines, 1,
+		"two MPIMs with identical member sets should be deduplicated to one direct_channel line")
+
+	var dc struct {
+		Members []string `json:"members"`
+	}
+	require.NoError(t, json.Unmarshal(directChannelLines[0]["direct_channel"], &dc))
+	sortedMembers := append([]string{}, dc.Members...)
+	sort.Strings(sortedMembers)
+	assert.Equal(t, []string{"alice", "bob", "charlie"}, sortedMembers,
+		"deduplicated channel should contain all three unique members")
+
+	require.Len(t, directPostLines, 4,
+		"posts from both Slack MPIMs should survive dedup (2 + 2 = 4)")
+	for _, post := range directPostLines {
+		var dp struct {
+			ChannelMembers []string `json:"channel_members"`
+		}
+		require.NoError(t, json.Unmarshal(post["direct_post"], &dp))
+		require.Len(t, dp.ChannelMembers, 3,
+			"every direct_post must carry the full 3-member set so the server routes it to the canonical channel")
+	}
+
+	validationResult := th.ValidateImportFileOrFail(ctx, mmExportPath)
+	assert.Equal(t, uint64(3), validationResult.UserCount, "all three users should validate")
+
+	// Import must succeed. Without dedup the server crashes with
+	// `ChannelMember not found` when the second direct_channel line hits a
+	// channel-hash collision with incomplete membership state.
+	require.NoError(t, th.ImportBulkData(ctx, mmExportPath),
+		"import of deduplicated MPIM should succeed without ChannelMember errors")
+
+	alice := th.AssertUserExists(ctx, "alice")
+	bobUser := th.AssertUserExists(ctx, "bob")
+	charlie := th.AssertUserExists(ctx, "charlie")
+
+	// Locate the imported group channel by enumerating alice's channels and
+	// picking the type-G one whose member set is exactly {alice, bob, charlie}.
+	// We avoid CreateGroupChannel here because that endpoint adds the calling
+	// user (the test admin) to the member set and would return a different
+	// 4-member channel rather than the imported 3-member one.
+	aliceChannels, _, err := th.Client.GetChannelsForUserWithLastDeleteAt(ctx, alice.Id, 0)
+	require.NoError(t, err)
+
+	expectedMembers := map[string]bool{alice.Id: true, bobUser.Id: true, charlie.Id: true}
+	var gmChannel *model.Channel
+	for _, ch := range aliceChannels {
+		if ch.Type != model.ChannelTypeGroup {
+			continue
+		}
+		members, mErr := th.GetChannelMembers(ctx, ch.Id)
+		require.NoError(t, mErr)
+		if len(members) != len(expectedMembers) {
+			continue
+		}
+		match := true
+		for _, m := range members {
+			if !expectedMembers[m.UserId] {
+				match = false
+				break
+			}
+		}
+		if match {
+			gmChannel = ch
+			break
+		}
+	}
+	require.NotNil(t, gmChannel,
+		"a group channel with exactly {alice, bob, charlie} should exist after import")
+
+	gmPosts, err := th.GetChannelPosts(ctx, gmChannel.Id, 0, 100)
+	require.NoError(t, err)
+
+	expectedMessages := []string{
+		"Message from the first MPIM",
+		"Reply in the first MPIM",
+		"Message from the second MPIM",
+		"Another message from the second MPIM",
+	}
+	found := map[string]bool{}
+	for _, postID := range gmPosts.Order {
+		for _, expected := range expectedMessages {
+			if strings.Contains(gmPosts.Posts[postID].Message, expected) {
+				found[expected] = true
+			}
+		}
+	}
+	for _, expected := range expectedMessages {
+		assert.True(t, found[expected],
+			"posts from both Slack MPIMs should be imported; missing: %q", expected)
+	}
+}
+
+// TestTransformSlackE2EMpimsNotMergedWhenMembersDiffer is the non-happy-path
+// counterpart to TestTransformSlackE2EMpimDedup: when two Slack MPIMs share
+// some — but not all — members, the dedup pass must NOT merge them. Mattermost
+// keys group channels by full member-set hash, so {alice,bob,charlie} and
+// {alice,bob,dave} are independent channels and both must survive into the
+// JSONL and into the imported Mattermost state.
+func TestTransformSlackE2EMpimsNotMergedWhenMembersDiffer(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	th := testhelper.SetupHelper(t)
+	defer th.TearDown()
+	t.Cleanup(func() { os.Remove(transformLogFile) })
+
+	ctx := context.Background()
+	tempDir := t.TempDir()
+	slackExportPath := filepath.Join(tempDir, "slack_export.zip")
+	mmExportPath := filepath.Join(tempDir, "mattermost_import.jsonl")
+	teamName := uniqueTeamName("mpimno")
+
+	require.NoError(t, testhelper.ExportWithOverlappingMpims().Build(slackExportPath),
+		"failed to build overlapping-MPIM Slack export fixture")
+
+	team := th.CreateTeam(ctx, teamName, "MPIM No-Merge E2E Team")
+	require.NotNil(t, team)
+
+	c := commands.RootCmd
+	resetCobraFlags(c)
+	c.SetArgs([]string{
+		"transform", "slack",
+		"--team", teamName,
+		"--file", slackExportPath,
+		"--output", mmExportPath,
+		"--skip-attachments",
+	})
+	require.NoError(t, c.Execute(), "transform command should succeed")
+
+	content, err := os.ReadFile(mmExportPath)
+	require.NoError(t, err)
+
+	var directChannelMemberSets [][]string
+	var directPostCount int
+	for _, line := range strings.Split(strings.TrimSpace(string(content)), "\n") {
+		if line == "" {
+			continue
+		}
+		var entry map[string]json.RawMessage
+		require.NoError(t, json.Unmarshal([]byte(line), &entry))
+		switch string(entry["type"]) {
+		case `"direct_channel"`:
+			var dc struct {
+				Members []string `json:"members"`
+			}
+			require.NoError(t, json.Unmarshal(entry["direct_channel"], &dc))
+			sorted := append([]string{}, dc.Members...)
+			sort.Strings(sorted)
+			directChannelMemberSets = append(directChannelMemberSets, sorted)
+		case `"direct_post"`:
+			directPostCount++
+		}
+	}
+
+	require.Len(t, directChannelMemberSets, 2,
+		"two distinct member sets must produce two direct_channel lines — dedup should not collapse non-identical sets")
+
+	// Order the two emitted sets deterministically before asserting content.
+	sort.Slice(directChannelMemberSets, func(i, j int) bool {
+		return strings.Join(directChannelMemberSets[i], ",") < strings.Join(directChannelMemberSets[j], ",")
+	})
+	assert.Equal(t, []string{"alice", "bob", "charlie"}, directChannelMemberSets[0])
+	assert.Equal(t, []string{"alice", "bob", "dave"}, directChannelMemberSets[1])
+
+	assert.Equal(t, 2, directPostCount, "one post per MPIM should survive (no merging)")
+
+	require.NoError(t, th.ImportBulkData(ctx, mmExportPath), "import should succeed")
+
+	alice := th.AssertUserExists(ctx, "alice")
+	bobUser := th.AssertUserExists(ctx, "bob")
+	charlie := th.AssertUserExists(ctx, "charlie")
+	dave := th.AssertUserExists(ctx, "dave")
+
+	aliceChannels, _, err := th.Client.GetChannelsForUserWithLastDeleteAt(ctx, alice.Id, 0)
+	require.NoError(t, err)
+
+	// Build a {sorted-userIDs → channel} index over alice's group channels.
+	gmByMembers := map[string]*model.Channel{}
+	for _, ch := range aliceChannels {
+		if ch.Type != model.ChannelTypeGroup {
+			continue
+		}
+		members, mErr := th.GetChannelMembers(ctx, ch.Id)
+		require.NoError(t, mErr)
+		ids := make([]string, 0, len(members))
+		for _, m := range members {
+			ids = append(ids, m.UserId)
+		}
+		sort.Strings(ids)
+		gmByMembers[strings.Join(ids, ",")] = ch
+	}
+
+	charlieKey := joinSorted(alice.Id, bobUser.Id, charlie.Id)
+	daveKey := joinSorted(alice.Id, bobUser.Id, dave.Id)
+	require.NotNil(t, gmByMembers[charlieKey],
+		"GM for {alice,bob,charlie} should exist in Mattermost as a distinct channel")
+	require.NotNil(t, gmByMembers[daveKey],
+		"GM for {alice,bob,dave} should exist in Mattermost as a distinct channel")
+	assert.NotEqual(t, gmByMembers[charlieKey].Id, gmByMembers[daveKey].Id,
+		"the two GMs must be distinct Mattermost channels")
+
+	charlieGMPosts, err := th.GetChannelPosts(ctx, gmByMembers[charlieKey].Id, 0, 100)
+	require.NoError(t, err)
+	daveGMPosts, err := th.GetChannelPosts(ctx, gmByMembers[daveKey].Id, 0, 100)
+	require.NoError(t, err)
+
+	assert.True(t, anyPostContains(charlieGMPosts, "Hi charlie group"),
+		"the {alice,bob,charlie} GM should contain its own post")
+	assert.False(t, anyPostContains(charlieGMPosts, "Hi dave group"),
+		"the {alice,bob,charlie} GM must NOT contain posts from the {alice,bob,dave} GM")
+	assert.True(t, anyPostContains(daveGMPosts, "Hi dave group"),
+		"the {alice,bob,dave} GM should contain its own post")
+	assert.False(t, anyPostContains(daveGMPosts, "Hi charlie group"),
+		"the {alice,bob,dave} GM must NOT contain posts from the {alice,bob,charlie} GM")
+}
+
+// joinSorted returns a deterministic comma-joined key from the given strings.
+func joinSorted(s ...string) string {
+	cp := append([]string{}, s...)
+	sort.Strings(cp)
+	return strings.Join(cp, ",")
+}
+
+// anyPostContains reports whether any post in list contains substring.
+func anyPostContains(list *model.PostList, substring string) bool {
+	for _, id := range list.Order {
+		if strings.Contains(list.Posts[id].Message, substring) {
+			return true
+		}
+	}
+	return false
 }

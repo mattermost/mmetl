@@ -1001,6 +1001,398 @@ func TestDirectChannelKey(t *testing.T) {
 	assert.Equal(t, "alice,bob,charlie", directChannelKey([]string{"charlie", "alice", "bob"}))
 }
 
+func TestDeduplicateDirectAndGroupChannelsByMembers(t *testing.T) {
+	t.Run("merges two group channels with identical member sets", func(t *testing.T) {
+		slackTransformer := NewTransformer("test", log.New())
+		ch1 := &IntermediateChannel{
+			Id:               "C002",
+			OriginalName:     "mpdm-alice--bob--charlie-2",
+			Type:             model.ChannelTypeGroup,
+			MembersUsernames: []string{"alice", "bob", "charlie"},
+			Topic:            "second-topic",
+		}
+		ch2 := &IntermediateChannel{
+			Id:               "C001",
+			OriginalName:     "mpdm-alice--bob--charlie-1",
+			Type:             model.ChannelTypeGroup,
+			MembersUsernames: []string{"charlie", "alice", "bob"}, // different order
+			Topic:            "first-topic",
+		}
+		slackTransformer.Intermediate = &Intermediate{
+			GroupChannels: []*IntermediateChannel{ch1, ch2},
+		}
+
+		slackTransformer.DeduplicateDirectAndGroupChannelsByMembers()
+
+		require.Len(t, slackTransformer.Intermediate.GroupChannels, 1)
+		canonical := slackTransformer.Intermediate.GroupChannels[0]
+		assert.Equal(t, "C001", canonical.Id, "canonical should be the lexicographically smallest Id")
+		assert.Equal(t, "first-topic", canonical.Topic)
+		assert.Equal(t, "mpdm-alice--bob--charlie-1",
+			slackTransformer.Intermediate.GroupChannelAliases["mpdm-alice--bob--charlie-2"])
+	})
+
+	t.Run("preserves channels with different member sets", func(t *testing.T) {
+		slackTransformer := NewTransformer("test", log.New())
+		ch1 := &IntermediateChannel{
+			Id:               "C001",
+			OriginalName:     "mpdm-a",
+			Type:             model.ChannelTypeGroup,
+			MembersUsernames: []string{"alice", "bob", "charlie"},
+		}
+		ch2 := &IntermediateChannel{
+			Id:               "C002",
+			OriginalName:     "mpdm-b",
+			Type:             model.ChannelTypeGroup,
+			MembersUsernames: []string{"alice", "bob", "dave"},
+		}
+		slackTransformer.Intermediate = &Intermediate{
+			GroupChannels: []*IntermediateChannel{ch1, ch2},
+		}
+
+		slackTransformer.DeduplicateDirectAndGroupChannelsByMembers()
+
+		require.Len(t, slackTransformer.Intermediate.GroupChannels, 2)
+		assert.Empty(t, slackTransformer.Intermediate.GroupChannelAliases)
+	})
+
+	t.Run("merges direct channels with identical pairs", func(t *testing.T) {
+		slackTransformer := NewTransformer("test", log.New())
+		ch1 := &IntermediateChannel{
+			Id:               "D002",
+			OriginalName:     "dm-2",
+			Type:             model.ChannelTypeDirect,
+			MembersUsernames: []string{"alice", "bob"},
+		}
+		ch2 := &IntermediateChannel{
+			Id:               "D001",
+			OriginalName:     "dm-1",
+			Type:             model.ChannelTypeDirect,
+			MembersUsernames: []string{"bob", "alice"},
+		}
+		slackTransformer.Intermediate = &Intermediate{
+			DirectChannels: []*IntermediateChannel{ch1, ch2},
+		}
+
+		slackTransformer.DeduplicateDirectAndGroupChannelsByMembers()
+
+		require.Len(t, slackTransformer.Intermediate.DirectChannels, 1)
+		assert.Equal(t, "D001", slackTransformer.Intermediate.DirectChannels[0].Id)
+		assert.Equal(t, "dm-1", slackTransformer.Intermediate.GroupChannelAliases["dm-2"])
+	})
+
+	t.Run("canonical selection is deterministic regardless of input order", func(t *testing.T) {
+		members := []string{"alice", "bob", "charlie"}
+		for _, order := range [][]string{
+			{"C03", "C01", "C02"},
+			{"C02", "C03", "C01"},
+			{"C01", "C02", "C03"},
+		} {
+			channels := make([]*IntermediateChannel, len(order))
+			for i, id := range order {
+				channels[i] = &IntermediateChannel{
+					Id:               id,
+					OriginalName:     "mpdm-" + id,
+					Type:             model.ChannelTypeGroup,
+					MembersUsernames: members,
+				}
+			}
+			slackTransformer := NewTransformer("test", log.New())
+			slackTransformer.Intermediate = &Intermediate{GroupChannels: channels}
+			slackTransformer.DeduplicateDirectAndGroupChannelsByMembers()
+
+			require.Len(t, slackTransformer.Intermediate.GroupChannels, 1)
+			assert.Equal(t, "C01", slackTransformer.Intermediate.GroupChannels[0].Id,
+				"input order %v should still pick C01", order)
+		}
+	})
+
+	t.Run("metadata merge fills empty topic/header/purpose from duplicates", func(t *testing.T) {
+		slackTransformer := NewTransformer("test", log.New())
+		canonicalCh := &IntermediateChannel{
+			Id:               "C001",
+			OriginalName:     "mpdm-1",
+			Type:             model.ChannelTypeGroup,
+			MembersUsernames: []string{"alice", "bob", "charlie"},
+			Created:          2000,
+			// Topic, Header, Purpose all empty
+		}
+		duplicateCh := &IntermediateChannel{
+			Id:               "C002",
+			OriginalName:     "mpdm-2",
+			Type:             model.ChannelTypeGroup,
+			MembersUsernames: []string{"alice", "bob", "charlie"},
+			Created:          1000,
+			Topic:            "filled-topic",
+			Header:           "filled-header",
+			Purpose:          "filled-purpose",
+		}
+		slackTransformer.Intermediate = &Intermediate{
+			GroupChannels: []*IntermediateChannel{canonicalCh, duplicateCh},
+		}
+
+		slackTransformer.DeduplicateDirectAndGroupChannelsByMembers()
+
+		require.Len(t, slackTransformer.Intermediate.GroupChannels, 1)
+		canonical := slackTransformer.Intermediate.GroupChannels[0]
+		assert.Equal(t, "C001", canonical.Id)
+		assert.Equal(t, "filled-topic", canonical.Topic)
+		assert.Equal(t, "filled-header", canonical.Header)
+		assert.Equal(t, "filled-purpose", canonical.Purpose)
+	})
+
+	t.Run("post stats aggregate onto canonical after dedup", func(t *testing.T) {
+		slackTransformer := NewTransformer("test", log.New())
+		canonicalCh := &IntermediateChannel{
+			Id:               "C001",
+			OriginalName:     "mpdm-1",
+			Type:             model.ChannelTypeGroup,
+			MembersUsernames: []string{"alice", "bob", "charlie"},
+		}
+		duplicateCh := &IntermediateChannel{
+			Id:               "C002",
+			OriginalName:     "mpdm-2",
+			Type:             model.ChannelTypeGroup,
+			MembersUsernames: []string{"alice", "bob", "charlie"},
+		}
+		slackTransformer.Intermediate = &Intermediate{
+			GroupChannels: []*IntermediateChannel{canonicalCh, duplicateCh},
+			Posts: []*IntermediatePost{
+				{IsDirect: true, ChannelMembers: []string{"alice", "bob", "charlie"}, CreateAt: 1000},
+				{IsDirect: true, ChannelMembers: []string{"bob", "charlie", "alice"}, CreateAt: 2000},
+				{IsDirect: true, ChannelMembers: []string{"charlie", "alice", "bob"}, CreateAt: 3000,
+					Replies: []*IntermediatePost{{CreateAt: 3500}}},
+			},
+		}
+
+		slackTransformer.DeduplicateDirectAndGroupChannelsByMembers()
+		slackTransformer.ComputeChannelPostStats()
+
+		require.Len(t, slackTransformer.Intermediate.GroupChannels, 1)
+		canonical := slackTransformer.Intermediate.GroupChannels[0]
+		assert.Equal(t, int64(4), canonical.MsgCount, "3 roots + 1 reply across both MPIMs")
+		assert.Equal(t, int64(3), canonical.MsgCountRoot)
+		assert.Equal(t, int64(3500), canonical.LastPostAt)
+	})
+
+	t.Run("is idempotent on already-deduplicated input", func(t *testing.T) {
+		slackTransformer := NewTransformer("test", log.New())
+		ch := &IntermediateChannel{
+			Id:               "C001",
+			OriginalName:     "mpdm-1",
+			Type:             model.ChannelTypeGroup,
+			MembersUsernames: []string{"alice", "bob", "charlie"},
+		}
+		slackTransformer.Intermediate = &Intermediate{
+			GroupChannels: []*IntermediateChannel{ch},
+		}
+
+		slackTransformer.DeduplicateDirectAndGroupChannelsByMembers()
+		slackTransformer.DeduplicateDirectAndGroupChannelsByMembers()
+
+		require.Len(t, slackTransformer.Intermediate.GroupChannels, 1)
+		assert.Empty(t, slackTransformer.Intermediate.GroupChannelAliases)
+	})
+
+	t.Run("channels with no resolvable members are not merged together", func(t *testing.T) {
+		slackTransformer := NewTransformer("test", log.New())
+		ch1 := &IntermediateChannel{
+			Id:           "C001",
+			OriginalName: "mpdm-1",
+			Type:         model.ChannelTypeGroup,
+			// MembersUsernames is empty (e.g. all members deleted/unknown)
+		}
+		ch2 := &IntermediateChannel{
+			Id:           "C002",
+			OriginalName: "mpdm-2",
+			Type:         model.ChannelTypeGroup,
+		}
+		slackTransformer.Intermediate = &Intermediate{
+			GroupChannels: []*IntermediateChannel{ch1, ch2},
+		}
+
+		slackTransformer.DeduplicateDirectAndGroupChannelsByMembers()
+
+		require.Len(t, slackTransformer.Intermediate.GroupChannels, 2,
+			"empty-member channels should never be merged with each other")
+		assert.Empty(t, slackTransformer.Intermediate.GroupChannelAliases)
+	})
+
+	t.Run("aliases from a previous run do not leak into the next run", func(t *testing.T) {
+		slackTransformer := NewTransformer("test", log.New())
+		slackTransformer.Intermediate = &Intermediate{
+			GroupChannels: []*IntermediateChannel{
+				{Id: "C001", OriginalName: "mpdm-1", Type: model.ChannelTypeGroup,
+					MembersUsernames: []string{"alice", "bob", "charlie"}},
+				{Id: "C002", OriginalName: "mpdm-2", Type: model.ChannelTypeGroup,
+					MembersUsernames: []string{"alice", "bob", "charlie"}},
+			},
+		}
+		slackTransformer.DeduplicateDirectAndGroupChannelsByMembers()
+		require.Equal(t, "mpdm-1",
+			slackTransformer.Intermediate.GroupChannelAliases["mpdm-2"],
+			"first run should record the mpdm-2 → mpdm-1 alias")
+
+		// Simulate a second Transform() pass on a reused Transformer where the
+		// new export has no duplicates. The stale alias from the previous run
+		// must not survive — otherwise buildChannelsByOriginalNameMap would
+		// overlay it onto the new channel set.
+		slackTransformer.Intermediate.GroupChannels = []*IntermediateChannel{
+			{Id: "C999", OriginalName: "mpdm-fresh", Type: model.ChannelTypeGroup,
+				MembersUsernames: []string{"alice", "bob", "dave"}},
+		}
+		slackTransformer.DeduplicateDirectAndGroupChannelsByMembers()
+		assert.Empty(t, slackTransformer.Intermediate.GroupChannelAliases,
+			"aliases from the first run must be cleared at the start of the second run")
+	})
+
+	t.Run("placeholder Slack Created on a duplicate does not overwrite a valid canonical Created", func(t *testing.T) {
+		slackTransformer := NewTransformer("test", log.New())
+		canonicalCh := &IntermediateChannel{
+			Id:               "C001",
+			OriginalName:     "mpdm-1",
+			Type:             model.ChannelTypeGroup,
+			MembersUsernames: []string{"alice", "bob", "charlie"},
+			Created:          1704067200, // valid, post-2013
+		}
+		duplicateCh := &IntermediateChannel{
+			Id:               "C002",
+			OriginalName:     "mpdm-2",
+			Type:             model.ChannelTypeGroup,
+			MembersUsernames: []string{"alice", "bob", "charlie"},
+			Created:          1, // Slack placeholder
+		}
+		slackTransformer.Intermediate = &Intermediate{
+			GroupChannels: []*IntermediateChannel{canonicalCh, duplicateCh},
+		}
+
+		slackTransformer.DeduplicateDirectAndGroupChannelsByMembers()
+
+		require.Len(t, slackTransformer.Intermediate.GroupChannels, 1)
+		assert.Equal(t, int64(1704067200),
+			slackTransformer.Intermediate.GroupChannels[0].Created,
+			"placeholder Created=1 must not replace the canonical's real timestamp")
+	})
+
+	t.Run("valid Created on a duplicate replaces placeholder Created on the canonical", func(t *testing.T) {
+		slackTransformer := NewTransformer("test", log.New())
+		canonicalCh := &IntermediateChannel{
+			Id:               "C001",
+			OriginalName:     "mpdm-1",
+			Type:             model.ChannelTypeGroup,
+			MembersUsernames: []string{"alice", "bob", "charlie"},
+			Created:          1, // canonical (smallest Id) has a placeholder
+		}
+		duplicateCh := &IntermediateChannel{
+			Id:               "C002",
+			OriginalName:     "mpdm-2",
+			Type:             model.ChannelTypeGroup,
+			MembersUsernames: []string{"alice", "bob", "charlie"},
+			Created:          1704067200, // valid
+		}
+		slackTransformer.Intermediate = &Intermediate{
+			GroupChannels: []*IntermediateChannel{canonicalCh, duplicateCh},
+		}
+
+		slackTransformer.DeduplicateDirectAndGroupChannelsByMembers()
+
+		require.Len(t, slackTransformer.Intermediate.GroupChannels, 1)
+		assert.Equal(t, int64(1704067200),
+			slackTransformer.Intermediate.GroupChannels[0].Created,
+			"a valid duplicate timestamp must replace the canonical's placeholder")
+	})
+
+	t.Run("Created across two valid duplicates picks the earliest", func(t *testing.T) {
+		slackTransformer := NewTransformer("test", log.New())
+		canonicalCh := &IntermediateChannel{
+			Id:               "C001",
+			OriginalName:     "mpdm-1",
+			Type:             model.ChannelTypeGroup,
+			MembersUsernames: []string{"alice", "bob", "charlie"},
+			Created:          1704070800, // valid, later
+		}
+		duplicateCh := &IntermediateChannel{
+			Id:               "C002",
+			OriginalName:     "mpdm-2",
+			Type:             model.ChannelTypeGroup,
+			MembersUsernames: []string{"alice", "bob", "charlie"},
+			Created:          1704067200, // valid, earlier
+		}
+		slackTransformer.Intermediate = &Intermediate{
+			GroupChannels: []*IntermediateChannel{canonicalCh, duplicateCh},
+		}
+
+		slackTransformer.DeduplicateDirectAndGroupChannelsByMembers()
+
+		require.Len(t, slackTransformer.Intermediate.GroupChannels, 1)
+		assert.Equal(t, int64(1704067200),
+			slackTransformer.Intermediate.GroupChannels[0].Created,
+			"earliest valid timestamp should win when both duplicates have valid Created")
+	})
+
+	t.Run("Created stays untouched when both canonical and duplicate are placeholders", func(t *testing.T) {
+		slackTransformer := NewTransformer("test", log.New())
+		canonicalCh := &IntermediateChannel{
+			Id:               "C001",
+			OriginalName:     "mpdm-1",
+			Type:             model.ChannelTypeGroup,
+			MembersUsernames: []string{"alice", "bob", "charlie"},
+			Created:          1, // placeholder
+		}
+		duplicateCh := &IntermediateChannel{
+			Id:               "C002",
+			OriginalName:     "mpdm-2",
+			Type:             model.ChannelTypeGroup,
+			MembersUsernames: []string{"alice", "bob", "charlie"},
+			Created:          minValidSlackCreatedTimestamp - 1, // also placeholder
+		}
+		slackTransformer.Intermediate = &Intermediate{
+			GroupChannels: []*IntermediateChannel{canonicalCh, duplicateCh},
+		}
+
+		slackTransformer.DeduplicateDirectAndGroupChannelsByMembers()
+
+		require.Len(t, slackTransformer.Intermediate.GroupChannels, 1)
+		assert.Equal(t, int64(1),
+			slackTransformer.Intermediate.GroupChannels[0].Created,
+			"two placeholders should leave canonical Created untouched")
+	})
+}
+
+func TestBuildChannelsByOriginalNameMapHonoursAliases(t *testing.T) {
+	canonical := &IntermediateChannel{
+		Id:           "C001",
+		OriginalName: "mpdm-canonical",
+		Type:         model.ChannelTypeGroup,
+	}
+	intermediate := &Intermediate{
+		GroupChannels: []*IntermediateChannel{canonical},
+		GroupChannelAliases: map[string]string{
+			"mpdm-duplicate": "mpdm-canonical",
+		},
+	}
+
+	m := buildChannelsByOriginalNameMap(intermediate)
+
+	assert.Same(t, canonical, m["mpdm-canonical"])
+	assert.Same(t, canonical, m["mpdm-duplicate"],
+		"alias OriginalName should resolve to the canonical IntermediateChannel")
+}
+
+func TestBuildChannelsByOriginalNameMapIgnoresStaleAlias(t *testing.T) {
+	intermediate := &Intermediate{
+		GroupChannels: []*IntermediateChannel{},
+		GroupChannelAliases: map[string]string{
+			"mpdm-orphan": "mpdm-missing",
+		},
+	}
+
+	m := buildChannelsByOriginalNameMap(intermediate)
+
+	_, ok := m["mpdm-orphan"]
+	assert.False(t, ok, "alias pointing at a non-existent canonical must not create a nil entry")
+}
+
 func TestComputeChannelPostStats(t *testing.T) {
 	t.Run("regular channel counts root posts and replies", func(t *testing.T) {
 		slackTransformer := NewTransformer("test", log.New())
