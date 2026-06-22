@@ -9,55 +9,30 @@ import (
 	"path"
 	"sort"
 	"strings"
-	"time"
 	"unicode/utf8"
 
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/text/unicode/norm"
+
+	"github.com/mattermost/mmetl/services/intermediate"
 )
 
 const attachmentsInternal = "bulk-export-attachments"
 
-// minValidSlackCreatedTimestamp is the minimum Unix timestamp (seconds) we consider
-// valid for a Slack channel creation time. Slack launched in 2013, so any value
-// before Jan 1, 2013 is treated as a placeholder (e.g. Slack uses "created": 1 for DMs).
-const minValidSlackCreatedTimestamp = 1356998400
-
-var exitFunc func(code int) = os.Exit
-
-// nowFunc is used by CreatedMillis for the fallback timestamp.
-// Tests can override this for deterministic output.
-var nowFunc = time.Now
-
-type IntermediateChannel struct {
-	Id               string            `json:"id"`
-	OriginalName     string            `json:"original_name"`
-	Name             string            `json:"name"`
-	DisplayName      string            `json:"display_name"`
-	Members          []string          `json:"members"`
-	MembersUsernames []string          `json:"members_usernames"`
-	Purpose          string            `json:"purpose"`
-	Header           string            `json:"header"`
-	Topic            string            `json:"topic"`
-	Type             model.ChannelType `json:"type"`
-	DeleteAt         int64             `json:"delete_at"`
-	Created          int64             `json:"created"` // Unix timestamp in seconds from Slack
-	MsgCount         int64             `json:"msg_count"`
-	MsgCountRoot     int64             `json:"msg_count_root"`
-	LastPostAt       int64             `json:"last_post_at"` // milliseconds, computed from posts
-}
-
-// CreatedMillis returns the channel creation time in milliseconds.
-// If Created is not a valid timestamp (zero, placeholder, or before Slack's
-// launch in 2013), falls back to the current time.
-func (c *IntermediateChannel) CreatedMillis() int64 {
-	if c.Created >= minValidSlackCreatedTimestamp {
-		return c.Created * 1000
-	}
-	return nowFunc().UnixMilli()
-}
+// The intermediate representation now lives in the shared services/intermediate
+// package so it can be reused across import sources (Slack, Rocket.Chat, ...).
+// These aliases keep the Slack transform code below unchanged. Methods such as
+// CreatedMillis and Sanitise are defined on the canonical types in that package.
+type (
+	IntermediateChannel    = intermediate.IntermediateChannel
+	IntermediateMembership = intermediate.IntermediateMembership
+	IntermediateUser       = intermediate.IntermediateUser
+	IntermediateReaction   = intermediate.IntermediateReaction
+	IntermediatePost       = intermediate.IntermediatePost
+	Intermediate           = intermediate.Intermediate
+)
 
 // directChannelKey returns a deterministic lookup key for a direct/group
 // channel by sorting and joining the member usernames.
@@ -114,143 +89,6 @@ func (t *Transformer) ComputeChannelPostStats() {
 			}
 		}
 	}
-}
-
-func (c *IntermediateChannel) Sanitise(logger log.FieldLogger) {
-	if c.Type == model.ChannelTypeDirect {
-		return
-	}
-
-	c.Name = strings.Trim(c.Name, "_-")
-	if len(c.Name) > model.ChannelNameMaxLength {
-		logger.Warnf("Channel %s handle exceeds the maximum length. It will be truncated when imported.", c.DisplayName)
-		c.Name = c.Name[0:model.ChannelNameMaxLength]
-	}
-	if len(c.Name) == 1 {
-		c.Name = "slack-channel-" + c.Name
-	}
-	if !isValidChannelNameCharacters(c.Name) {
-		c.Name = strings.ToLower(c.Id)
-	}
-
-	c.DisplayName = strings.Trim(c.DisplayName, "_-")
-	if utf8.RuneCountInString(c.DisplayName) > model.ChannelDisplayNameMaxRunes {
-		logger.Warnf("Channel %s display name exceeds the maximum length. It will be truncated when imported.", c.DisplayName)
-		c.DisplayName = truncateRunes(c.DisplayName, model.ChannelDisplayNameMaxRunes)
-	}
-	if len(c.DisplayName) == 1 {
-		c.DisplayName = "slack-channel-" + c.DisplayName
-	}
-
-	if utf8.RuneCountInString(c.Purpose) > model.ChannelPurposeMaxRunes {
-		logger.Warnf("Channel %s purpose exceeds the maximum length. It will be truncated when imported.", c.DisplayName)
-		c.Purpose = truncateRunes(c.Purpose, model.ChannelPurposeMaxRunes)
-	}
-
-	if utf8.RuneCountInString(c.Header) > model.ChannelHeaderMaxRunes {
-		logger.Warnf("Channel %s header exceeds the maximum length. It will be truncated when imported.", c.DisplayName)
-		c.Header = truncateRunes(c.Header, model.ChannelHeaderMaxRunes)
-	}
-}
-
-// IntermediateMembership represents a user's membership in a channel,
-// carrying the channel name and pre-computed read-state fields
-// for the Mattermost bulk import.
-type IntermediateMembership struct {
-	Name         string `json:"name"`
-	LastViewedAt int64  `json:"last_viewed_at"` // milliseconds
-	MsgCount     int64  `json:"msg_count"`
-	MsgCountRoot int64  `json:"msg_count_root"`
-}
-
-type IntermediateUser struct {
-	Id          string                   `json:"id"`
-	Username    string                   `json:"username"`
-	FirstName   string                   `json:"first_name"`
-	LastName    string                   `json:"last_name"`
-	Position    string                   `json:"position"`
-	Email       string                   `json:"email"`
-	Password    string                   `json:"password"`
-	Memberships []IntermediateMembership `json:"memberships"`
-	DeleteAt    int64                    `json:"delete_at"`
-	IsBot       bool                     `json:"is_bot"`
-	DisplayName string                   `json:"display_name"`
-}
-
-func (u *IntermediateUser) Sanitise(logger log.FieldLogger, defaultEmailDomain string, skipEmptyEmails bool) {
-	logger.Debugf("TransformUsers: Sanitise: IntermediateUser receiver: %+v", u)
-
-	if u.Email == "" {
-		if skipEmptyEmails {
-			logger.Warnf("User %s does not have an email address in the Slack export. Using blank email address due to --skip-empty-emails flag.", u.Username)
-			return
-		}
-
-		if defaultEmailDomain != "" {
-			u.Email = u.Username + "@" + defaultEmailDomain
-			logger.Warnf("User %s does not have an email address in the Slack export. Used %s as a placeholder. The user should update their email address once logged in to the system.", u.Username, u.Email)
-		} else {
-			msg := fmt.Sprintf("User %s does not have an email address in the Slack export. Please provide an email domain through the --default-email-domain flag, to assign this user's email address. Alternatively, use the --skip-empty-emails flag to set the user's email to an empty string.", u.Username)
-			logger.Error(msg)
-			fmt.Println(msg)
-			exitFunc(1)
-		}
-	}
-
-	if utf8.RuneCountInString(u.FirstName) > model.UserFirstNameMaxRunes {
-		logger.Warnf("User %s first name exceeds the maximum length. It will be truncated when imported.", u.Username)
-		u.FirstName = truncateRunes(u.FirstName, model.UserFirstNameMaxRunes)
-	}
-
-	if utf8.RuneCountInString(u.LastName) > model.UserLastNameMaxRunes {
-		logger.Warnf("User %s last name exceeds the maximum length. It will be truncated when imported.", u.Username)
-		u.LastName = truncateRunes(u.LastName, model.UserLastNameMaxRunes)
-	}
-
-	if utf8.RuneCountInString(u.Position) > model.UserPositionMaxRunes {
-		logger.Warnf("User %s position exceeds the maximum length. It will be truncated when imported.", u.Username)
-		u.Position = truncateRunes(u.Position, model.UserPositionMaxRunes)
-	}
-}
-
-type IntermediateReaction struct {
-	User      string `json:"user"`
-	EmojiName string `json:"emoji_name"`
-	CreateAt  int64  `json:"create_at"`
-}
-
-type IntermediatePost struct {
-	User           string                  `json:"user"`
-	Channel        string                  `json:"channel"`
-	Message        string                  `json:"message"`
-	Props          model.StringInterface   `json:"props"`
-	CreateAt       int64                   `json:"create_at"`
-	Type           string                  `json:"type"`
-	Attachments    []string                `json:"attachments"`
-	Replies        []*IntermediatePost     `json:"replies"`
-	Reactions      []*IntermediateReaction `json:"reactions"`
-	IsDirect       bool                    `json:"is_direct"`
-	ChannelMembers []string                `json:"channel_members"`
-}
-
-type Intermediate struct {
-	PublicChannels  []*IntermediateChannel       `json:"public_channels"`
-	PrivateChannels []*IntermediateChannel       `json:"private_channels"`
-	GroupChannels   []*IntermediateChannel       `json:"group_channels"`
-	DirectChannels  []*IntermediateChannel       `json:"direct_channels"`
-	UsersById       map[string]*IntermediateUser `json:"users"`
-	Posts           []*IntermediatePost          `json:"posts"`
-
-	// GroupChannelAliases maps a duplicate group/direct channel's OriginalName
-	// to the OriginalName of the canonical channel it was merged into. Slack
-	// permits multiple MPIMs with identical member sets, but Mattermost keys
-	// group channels by member-set hash so two such MPIMs collapse server-side.
-	// We deduplicate here to avoid emitting two `direct_channel` lines for the
-	// same hash (which crashes the bulk importer when one MPIM's members aren't
-	// fully written yet — see MM-68736), and route posts from every aliased
-	// Slack channel name to the surviving IntermediateChannel via
-	// buildChannelsByOriginalNameMap.
-	GroupChannelAliases map[string]string `json:"-"`
 }
 
 func (t *Transformer) TransformUsers(users []SlackUser, skipEmptyEmails bool, defaultEmailDomain string) {
@@ -439,7 +277,7 @@ func (t *Transformer) applyChannelStatsToMemberships() {
 			} else {
 				fb, ok := fallbackByChannel[ch.Name]
 				if !ok {
-					if ch.Created < minValidSlackCreatedTimestamp {
+					if ch.Created < intermediate.MinValidCreatedTimestamp {
 						t.Logger.Warnf("Channel %s has no valid creation timestamp; using current time for LastViewedAt", ch.Name)
 					}
 					fb = ch.CreatedMillis()
@@ -559,8 +397,8 @@ func (t *Transformer) dedupByMembers(channels []*IntermediateChannel) []*Interme
 			// CreatedMillis() treats as invalid. Ignore them here so a real
 			// timestamp on the canonical isn't replaced by a placeholder from
 			// a duplicate.
-			canonicalCreatedValid := canonical.Created >= minValidSlackCreatedTimestamp
-			dupCreatedValid := dup.Created >= minValidSlackCreatedTimestamp
+			canonicalCreatedValid := canonical.Created >= intermediate.MinValidCreatedTimestamp
+			dupCreatedValid := dup.Created >= intermediate.MinValidCreatedTimestamp
 			if dupCreatedValid && (!canonicalCreatedValid || dup.Created < canonical.Created) {
 				canonical.Created = dup.Created
 			}
@@ -883,35 +721,6 @@ func (t *Transformer) getReactionsFromPost(post SlackPost) []*IntermediateReacti
 	return reactions
 }
 
-// splitPostIntoThread splits a post's message if it exceeds the maximum rune limit.
-// The first chunk becomes/remains the main post, and additional chunks are added as replies.
-// Reactions and attachments are kept only on the first chunk.
-func splitPostIntoThread(post *IntermediatePost) {
-	if utf8.RuneCountInString(post.Message) <= model.PostMessageMaxRunesV2 {
-		// No splitting needed
-		return
-	}
-
-	chunks := splitTextIntoChunks(post.Message, model.PostMessageMaxRunesV2)
-
-	// First chunk stays as the main message
-	post.Message = chunks[0]
-
-	// Create replies for the remaining chunks
-	for i, chunk := range chunks[1:] {
-		reply := &IntermediatePost{
-			User:           post.User,
-			Channel:        post.Channel,
-			Message:        chunk,
-			CreateAt:       post.CreateAt + int64(i+1), // Increment timestamp to maintain order
-			IsDirect:       post.IsDirect,
-			ChannelMembers: post.ChannelMembers,
-			// No reactions, attachments, or props for continuation chunks
-		}
-		post.Replies = append(post.Replies, reply)
-	}
-}
-
 func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir string, skipAttachments, discardInvalidProps, allowDownload bool) error {
 	t.Logger.Info("Transforming posts")
 
@@ -1128,7 +937,7 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 		channelPosts := []*IntermediatePost{}
 		for _, post := range threads {
 			// Split the post if it exceeds the maximum rune limit
-			splitPostIntoThread(post)
+			intermediate.SplitPostIntoThread(post)
 
 			// Also split any existing replies that exceed the limit
 			// We need to iterate carefully because we'll be modifying the replies slice
@@ -1149,7 +958,7 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 				}
 
 				// Reply needs splitting - add all chunks as siblings
-				chunks := splitTextIntoChunks(reply.Message, model.PostMessageMaxRunesV2)
+				chunks := intermediate.SplitTextIntoChunks(reply.Message, model.PostMessageMaxRunesV2)
 
 				// First chunk: update the original reply
 				reply.Message = chunks[0]

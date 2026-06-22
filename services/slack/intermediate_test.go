@@ -13,6 +13,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/mattermost/mattermost/server/public/model"
+
+	"github.com/mattermost/mmetl/services/intermediate"
 )
 
 func TestIntermediateChannelSanitise(t *testing.T) {
@@ -83,9 +85,9 @@ func TestCreatedMillis(t *testing.T) {
 
 	t.Run("Falls back to current time when Created is 0", func(t *testing.T) {
 		fixedTime := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
-		originalNowFunc := nowFunc
-		nowFunc = func() time.Time { return fixedTime }
-		defer func() { nowFunc = originalNowFunc }()
+		originalNowFunc := intermediate.NowFunc
+		intermediate.NowFunc = func() time.Time { return fixedTime }
+		defer func() { intermediate.NowFunc = originalNowFunc }()
 
 		channel := &IntermediateChannel{Created: 0}
 		assert.Equal(t, fixedTime.UnixMilli(), channel.CreatedMillis())
@@ -93,26 +95,26 @@ func TestCreatedMillis(t *testing.T) {
 
 	t.Run("Treats Slack placeholder Created=1 as invalid", func(t *testing.T) {
 		fixedTime := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
-		originalNowFunc := nowFunc
-		nowFunc = func() time.Time { return fixedTime }
-		defer func() { nowFunc = originalNowFunc }()
+		originalNowFunc := intermediate.NowFunc
+		intermediate.NowFunc = func() time.Time { return fixedTime }
+		defer func() { intermediate.NowFunc = originalNowFunc }()
 
 		channel := &IntermediateChannel{Created: 1}
 		assert.Equal(t, fixedTime.UnixMilli(), channel.CreatedMillis())
 	})
 
 	t.Run("Accepts Created exactly at minimum threshold", func(t *testing.T) {
-		channel := &IntermediateChannel{Created: minValidSlackCreatedTimestamp}
-		assert.Equal(t, int64(minValidSlackCreatedTimestamp)*1000, channel.CreatedMillis())
+		channel := &IntermediateChannel{Created: intermediate.MinValidCreatedTimestamp}
+		assert.Equal(t, int64(intermediate.MinValidCreatedTimestamp)*1000, channel.CreatedMillis())
 	})
 
 	t.Run("Rejects Created one second below minimum threshold", func(t *testing.T) {
 		fixedTime := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
-		originalNowFunc := nowFunc
-		nowFunc = func() time.Time { return fixedTime }
-		defer func() { nowFunc = originalNowFunc }()
+		originalNowFunc := intermediate.NowFunc
+		intermediate.NowFunc = func() time.Time { return fixedTime }
+		defer func() { intermediate.NowFunc = originalNowFunc }()
 
-		channel := &IntermediateChannel{Created: minValidSlackCreatedTimestamp - 1}
+		channel := &IntermediateChannel{Created: intermediate.MinValidCreatedTimestamp - 1}
 		assert.Equal(t, fixedTime.UnixMilli(), channel.CreatedMillis())
 	})
 }
@@ -569,11 +571,11 @@ func TestIntermediateUserSanitise(t *testing.T) {
 		}
 
 		exitCode := -1
-		exitFunc = func(code int) {
+		intermediate.ExitFunc = func(code int) {
 			exitCode = code
 		}
 		defer func() {
-			exitFunc = os.Exit
+			intermediate.ExitFunc = os.Exit
 		}()
 
 		user.Sanitise(log.New(), "", false)
@@ -588,11 +590,11 @@ func TestIntermediateUserSanitise(t *testing.T) {
 		}
 
 		exitCode := -1
-		exitFunc = func(code int) {
+		intermediate.ExitFunc = func(code int) {
 			exitCode = code
 		}
 		defer func() {
-			exitFunc = os.Exit
+			intermediate.ExitFunc = os.Exit
 		}()
 
 		logger := log.New()
@@ -619,11 +621,11 @@ func TestIntermediateUserSanitise(t *testing.T) {
 		}
 
 		exitCode := -1
-		exitFunc = func(code int) {
+		intermediate.ExitFunc = func(code int) {
 			exitCode = code
 		}
 		defer func() {
-			exitFunc = os.Exit
+			intermediate.ExitFunc = os.Exit
 		}()
 
 		user.Sanitise(log.New(), "", true)
@@ -639,11 +641,11 @@ func TestIntermediateUserSanitise(t *testing.T) {
 		}
 
 		exitCode := -1
-		exitFunc = func(code int) {
+		intermediate.ExitFunc = func(code int) {
 			exitCode = code
 		}
 		defer func() {
-			exitFunc = os.Exit
+			intermediate.ExitFunc = os.Exit
 		}()
 
 		user.Sanitise(log.New(), "", false)
@@ -1344,7 +1346,7 @@ func TestDeduplicateDirectAndGroupChannelsByMembers(t *testing.T) {
 			OriginalName:     "mpdm-2",
 			Type:             model.ChannelTypeGroup,
 			MembersUsernames: []string{"alice", "bob", "charlie"},
-			Created:          minValidSlackCreatedTimestamp - 1, // also placeholder
+			Created:          intermediate.MinValidCreatedTimestamp - 1, // also placeholder
 		}
 		slackTransformer.Intermediate = &Intermediate{
 			GroupChannels: []*IntermediateChannel{canonicalCh, duplicateCh},
