@@ -160,6 +160,13 @@ func createRepliesForAttachments(attachments []imports.AttachmentImportData, use
 		for i := 1; i <= numberSplitPosts; i++ {
 			replyAttachments := attachments[POST_MAX_ATTACHMENTS*i:]
 
+			// On exact multiples of POST_MAX_ATTACHMENTS the integer division in
+			// numberSplitPosts over-counts by one, leaving an empty trailing
+			// slice. Skip it so we don't emit a spurious empty reply.
+			if len(replyAttachments) == 0 {
+				break
+			}
+
 			if len(replyAttachments) > POST_MAX_ATTACHMENTS {
 				replyAttachments = replyAttachments[0:POST_MAX_ATTACHMENTS]
 			}
