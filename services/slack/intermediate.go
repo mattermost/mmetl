@@ -228,7 +228,7 @@ func (t *Transformer) TransformChannels(channels []SlackChannel) []*Intermediate
 			}
 		}
 
-		newChannel.Sanitise(t.Logger)
+		newChannel.SanitiseWithPrefix(t.Logger, "slack-channel-")
 		resultChannels = append(resultChannels, newChannel)
 	}
 

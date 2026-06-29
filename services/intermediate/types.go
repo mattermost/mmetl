@@ -131,16 +131,9 @@ func (c *IntermediateChannel) CreatedMillis() int64 {
 	return NowFunc().UnixMilli()
 }
 
-// Sanitise validates and truncates channel fields to Mattermost model limits,
-// using "slack-channel-" as the fallback prefix for single-character names.
-// Use SanitiseWithPrefix for a custom fallback prefix.
-func (c *IntermediateChannel) Sanitise(logger log.FieldLogger) {
-	c.SanitiseWithPrefix(logger, "slack-channel-")
-}
-
 // SanitiseWithPrefix validates and truncates channel fields to Mattermost model
 // limits. The fallbackPrefix is prepended to single-character channel/display
-// names.
+// names; callers supply a source-specific value (e.g. "slack-channel-").
 func (c *IntermediateChannel) SanitiseWithPrefix(logger log.FieldLogger, fallbackPrefix string) {
 	if c.Type == model.ChannelTypeDirect {
 		return
@@ -269,13 +262,14 @@ type Intermediate struct {
 	Posts           []*IntermediatePost          `json:"posts"`
 
 	// GroupChannelAliases maps a duplicate group/direct channel's OriginalName
-	// to the OriginalName of the canonical channel it was merged into. Slack
-	// permits multiple MPIMs with identical member sets, but Mattermost keys
-	// group channels by member-set hash so two such MPIMs collapse server-side.
-	// We deduplicate to avoid emitting two `direct_channel` lines for the same
-	// hash (which crashes the bulk importer when one MPIM's members aren't fully
+	// to the OriginalName of the canonical channel it was merged into. Mattermost
+	// keys group channels by member-set hash, so any source that emits multiple
+	// group channels with identical member sets would collide server-side. We
+	// deduplicate to avoid emitting two `direct_channel` lines for the same hash
+	// (which crashes the bulk importer when one channel's members aren't fully
 	// written yet — see MM-68736), and route posts from every aliased source
-	// channel name to the surviving IntermediateChannel.
+	// channel name to the surviving IntermediateChannel. Slack MPIMs are the
+	// motivating example, but the mechanism is source-agnostic.
 	GroupChannelAliases map[string]string `json:"-"`
 }
 

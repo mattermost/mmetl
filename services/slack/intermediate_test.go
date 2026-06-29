@@ -31,7 +31,7 @@ func TestIntermediateChannelSanitise(t *testing.T) {
 		expectedPurpose := strings.Repeat("c", 250)
 		expectedHeader := strings.Repeat("d", 1024)
 
-		channel.Sanitise(log.New())
+		channel.SanitiseWithPrefix(log.New(), "slack-channel-")
 
 		assert.Equal(t, expectedName, channel.Name)
 		assert.Equal(t, expectedDisplayName, channel.DisplayName)
@@ -45,7 +45,7 @@ func TestIntermediateChannelSanitise(t *testing.T) {
 			DisplayName: "-display_name--",
 		}
 
-		channel.Sanitise(log.New())
+		channel.SanitiseWithPrefix(log.New(), "slack-channel-")
 
 		assert.Equal(t, "channel--name", channel.Name)
 		assert.Equal(t, "display_name", channel.DisplayName)
@@ -57,7 +57,7 @@ func TestIntermediateChannelSanitise(t *testing.T) {
 			DisplayName: "-_---_--b----",
 		}
 
-		channel.Sanitise(log.New())
+		channel.SanitiseWithPrefix(log.New(), "slack-channel-")
 
 		assert.Equal(t, "slack-channel-a", channel.Name)
 		assert.Equal(t, "slack-channel-b", channel.DisplayName)
@@ -70,7 +70,7 @@ func TestIntermediateChannelSanitise(t *testing.T) {
 			DisplayName: "-døsplay_name--",
 		}
 
-		channel.Sanitise(log.New())
+		channel.SanitiseWithPrefix(log.New(), "slack-channel-")
 
 		assert.Equal(t, "channelid1", channel.Name)
 		assert.Equal(t, "døsplay_name", channel.DisplayName)
