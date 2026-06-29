@@ -93,29 +93,30 @@ func TestCreatedMillis(t *testing.T) {
 		assert.Equal(t, fixedTime.UnixMilli(), channel.CreatedMillis())
 	})
 
-	t.Run("Treats Slack placeholder Created=1 as invalid", func(t *testing.T) {
-		fixedTime := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
-		originalNowFunc := intermediate.NowFunc
-		intermediate.NowFunc = func() time.Time { return fixedTime }
-		defer func() { intermediate.NowFunc = originalNowFunc }()
-
+	t.Run("Treats any positive Created as valid (no source-specific floor)", func(t *testing.T) {
+		// CreatedMillis is source-agnostic: it only checks Created > 0. Slack's
+		// placeholder handling lives in normalizeSlackCreated, not here, so an
+		// old-but-real timestamp from any source is preserved.
 		channel := &IntermediateChannel{Created: 1}
-		assert.Equal(t, fixedTime.UnixMilli(), channel.CreatedMillis())
+		assert.Equal(t, int64(1000), channel.CreatedMillis())
+	})
+}
+
+func TestNormalizeSlackCreated(t *testing.T) {
+	t.Run("Collapses Slack placeholder Created=1 to 0", func(t *testing.T) {
+		assert.Equal(t, int64(0), normalizeSlackCreated(1))
 	})
 
-	t.Run("Accepts Created exactly at minimum threshold", func(t *testing.T) {
-		channel := &IntermediateChannel{Created: intermediate.MinValidCreatedTimestamp}
-		assert.Equal(t, int64(intermediate.MinValidCreatedTimestamp)*1000, channel.CreatedMillis())
+	t.Run("Collapses any value below the 2013 floor to 0", func(t *testing.T) {
+		assert.Equal(t, int64(0), normalizeSlackCreated(minValidCreatedTimestamp-1))
 	})
 
-	t.Run("Rejects Created one second below minimum threshold", func(t *testing.T) {
-		fixedTime := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
-		originalNowFunc := intermediate.NowFunc
-		intermediate.NowFunc = func() time.Time { return fixedTime }
-		defer func() { intermediate.NowFunc = originalNowFunc }()
+	t.Run("Preserves a value exactly at the floor", func(t *testing.T) {
+		assert.Equal(t, int64(minValidCreatedTimestamp), normalizeSlackCreated(minValidCreatedTimestamp))
+	})
 
-		channel := &IntermediateChannel{Created: intermediate.MinValidCreatedTimestamp - 1}
-		assert.Equal(t, fixedTime.UnixMilli(), channel.CreatedMillis())
+	t.Run("Preserves a real timestamp", func(t *testing.T) {
+		assert.Equal(t, int64(1704067200), normalizeSlackCreated(1704067200))
 	})
 }
 
@@ -1262,7 +1263,7 @@ func TestDeduplicateDirectAndGroupChannelsByMembers(t *testing.T) {
 			OriginalName:     "mpdm-2",
 			Type:             model.ChannelTypeGroup,
 			MembersUsernames: []string{"alice", "bob", "charlie"},
-			Created:          1, // Slack placeholder
+			Created:          0, // Slack placeholder, normalized to 0 at construction
 		}
 		slackTransformer.Intermediate = &Intermediate{
 			GroupChannels: []*IntermediateChannel{canonicalCh, duplicateCh},
@@ -1273,7 +1274,7 @@ func TestDeduplicateDirectAndGroupChannelsByMembers(t *testing.T) {
 		require.Len(t, slackTransformer.Intermediate.GroupChannels, 1)
 		assert.Equal(t, int64(1704067200),
 			slackTransformer.Intermediate.GroupChannels[0].Created,
-			"placeholder Created=1 must not replace the canonical's real timestamp")
+			"a placeholder must not replace the canonical's real timestamp")
 	})
 
 	t.Run("valid Created on a duplicate replaces placeholder Created on the canonical", func(t *testing.T) {
@@ -1283,7 +1284,7 @@ func TestDeduplicateDirectAndGroupChannelsByMembers(t *testing.T) {
 			OriginalName:     "mpdm-1",
 			Type:             model.ChannelTypeGroup,
 			MembersUsernames: []string{"alice", "bob", "charlie"},
-			Created:          1, // canonical (smallest Id) has a placeholder
+			Created:          0, // canonical (smallest Id) has a normalized placeholder
 		}
 		duplicateCh := &IntermediateChannel{
 			Id:               "C002",
@@ -1339,14 +1340,14 @@ func TestDeduplicateDirectAndGroupChannelsByMembers(t *testing.T) {
 			OriginalName:     "mpdm-1",
 			Type:             model.ChannelTypeGroup,
 			MembersUsernames: []string{"alice", "bob", "charlie"},
-			Created:          1, // placeholder
+			Created:          0, // placeholder, already normalized to 0 at construction
 		}
 		duplicateCh := &IntermediateChannel{
 			Id:               "C002",
 			OriginalName:     "mpdm-2",
 			Type:             model.ChannelTypeGroup,
 			MembersUsernames: []string{"alice", "bob", "charlie"},
-			Created:          intermediate.MinValidCreatedTimestamp - 1, // also placeholder
+			Created:          0, // also a normalized placeholder
 		}
 		slackTransformer.Intermediate = &Intermediate{
 			GroupChannels: []*IntermediateChannel{canonicalCh, duplicateCh},
@@ -1355,7 +1356,7 @@ func TestDeduplicateDirectAndGroupChannelsByMembers(t *testing.T) {
 		slackTransformer.DeduplicateDirectAndGroupChannelsByMembers()
 
 		require.Len(t, slackTransformer.Intermediate.GroupChannels, 1)
-		assert.Equal(t, int64(1),
+		assert.Equal(t, int64(0),
 			slackTransformer.Intermediate.GroupChannels[0].Created,
 			"two placeholders should leave canonical Created untouched")
 	})

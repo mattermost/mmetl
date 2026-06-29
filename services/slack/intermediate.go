@@ -21,6 +21,23 @@ import (
 
 const attachmentsInternal = "bulk-export-attachments"
 
+// minValidCreatedTimestamp is the minimum Unix timestamp (seconds) Slack uses
+// for a real channel creation time. Slack launched in 2013 and encodes missing
+// creation times with placeholder values (e.g. "created": 1 for DMs), so any
+// value before Jan 1, 2013 is treated as absent. This heuristic is specific to
+// Slack exports and must not leak into the shared intermediate package.
+const minValidCreatedTimestamp = 1356998400
+
+// normalizeSlackCreated collapses Slack's placeholder creation timestamps to 0,
+// the source-agnostic "absent" sentinel understood by the intermediate package.
+// Downstream code can then test validity with a simple Created > 0 check.
+func normalizeSlackCreated(created int64) int64 {
+	if created < minValidCreatedTimestamp {
+		return 0
+	}
+	return created
+}
+
 // The intermediate representation now lives in the shared services/intermediate
 // package so it can be reused across import sources (Slack, Rocket.Chat, ...).
 // These aliases keep the Slack transform code below unchanged. Methods such as
@@ -192,7 +209,7 @@ func (t *Transformer) TransformChannels(channels []SlackChannel) []*Intermediate
 			Purpose:      channel.Purpose.Value,
 			Header:       channel.Topic.Value,
 			Type:         channel.Type,
-			Created:      channel.Created,
+			Created:      normalizeSlackCreated(channel.Created),
 		}
 
 		// Public and private channels support DeletedAt in the Mattermost import
@@ -277,7 +294,7 @@ func (t *Transformer) applyChannelStatsToMemberships() {
 			} else {
 				fb, ok := fallbackByChannel[ch.Name]
 				if !ok {
-					if ch.Created < intermediate.MinValidCreatedTimestamp {
+					if ch.Created <= 0 {
 						t.Logger.Warnf("Channel %s has no valid creation timestamp; using current time for LastViewedAt", ch.Name)
 					}
 					fb = ch.CreatedMillis()
@@ -393,12 +410,11 @@ func (t *Transformer) dedupByMembers(channels []*IntermediateChannel) []*Interme
 			if canonical.Purpose == "" && dup.Purpose != "" {
 				canonical.Purpose = dup.Purpose
 			}
-			// Slack uses placeholder Created values (e.g. 1 for DMs) that
-			// CreatedMillis() treats as invalid. Ignore them here so a real
-			// timestamp on the canonical isn't replaced by a placeholder from
-			// a duplicate.
-			canonicalCreatedValid := canonical.Created >= intermediate.MinValidCreatedTimestamp
-			dupCreatedValid := dup.Created >= intermediate.MinValidCreatedTimestamp
+			// Slack placeholder Created values are normalized to 0 (absent) at
+			// construction, so a real timestamp on the canonical isn't replaced
+			// by a placeholder from a duplicate.
+			canonicalCreatedValid := canonical.Created > 0
+			dupCreatedValid := dup.Created > 0
 			if dupCreatedValid && (!canonicalCreatedValid || dup.Created < canonical.Created) {
 				canonical.Created = dup.Created
 			}

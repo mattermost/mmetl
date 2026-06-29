@@ -733,7 +733,7 @@ func TestGetImportLineFromDirectChannel(t *testing.T) {
 			Name:             "dm-channel",
 			Topic:            "DM topic",
 			MembersUsernames: []string{"alice", "bob"},
-			Created:          1, // Slack DM placeholder
+			Created:          0, // absent (Slack DM placeholders are normalized to 0 upstream)
 		}
 
 		line := intermediate.GetImportLineFromDirectChannel("myteam", channel)

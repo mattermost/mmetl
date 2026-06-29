@@ -303,7 +303,7 @@ func (e *Exporter) ExportChannels(channels []*IntermediateChannel, writer io.Wri
 // ExportDirectChannels is valid for group or direct channels, as they export with members.
 func (e *Exporter) ExportDirectChannels(channels []*IntermediateChannel, writer io.Writer) error {
 	for _, channel := range channels {
-		if channel.LastPostAt == 0 && channel.Created < MinValidCreatedTimestamp {
+		if channel.LastPostAt == 0 && channel.Created <= 0 {
 			e.Logger.Warnf("Direct/group channel %s has no valid creation timestamp; using current time for LastViewedAt", channel.Name)
 		}
 		line := GetImportLineFromDirectChannel(e.TeamName, channel)

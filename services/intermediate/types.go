@@ -18,12 +18,6 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-// MinValidCreatedTimestamp is the minimum Unix timestamp (seconds) we consider
-// valid for a channel creation time. Slack launched in 2013, so any value
-// before Jan 1, 2013 is treated as a placeholder (e.g. Slack uses "created": 1
-// for DMs).
-const MinValidCreatedTimestamp = 1356998400
-
 // ExitFunc is the function called for fatal errors. Tests can override it to
 // avoid terminating the process.
 var ExitFunc func(code int) = os.Exit
@@ -125,11 +119,13 @@ type IntermediateChannel struct {
 	LastPostAt       int64             `json:"last_post_at"` // milliseconds, computed from posts
 }
 
-// CreatedMillis returns the channel creation time in milliseconds. If Created
-// is not a valid timestamp (zero, placeholder, or before 2013), falls back to
-// the current time.
+// CreatedMillis returns the channel creation time in milliseconds. Created holds
+// a Unix timestamp in seconds from the source, or 0 when absent. Sources are
+// responsible for normalizing their own placeholder values to 0 before populating
+// this field; when Created is not positive, CreatedMillis falls back to the
+// current time.
 func (c *IntermediateChannel) CreatedMillis() int64 {
-	if c.Created >= MinValidCreatedTimestamp {
+	if c.Created > 0 {
 		return c.Created * 1000
 	}
 	return NowFunc().UnixMilli()
