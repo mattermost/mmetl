@@ -1,4 +1,4 @@
-.PHONY: all build install package golangci-lint gofmt test check-style verify-gomod tidy docs docs-check
+.PHONY: all build install package golangci-lint gofmt test test-e2e check-style verify-gomod tidy docs docs-check
 
 GO_PACKAGES=$(shell go list ./...)
 GO ?= $(shell command -v go 2> /dev/null)
@@ -91,7 +91,11 @@ gofmt:
 
 test:
 	@echo Running tests
-	$(GO) test -race -v $(GO_PACKAGES) -count=1 $(GO_TEST_FLAGS)
+	$(GO) test -short -race -v $(GO_PACKAGES) -count=1 $(GO_TEST_FLAGS)
+
+test-e2e:
+	@echo Running e2e tests
+	$(GO) test -v -timeout 20m -run E2E ./commands/... $(GO_TEST_FLAGS)
 
 check-style: golangci-lint
 
