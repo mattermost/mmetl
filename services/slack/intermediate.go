@@ -26,6 +26,9 @@ const attachmentsInternal = "bulk-export-attachments"
 // creation times with placeholder values (e.g. "created": 1 for DMs), so any
 // value before Jan 1, 2013 is treated as absent. This heuristic is specific to
 // Slack exports and must not leak into the shared intermediate package.
+//
+// Values lower than this are normalized to 0 (see normalizeSlackCreated), so the
+// constant itself is never used in downstream comparisons — those test Created > 0.
 const minValidCreatedTimestamp = 1356998400
 
 // normalizeSlackCreated collapses Slack's placeholder creation timestamps to 0,
@@ -294,6 +297,8 @@ func (t *Transformer) applyChannelStatsToMemberships() {
 			} else {
 				fb, ok := fallbackByChannel[ch.Name]
 				if !ok {
+					// Slack placeholder Created values are normalized to 0 (absent) at
+					// construction
 					if ch.Created <= 0 {
 						t.Logger.Warnf("Channel %s has no valid creation timestamp; using current time for LastViewedAt", ch.Name)
 					}

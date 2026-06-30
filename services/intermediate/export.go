@@ -154,31 +154,26 @@ func GetAttachmentImportDataFromPaths(paths []string) []imports.AttachmentImport
 func createRepliesForAttachments(attachments []imports.AttachmentImportData, user string, createAt int64) []imports.ReplyImportData {
 	replies := []imports.ReplyImportData{}
 
-	if len(attachments) > POST_MAX_ATTACHMENTS {
-		numberSplitPosts := len(attachments) / POST_MAX_ATTACHMENTS
+	// Attachments that fit in a single post are handled by the caller.
+	if len(attachments) <= POST_MAX_ATTACHMENTS {
+		return replies
+	}
 
-		for i := 1; i <= numberSplitPosts; i++ {
-			replyAttachments := attachments[POST_MAX_ATTACHMENTS*i:]
+	// Only the attachments beyond the first post overflow into replies. Chunking
+	// over this slice keeps every reply non-empty, even on exact multiples of
+	// POST_MAX_ATTACHMENTS.
+	overflow := attachments[POST_MAX_ATTACHMENTS:]
+	for i := 0; i < len(overflow); i += POST_MAX_ATTACHMENTS {
+		end := min(i+POST_MAX_ATTACHMENTS, len(overflow))
+		replyAttachments := overflow[i:end]
 
-			// On exact multiples of POST_MAX_ATTACHMENTS the integer division in
-			// numberSplitPosts over-counts by one, leaving an empty trailing
-			// slice. Skip it so we don't emit a spurious empty reply.
-			if len(replyAttachments) == 0 {
-				break
-			}
-
-			if len(replyAttachments) > POST_MAX_ATTACHMENTS {
-				replyAttachments = replyAttachments[0:POST_MAX_ATTACHMENTS]
-			}
-
-			newReply := imports.ReplyImportData{
-				User:        model.NewPointer(user),
-				Message:     model.NewPointer(""),
-				CreateAt:    model.NewPointer(createAt + int64(i)),
-				Attachments: &replyAttachments,
-			}
-			replies = append(replies, newReply)
+		newReply := imports.ReplyImportData{
+			User:        model.NewPointer(user),
+			Message:     model.NewPointer(""),
+			CreateAt:    model.NewPointer(createAt + int64(i/POST_MAX_ATTACHMENTS) + 1),
+			Attachments: &replyAttachments,
 		}
+		replies = append(replies, newReply)
 	}
 
 	return replies
