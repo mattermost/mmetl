@@ -1,7 +1,7 @@
 # Agents
 
 `mmetl` is a Go/Cobra CLI that transforms exports from other platforms (Slack
-zip, Rocket.Chat `mongodump`) into a Mattermost bulk-import JSONL file plus an
+zip, RocketChat `mongodump`) into a Mattermost bulk-import JSONL file plus an
 attachments directory.
 
 ## Architecture

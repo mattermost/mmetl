@@ -14,7 +14,7 @@ import (
 	"github.com/mattermost/mmetl/services/intermediate"
 )
 
-// Transformer holds all state for a Rocket.Chat → Mattermost transformation.
+// Transformer holds all state for a RocketChat → Mattermost transformation.
 type Transformer struct {
 	intermediate.Exporter // provides TeamName, Intermediate, Logger, and all export methods
 
