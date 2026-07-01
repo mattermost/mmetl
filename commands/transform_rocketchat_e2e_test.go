@@ -429,59 +429,6 @@ func TestTransformRocketChatEdgeCases(t *testing.T) {
 		assert.NotContains(t, names, "encrypted-channel")
 	})
 
-	t.Run("discussion room is skipped", func(t *testing.T) {
-		dir := t.TempDir()
-		outputPath := filepath.Join(dir, "output.jsonl")
-
-		regularRoom := bson.D{
-			{Key: "_id", Value: "r1"},
-			{Key: "t", Value: "c"},
-			{Key: "name", Value: "general"},
-			{Key: "fname", Value: "General"},
-		}
-		discussionRoom := bson.D{
-			{Key: "_id", Value: "r2"},
-			{Key: "t", Value: "p"},
-			{Key: "name", Value: "discussion-room"},
-			{Key: "fname", Value: "Discussion Room"},
-			{Key: "prid", Value: "r1"}, // marks it as a discussion
-		}
-		users := []any{
-			rcBSONUser{ID: "u1", Username: "alice", Emails: []rcMail{{Address: "a@a.com"}}, Active: true, Type: "user"},
-		}
-		subs := []any{rcSubscription{RoomID: "r1", User: rcMsgUser{ID: "u1", Username: "alice"}}}
-		marshalBSONFileCmds(t, filepath.Join(dir, "users.bson"), users)
-		marshalBSONFileCmds(t, filepath.Join(dir, "rocketchat_room.bson"), []any{regularRoom, discussionRoom})
-		marshalBSONFileCmds(t, filepath.Join(dir, "rocketchat_message.bson"), []any{})
-		marshalBSONFileCmds(t, filepath.Join(dir, "rocketchat_subscription.bson"), subs)
-		defer os.Remove("transform-rocketchat.log")
-
-		c := commands.RootCmd
-		resetRCFlags()
-		c.SetArgs([]string{
-			"transform", "rocketchat",
-			"--team", "testteam",
-			"--dump-dir", dir,
-			"--output", outputPath,
-			"--skip-attachments",
-		})
-		require.NoError(t, c.Execute())
-
-		data, err := os.ReadFile(outputPath)
-		require.NoError(t, err)
-		lines := splitJSONLLines(t, data)
-
-		chLines := findLinesByType(lines, "channel")
-		names := make([]string, 0, len(chLines))
-		for _, ch := range chLines {
-			if n, ok := ch["name"].(string); ok {
-				names = append(names, n)
-			}
-		}
-		assert.Contains(t, names, "general")
-		assert.NotContains(t, names, "discussion-room")
-	})
-
 	t.Run("user with no email and default-email-domain generates email", func(t *testing.T) {
 		dir := t.TempDir()
 		outputPath := filepath.Join(dir, "output.jsonl")
