@@ -484,6 +484,9 @@ func (t *Transformer) convertMessage(m *RocketChatMessage, uploadsById map[strin
 	// File attachments.
 	if uploadsById != nil {
 		for _, fileRef := range m.Files {
+			if fileRef.TypeGroup == "thumb" {
+				continue
+			}
 			upload, ok := uploadsById[fileRef.ID]
 			if !ok || !upload.Complete {
 				continue
