@@ -12,6 +12,7 @@ tmp
 
 # IDE and editor files
 .idea
+CLAUDE.md
 
 # Locally installed tools
 tools/
