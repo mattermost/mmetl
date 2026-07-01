@@ -18,8 +18,8 @@ import (
 type Transformer struct {
 	intermediate.Exporter // provides TeamName, Intermediate, Logger, and all export methods
 
-	// skippedRoomIDs records room IDs that were skipped (encrypted/discussion) so
-	// that messages in those rooms are also skipped.
+	// skippedRoomIDs records room IDs that were skipped (e.g. encrypted or
+	// unknown-type rooms) so that messages in those rooms are also skipped.
 	skippedRoomIDs map[string]bool
 
 	// roomIDToChannelName maps RC room _id → Mattermost channel name (or "" for direct rooms).
@@ -222,6 +222,10 @@ func (t *Transformer) transformChannels(rooms []RocketChatRoom) {
 }
 
 func (t *Transformer) roomToIntermediateChannel(room *RocketChatRoom, chType model.ChannelType) *intermediate.IntermediateChannel {
+	// Capture OriginalName before mutating room.Name below, so an empty name
+	// falls back to the bare room ID rather than the "channel-<id>" slug.
+	originalName := roomOriginalName(room)
+
 	// Handle case of group rooms which are converted to private channels due to exceeding the group DM member limit.
 	if room.Name == "" {
 		t.Logger.Warnf("Room %s has empty name, using ID as fallback", room.ID)
@@ -240,7 +244,7 @@ func (t *Transformer) roomToIntermediateChannel(room *RocketChatRoom, chType mod
 
 	ch := &intermediate.IntermediateChannel{
 		Id:           room.ID,
-		OriginalName: roomOriginalName(room),
+		OriginalName: originalName,
 		Name:         rcConvertChannelName(room.Name, room.ID),
 		DisplayName:  displayName,
 		Purpose:      description,
@@ -272,7 +276,7 @@ func roomOriginalName(room *RocketChatRoom) string {
 	return room.Name
 }
 
-// rcConvertChannelName converts a Rocket.Chat room name to a
+// rcConvertChannelName converts a RocketChat room name to a
 // Mattermost-compatible channel name slug. Spaces and unsupported characters
 // are replaced with hyphens, the result is lowercased, and the room ID is used
 // as a fallback when the slug would otherwise be empty. SanitiseWithPrefix

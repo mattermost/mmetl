@@ -313,16 +313,6 @@ func TestTransformChannels(t *testing.T) {
 		assert.True(t, tr.skippedRoomIDs["r1"])
 	})
 
-	t.Run("discussion room (prid set) is skipped", func(t *testing.T) {
-		tr := NewTransformer("test", newLogger())
-		rooms := []RocketChatRoom{
-			{ID: "r1", Type: "p", Name: "discussion", ParentRID: "parent-room-id"},
-		}
-		tr.transformChannels(rooms)
-		assert.Empty(t, tr.Intermediate.PrivateChannels)
-		assert.True(t, tr.skippedRoomIDs["r1"])
-	})
-
 	t.Run("null description handled", func(t *testing.T) {
 		tr := NewTransformer("test", newLogger())
 		rooms := []RocketChatRoom{
