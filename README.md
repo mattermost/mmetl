@@ -1,7 +1,16 @@
 # mmetl
 
-The Mattermost ETL is a tool to transform an export file from a given
-set of providers into a Mattermost compatible export file.
+The Mattermost ETL is a tool to transform an export from another platform into
+a Mattermost-compatible bulk import file (JSONL) plus an attachments directory,
+ready to be imported with `mmctl import`.
+
+## Supported providers
+
+| Provider | Input | Command |
+| --- | --- | --- |
+| Slack | export `.zip` | `mmetl transform slack` |
+| Slack Enterprise Grid | export `.zip` | `mmetl grid-transform` |
+| Rocket.Chat | `mongodump` directory | `mmetl transform rocketchat` |
 
 ## Installation
 
@@ -13,32 +22,38 @@ go install github.com/mattermost/mmetl@latest
 
 ## Usage
 
-The tool is self documented, so you can run it with with the `--help`
-flag and it will print the available subcommands and the options for
-the current command:
+The typical workflow is two steps — validate the export, then transform it:
 
 ```sh
-$ mmetl --help
+# 1. Check the export for issues before transforming
+mmetl check slack --file export.zip
+
+# 2. Transform it into a Mattermost import file
+mmetl transform slack --team myteam --file export.zip --output mm_export.jsonl
 ```
 
-You can also check the CLI generated documentation under [mmetl](docs/cli/mmetl.md).
+The tool is self-documented — run any command with `--help` to see its
+subcommands and options:
+
+```sh
+mmetl --help
+```
+
+Full CLI reference is generated under [docs/cli](docs/cli/mmetl.md). For the
+end-to-end Slack migration guide, see the
+[Mattermost docs](https://docs.mattermost.com/administration-guide/onboard/migrate-from-slack.html).
 
 ## Development
 
-### Updating Documentation
+See [AGENTS.md](AGENTS.md) for architecture, conventions, and the checks to run
+after making changes.
 
-The CLI documentation in `docs/cli/` is automatically generated from the Cobra command definitions. 
+### Documentation
 
-To regenerate the documentation after making changes to commands:
-
-```sh
-make docs
-```
-
-To verify documentation is up-to-date (useful before committing):
+The CLI docs in `docs/cli/` are generated from the Cobra command definitions.
+After changing any command or flag, regenerate and commit them:
 
 ```sh
-make docs-check
+make docs        # regenerate docs/cli/
+make docs-check  # verify they're up-to-date (CI enforces this on PRs)
 ```
-
-**Note:** The CI pipeline will automatically check if documentation is up-to-date on pull requests. If the check fails, run `make docs` and commit the updated files.
