@@ -14,10 +14,10 @@ import (
 
 var TransformRocketChatCmd = &cobra.Command{
 	Use:   "rocketchat",
-	Short: "Transforms a Rocket.Chat mongodump export.",
-	Long: `Transforms a Rocket.Chat mongodump directory into a Mattermost export JSONL file.
+	Short: "Transforms a RocketChat mongodump export.",
+	Long: `Transforms a RocketChat mongodump directory into a Mattermost export JSONL file.
 
-Before running this command, export your Rocket.Chat MongoDB database using mongodump
+Before running this command, export your RocketChat MongoDB database using mongodump
 (https://www.mongodb.com/docs/database-tools/mongodump/):
 
   mongodump --uri="mongodb://localhost:3001/meteor" --out=/tmp/rc-dump
@@ -39,12 +39,12 @@ func init() {
 	}
 	TransformRocketChatCmd.Flags().StringP("output", "o", "bulk-export.jsonl", "the output path")
 	TransformRocketChatCmd.Flags().String("attachments-dir", "data", "the path for the attachments directory")
-	TransformRocketChatCmd.Flags().String("uploads-dir", "", "path to Rocket.Chat FileSystem uploads directory (if not using GridFS)")
+	TransformRocketChatCmd.Flags().String("uploads-dir", "", "path to RocketChat FileSystem uploads directory (if not using GridFS)")
 	TransformRocketChatCmd.Flags().BoolP("skip-attachments", "a", false, "Skips extracting file attachments")
 	TransformRocketChatCmd.Flags().Bool("skip-empty-emails", false, "Ignore empty email addresses from the import file. Note that this results in invalid data.")
 	TransformRocketChatCmd.Flags().String("default-email-domain", "", "If this flag is provided: When a user's email address is empty, the output's email address will be generated from their username and the provided domain.")
 	TransformRocketChatCmd.Flags().Bool("debug", false, "Whether to show debug logs or not")
-	TransformRocketChatCmd.Flags().String("bot-owner", "", "Username of the Mattermost user who will own all imported bots. Required if the Rocket.Chat export contains bot users.")
+	TransformRocketChatCmd.Flags().String("bot-owner", "", "Username of the Mattermost user who will own all imported bots. Required if the RocketChat export contains bot users.")
 
 	TransformCmd.AddCommand(TransformRocketChatCmd)
 }
@@ -106,7 +106,7 @@ func transformRocketChatCmdF(cmd *cobra.Command, args []string) error {
 	}
 	botOwner = strings.TrimSpace(botOwner)
 	if hasBots && botOwner == "" {
-		return fmt.Errorf("the Rocket.Chat export contains bot users but --bot-owner was not specified. Please provide the username of a Mattermost user who will own the imported bots")
+		return fmt.Errorf("the RocketChat export contains bot users but --bot-owner was not specified. Please provide the username of a Mattermost user who will own the imported bots")
 	}
 
 	if !skipAttachments {

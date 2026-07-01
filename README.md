@@ -10,7 +10,7 @@ ready to be imported with `mmctl import`.
 | --- | --- | --- |
 | Slack | export `.zip` | `mmetl transform slack` |
 | Slack Enterprise Grid | export `.zip` | `mmetl grid-transform` |
-| Rocket.Chat | `mongodump` directory | `mmetl transform rocketchat` |
+| RocketChat | `mongodump` directory | `mmetl transform rocketchat` |
 
 ## Installation
 

@@ -11,7 +11,7 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-// ParsedData holds all data read from a Rocket.Chat mongodump directory.
+// ParsedData holds all data read from a RocketChat mongodump directory.
 type ParsedData struct {
 	Users         []RocketChatUser
 	Rooms         []RocketChatRoom

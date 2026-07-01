@@ -11,10 +11,10 @@ import (
 
 var CheckRocketChatCmd = &cobra.Command{
 	Use:   "rocketchat",
-	Short: "Checks the integrity of a Rocket.Chat mongodump export.",
-	Long: `Checks the integrity of a Rocket.Chat mongodump export directory.
+	Short: "Checks the integrity of a RocketChat mongodump export.",
+	Long: `Checks the integrity of a RocketChat mongodump export directory.
 
-Before running this command, export your Rocket.Chat MongoDB database using mongodump
+Before running this command, export your RocketChat MongoDB database using mongodump
 (https://www.mongodb.com/docs/database-tools/mongodump/):
 
   mongodump --uri="mongodb://localhost:3001/meteor" --out=/tmp/rc-dump

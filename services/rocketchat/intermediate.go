@@ -93,7 +93,7 @@ type RCFileRef struct {
 	Name string `bson:"name"`
 	Type string `bson:"type"` // MIME type
 	Size int64  `bson:"size"`
-	// TypeGroup categorises the file, e.g. "image", "thumb", "video". Rocket.Chat
+	// TypeGroup categorises the file, e.g. "image", "thumb", "video". RocketChat
 	// stores a generated thumbnail as a separate file ref (and upload) alongside
 	// the original image; we skip "thumb" entries to avoid duplicate attachments.
 	TypeGroup string `bson:"typeGroup"`
@@ -124,7 +124,7 @@ type RocketChatUpload struct {
 	Complete    bool      `bson:"complete"` // Only process if true
 	UploadedAt  time.Time `bson:"uploadedAt"`
 	// TypeGroup categorises the upload, e.g. "image", "thumb", "video".
-	// Rocket.Chat stores a generated thumbnail as its own upload document; we
+	// RocketChat stores a generated thumbnail as its own upload document; we
 	// skip "thumb" uploads so they are neither extracted nor attached.
 	TypeGroup string `bson:"typeGroup"`
 }
