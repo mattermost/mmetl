@@ -36,6 +36,11 @@ func ExtractAttachments(
 			continue
 		}
 
+		if upload.TypeGroup == "thumb" {
+			skipped++
+			continue
+		}
+
 		// Apply NFC normalization before sanitizing so that combining characters
 		// are composed into their canonical form first (e.g. NFD "e" + combining
 		// acute → NFC "é") before any character-stripping takes place.

@@ -600,6 +600,35 @@ func TestTransformMessages(t *testing.T) {
 		assert.Equal(t, "bulk-export-attachments/file1_photo.jpg", tr.Intermediate.Posts[0].Attachments[0])
 	})
 
+	t.Run("thumbnail file ref is skipped to avoid duplicate images", func(t *testing.T) {
+		tr := NewTransformer("test", newLogger())
+		tr.Intermediate.UsersById = map[string]*intermediate.IntermediateUser{
+			"u1": {Id: "u1", Username: "alice"},
+		}
+		tr.roomIDToType["r1"] = "c"
+		tr.roomIDToChannelName["r1"] = "general"
+
+		uploads := map[string]*RocketChatUpload{
+			"img1":   {ID: "img1", Name: "white-wolf.jpg", Complete: true},
+			"thumb1": {ID: "thumb1", Name: "thumb-white-wolf.jpg", Complete: true},
+		}
+		messages := []RocketChatMessage{
+			{
+				ID: "m1", RoomID: "r1",
+				User: RCMessageUser{ID: "u1", Username: "alice"}, Message: "chart",
+				Timestamp: now,
+				Files: []RCFileRef{
+					{ID: "img1", Name: "white-wolf.jpg", TypeGroup: "image"},
+					{ID: "thumb1", Name: "thumb-white-wolf.jpg", TypeGroup: "thumb"},
+				},
+			},
+		}
+		tr.transformMessages(messages, uploads)
+		require.Len(t, tr.Intermediate.Posts, 1)
+		require.Len(t, tr.Intermediate.Posts[0].Attachments, 1)
+		assert.Equal(t, "bulk-export-attachments/img1_white-wolf.jpg", tr.Intermediate.Posts[0].Attachments[0])
+	})
+
 	t.Run("file attachment with caption uses upload description as message", func(t *testing.T) {
 		tr := NewTransformer("test", newLogger())
 		tr.Intermediate.UsersById = map[string]*intermediate.IntermediateUser{
