@@ -12,6 +12,8 @@ import (
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/mattermost/mmetl/services/intermediate"
 )
 
 func TestSlackConvertChannelName(t *testing.T) {
@@ -125,7 +127,7 @@ func TestSlackConvertTimeStamp(t *testing.T) {
 func TestSplitTextIntoChunks(t *testing.T) {
 	t.Run("Text within limit should return single chunk", func(t *testing.T) {
 		text := "Short text"
-		chunks := splitTextIntoChunks(text, 100)
+		chunks := intermediate.SplitTextIntoChunks(text, 100)
 
 		if len(chunks) != 1 {
 			t.Errorf("Expected 1 chunk, got %d", len(chunks))
@@ -137,7 +139,7 @@ func TestSplitTextIntoChunks(t *testing.T) {
 
 	t.Run("Long text should be split into multiple chunks", func(t *testing.T) {
 		text := model.NewRandomString(model.PostMessageMaxRunesV2 * 2)
-		chunks := splitTextIntoChunks(text, model.PostMessageMaxRunesV2)
+		chunks := intermediate.SplitTextIntoChunks(text, model.PostMessageMaxRunesV2)
 
 		if len(chunks) < 2 {
 			t.Errorf("Expected at least 2 chunks, got %d", len(chunks))
@@ -158,7 +160,7 @@ func TestSplitTextIntoChunks(t *testing.T) {
 		repeatCount := (model.PostMessageMaxRunesV2 / len(word)) + 100
 		text := strings.Repeat(word, repeatCount)
 
-		chunks := splitTextIntoChunks(text, model.PostMessageMaxRunesV2)
+		chunks := intermediate.SplitTextIntoChunks(text, model.PostMessageMaxRunesV2)
 
 		// First chunk should end with a space (word boundary)
 		if len(chunks) > 1 && chunks[0][len(chunks[0])-1] != ' ' {
@@ -167,7 +169,7 @@ func TestSplitTextIntoChunks(t *testing.T) {
 	})
 
 	t.Run("Empty string", func(t *testing.T) {
-		chunks := splitTextIntoChunks("", 100)
+		chunks := intermediate.SplitTextIntoChunks("", 100)
 		if len(chunks) != 1 || chunks[0] != "" {
 			t.Errorf("Expected single empty chunk, got %v", chunks)
 		}
@@ -175,7 +177,7 @@ func TestSplitTextIntoChunks(t *testing.T) {
 
 	t.Run("Text exactly at limit", func(t *testing.T) {
 		text := "12345"
-		chunks := splitTextIntoChunks(text, 5)
+		chunks := intermediate.SplitTextIntoChunks(text, 5)
 		if len(chunks) != 1 || chunks[0] != text {
 			t.Errorf("Expected single chunk with exact text, got %v", chunks)
 		}
@@ -183,7 +185,7 @@ func TestSplitTextIntoChunks(t *testing.T) {
 
 	t.Run("Simple split at word boundary", func(t *testing.T) {
 		text := "Hello world this is a test"
-		chunks := splitTextIntoChunks(text, 15)
+		chunks := intermediate.SplitTextIntoChunks(text, 15)
 		expected := []string{"Hello world ", "this is a test"}
 		if len(chunks) != len(expected) {
 			t.Errorf("Expected %d chunks, got %d", len(expected), len(chunks))
@@ -197,7 +199,7 @@ func TestSplitTextIntoChunks(t *testing.T) {
 
 	t.Run("Split on newline", func(t *testing.T) {
 		text := "Line one\nLine two\nLine three"
-		chunks := splitTextIntoChunks(text, 15)
+		chunks := intermediate.SplitTextIntoChunks(text, 15)
 		expected := []string{"Line one\n", "Line two\n", "Line three"}
 		if len(chunks) != len(expected) {
 			t.Errorf("Expected %d chunks, got %d", len(expected), len(chunks))
@@ -211,7 +213,7 @@ func TestSplitTextIntoChunks(t *testing.T) {
 
 	t.Run("Split prefers newline over space", func(t *testing.T) {
 		text := "This is line one\nThis is line two and it's longer"
-		chunks := splitTextIntoChunks(text, 25)
+		chunks := intermediate.SplitTextIntoChunks(text, 25)
 		expected := []string{"This is line one\n", "This is line two and ", "it's longer"}
 		if len(chunks) != len(expected) {
 			t.Errorf("Expected %d chunks, got %d", len(expected), len(chunks))
@@ -225,7 +227,7 @@ func TestSplitTextIntoChunks(t *testing.T) {
 
 	t.Run("No good break point - split in middle of word", func(t *testing.T) {
 		text := "thisisaverylongwordwithnobreaks"
-		chunks := splitTextIntoChunks(text, 10)
+		chunks := intermediate.SplitTextIntoChunks(text, 10)
 		expected := []string{"thisisaver", "ylongwordw", "ithnobreak", "s"}
 		if len(chunks) != len(expected) {
 			t.Errorf("Expected %d chunks, got %d", len(expected), len(chunks))
@@ -239,7 +241,7 @@ func TestSplitTextIntoChunks(t *testing.T) {
 
 	t.Run("Multiple spaces", func(t *testing.T) {
 		text := "Word1    Word2    Word3"
-		chunks := splitTextIntoChunks(text, 15)
+		chunks := intermediate.SplitTextIntoChunks(text, 15)
 		// Verify each chunk is within limit
 		for i, chunk := range chunks {
 			runeCount := len([]rune(chunk))
@@ -256,7 +258,7 @@ func TestSplitTextIntoChunks(t *testing.T) {
 
 	t.Run("Unicode characters (emoji and multi-byte)", func(t *testing.T) {
 		text := "Hello 👋 world 🌍 test"
-		chunks := splitTextIntoChunks(text, 15)
+		chunks := intermediate.SplitTextIntoChunks(text, 15)
 		// Verify each chunk is within limit
 		for i, chunk := range chunks {
 			runeCount := len([]rune(chunk))
@@ -273,7 +275,7 @@ func TestSplitTextIntoChunks(t *testing.T) {
 
 	t.Run("Long text with newlines at various positions", func(t *testing.T) {
 		text := "First line\nSecond line is longer\nThird line\nFourth line is also long"
-		chunks := splitTextIntoChunks(text, 20)
+		chunks := intermediate.SplitTextIntoChunks(text, 20)
 		// Verify each chunk is within limit
 		for i, chunk := range chunks {
 			runeCount := len([]rune(chunk))
@@ -290,7 +292,7 @@ func TestSplitTextIntoChunks(t *testing.T) {
 
 	t.Run("Text with newline beyond search range", func(t *testing.T) {
 		text := "This is a very long line without breaks for over 100 characters and then\nthere is a newline but it's too far away to be found in the search range which is limited to 100 characters"
-		chunks := splitTextIntoChunks(text, 80)
+		chunks := intermediate.SplitTextIntoChunks(text, 80)
 		// Verify each chunk is within limit
 		for i, chunk := range chunks {
 			runeCount := len([]rune(chunk))
@@ -307,7 +309,7 @@ func TestSplitTextIntoChunks(t *testing.T) {
 
 	t.Run("Very small limit", func(t *testing.T) {
 		text := "Hello"
-		chunks := splitTextIntoChunks(text, 2)
+		chunks := intermediate.SplitTextIntoChunks(text, 2)
 		expected := []string{"He", "ll", "o"}
 		if len(chunks) != len(expected) {
 			t.Errorf("Expected %d chunks, got %d", len(expected), len(chunks))
@@ -321,7 +323,7 @@ func TestSplitTextIntoChunks(t *testing.T) {
 
 	t.Run("Single character chunks", func(t *testing.T) {
 		text := "ABCDE"
-		chunks := splitTextIntoChunks(text, 1)
+		chunks := intermediate.SplitTextIntoChunks(text, 1)
 		expected := []string{"A", "B", "C", "D", "E"}
 		if len(chunks) != len(expected) {
 			t.Errorf("Expected %d chunks, got %d", len(expected), len(chunks))
@@ -335,7 +337,7 @@ func TestSplitTextIntoChunks(t *testing.T) {
 
 	t.Run("Newline at exact boundary", func(t *testing.T) {
 		text := "1234567890\n1234567890"
-		chunks := splitTextIntoChunks(text, 11)
+		chunks := intermediate.SplitTextIntoChunks(text, 11)
 		expected := []string{"1234567890\n", "1234567890"}
 		if len(chunks) != len(expected) {
 			t.Errorf("Expected %d chunks, got %d", len(expected), len(chunks))
@@ -349,7 +351,7 @@ func TestSplitTextIntoChunks(t *testing.T) {
 
 	t.Run("Space at exact boundary", func(t *testing.T) {
 		text := "1234567890 1234567890"
-		chunks := splitTextIntoChunks(text, 11)
+		chunks := intermediate.SplitTextIntoChunks(text, 11)
 		expected := []string{"1234567890 ", "1234567890"}
 		if len(chunks) != len(expected) {
 			t.Errorf("Expected %d chunks, got %d", len(expected), len(chunks))
@@ -363,7 +365,7 @@ func TestSplitTextIntoChunks(t *testing.T) {
 
 	t.Run("Mixed content with spaces and newlines", func(t *testing.T) {
 		text := "First paragraph with some text.\n\nSecond paragraph with more content that needs to be split up properly."
-		chunks := splitTextIntoChunks(text, 30)
+		chunks := intermediate.SplitTextIntoChunks(text, 30)
 		// Verify each chunk is within limit
 		for i, chunk := range chunks {
 			runeCount := len([]rune(chunk))
@@ -380,7 +382,7 @@ func TestSplitTextIntoChunks(t *testing.T) {
 
 	t.Run("Japanese characters (multi-byte unicode)", func(t *testing.T) {
 		text := "これは日本語のテストです。長いテキストを分割します。"
-		chunks := splitTextIntoChunks(text, 15)
+		chunks := intermediate.SplitTextIntoChunks(text, 15)
 		// Verify each chunk is within limit
 		for i, chunk := range chunks {
 			runeCount := len([]rune(chunk))
@@ -408,7 +410,7 @@ func TestSplitTextIntoChunks(t *testing.T) {
 		}
 
 		for _, tt := range testTexts {
-			chunks := splitTextIntoChunks(tt.text, tt.maxRunes)
+			chunks := intermediate.SplitTextIntoChunks(tt.text, tt.maxRunes)
 
 			// Verify each chunk is within limit
 			for i, chunk := range chunks {
@@ -437,7 +439,7 @@ func TestGetImportLineFromBot(t *testing.T) {
 			IsBot:       true,
 		}
 
-		line := GetImportLineFromBot(user, "admin")
+		line := intermediate.GetImportLineFromBot(user, "admin")
 
 		assert.Equal(t, "bot", line.Type)
 		require.NotNil(t, line.Bot)
@@ -458,7 +460,7 @@ func TestGetImportLineFromBot(t *testing.T) {
 			DeleteAt:    1234567890,
 		}
 
-		line := GetImportLineFromBot(user, "admin")
+		line := intermediate.GetImportLineFromBot(user, "admin")
 
 		assert.Equal(t, "bot", line.Type)
 		require.NotNil(t, line.Bot)
@@ -548,7 +550,7 @@ func TestGetImportLineFromChannel(t *testing.T) {
 			DeleteAt:    0,
 		}
 
-		line := GetImportLineFromChannel("myteam", channel)
+		line := intermediate.GetImportLineFromChannel("myteam", channel)
 
 		assert.Equal(t, "channel", line.Type)
 		require.NotNil(t, line.Channel)
@@ -568,7 +570,7 @@ func TestGetImportLineFromChannel(t *testing.T) {
 			DeleteAt:    1620000000000,
 		}
 
-		line := GetImportLineFromChannel("myteam", channel)
+		line := intermediate.GetImportLineFromChannel("myteam", channel)
 
 		assert.Equal(t, "channel", line.Type)
 		require.NotNil(t, line.Channel)
@@ -584,7 +586,7 @@ func TestGetImportLineFromChannel(t *testing.T) {
 			DeleteAt:    1,
 		}
 
-		line := GetImportLineFromChannel("myteam", channel)
+		line := intermediate.GetImportLineFromChannel("myteam", channel)
 
 		require.NotNil(t, line.Channel.DeletedAt)
 		assert.Equal(t, int64(1), *line.Channel.DeletedAt)
@@ -604,7 +606,7 @@ func TestGetImportLineFromUser(t *testing.T) {
 			},
 		}
 
-		line := GetImportLineFromUser(user, "myteam")
+		line := intermediate.GetImportLineFromUser(user, "myteam")
 
 		assert.Equal(t, "user", line.Type)
 		require.NotNil(t, line.User)
@@ -636,7 +638,7 @@ func TestGetImportLineFromUser(t *testing.T) {
 			},
 		}
 
-		line := GetImportLineFromUser(user, "myteam")
+		line := intermediate.GetImportLineFromUser(user, "myteam")
 
 		channels := *(*line.User.Teams)[0].Channels
 		require.Len(t, channels, 1)
@@ -654,7 +656,7 @@ func TestGetImportLineFromUser(t *testing.T) {
 			},
 		}
 
-		line := GetImportLineFromUser(user, "myteam")
+		line := intermediate.GetImportLineFromUser(user, "myteam")
 
 		channels := *(*line.User.Teams)[0].Channels
 		require.Len(t, channels, 1)
@@ -669,7 +671,7 @@ func TestGetImportLineFromUser(t *testing.T) {
 			Email:    "charlie@example.com",
 		}
 
-		line := GetImportLineFromUser(user, "myteam")
+		line := intermediate.GetImportLineFromUser(user, "myteam")
 
 		require.NotNil(t, line.User.Teams)
 		team := (*line.User.Teams)[0]
@@ -689,7 +691,7 @@ func TestGetImportLineFromDirectChannel(t *testing.T) {
 			LastPostAt:       1704099999000,
 		}
 
-		line := GetImportLineFromDirectChannel("myteam", channel)
+		line := intermediate.GetImportLineFromDirectChannel("myteam", channel)
 
 		assert.Equal(t, "direct_channel", line.Type)
 		require.NotNil(t, line.DirectChannel)
@@ -714,7 +716,7 @@ func TestGetImportLineFromDirectChannel(t *testing.T) {
 			Created:          1704067200,
 		}
 
-		line := GetImportLineFromDirectChannel("myteam", channel)
+		line := intermediate.GetImportLineFromDirectChannel("myteam", channel)
 
 		require.Len(t, line.DirectChannel.Participants, 2)
 		assert.Equal(t, int64(1704067200000), *line.DirectChannel.Participants[0].LastViewedAt)
@@ -723,18 +725,18 @@ func TestGetImportLineFromDirectChannel(t *testing.T) {
 
 	t.Run("falls back to current time when Created is invalid", func(t *testing.T) {
 		fixedTime := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
-		originalNowFunc := nowFunc
-		nowFunc = func() time.Time { return fixedTime }
-		defer func() { nowFunc = originalNowFunc }()
+		originalNowFunc := intermediate.NowFunc
+		intermediate.NowFunc = func() time.Time { return fixedTime }
+		defer func() { intermediate.NowFunc = originalNowFunc }()
 
 		channel := &IntermediateChannel{
 			Name:             "dm-channel",
 			Topic:            "DM topic",
 			MembersUsernames: []string{"alice", "bob"},
-			Created:          1, // Slack DM placeholder
+			Created:          0, // absent (Slack DM placeholders are normalized to 0 upstream)
 		}
 
-		line := GetImportLineFromDirectChannel("myteam", channel)
+		line := intermediate.GetImportLineFromDirectChannel("myteam", channel)
 
 		require.Len(t, line.DirectChannel.Participants, 2)
 		assert.Equal(t, fixedTime.UnixMilli(), *line.DirectChannel.Participants[0].LastViewedAt)
