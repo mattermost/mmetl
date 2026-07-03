@@ -521,7 +521,13 @@ func (t *Transformer) buildBasePost(m *RocketChatMessage) *intermediate.Intermed
 	// even when the message carries a username that is not in the user collection.
 	username := strings.ToLower(m.User.Username)
 	if m.User.ID != "" {
-		if _, ok := t.Intermediate.UsersById[m.User.ID]; !ok {
+		if user, ok := t.Intermediate.UsersById[m.User.ID]; ok {
+			// Prefer the canonical username from the users collection over the
+			// per-message username, which can be stale if the user was renamed
+			// in RocketChat. This keeps the post's author matching the exported
+			// user line.
+			username = user.Username
+		} else {
 			placeholder := t.createPlaceholderUser(m.User.ID)
 			if username != "" {
 				// Use the username from the message so the post's user field

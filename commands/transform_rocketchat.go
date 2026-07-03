@@ -72,7 +72,7 @@ func transformRocketChatCmdF(cmd *cobra.Command, args []string) error {
 	}
 
 	logger := log.New()
-	logFile, err := os.OpenFile("transform-rocketchat.log", os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0666)
+	logFile, err := os.OpenFile("transform-rocketchat.log", os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
 		return err
 	}
@@ -115,7 +115,8 @@ func transformRocketChatCmdF(cmd *cobra.Command, args []string) error {
 		if _, err := os.Stat(chunksFilePath); err == nil {
 			gridfsChunks, err = rocketchat.LoadGridFSChunks(chunksFilePath)
 			if err != nil {
-				logger.Warnf("Failed to load GridFS chunks: %v", err)
+				return fmt.Errorf("failed to load GridFS chunks from %s: %w. "+
+					"Fix the dump, or re-run with --skip-attachments to proceed without attachments", chunksFilePath, err)
 			}
 		}
 

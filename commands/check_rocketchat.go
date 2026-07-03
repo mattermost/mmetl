@@ -44,7 +44,7 @@ func checkRocketChatCmdF(cmd *cobra.Command, args []string) error {
 	defaultEmailDomain, _ := cmd.Flags().GetString("default-email-domain")
 
 	logger := log.New()
-	logFile, err := os.OpenFile("check-rocketchat.log", os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0666)
+	logFile, err := os.OpenFile("check-rocketchat.log", os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
 		return err
 	}
