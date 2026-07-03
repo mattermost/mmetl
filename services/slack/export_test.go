@@ -606,7 +606,7 @@ func TestGetImportLineFromUser(t *testing.T) {
 			},
 		}
 
-		line := intermediate.GetImportLineFromUser(user, "myteam")
+		line := intermediate.GetImportLineFromUser(user, "myteam", false)
 
 		assert.Equal(t, "user", line.Type)
 		require.NotNil(t, line.User)
@@ -638,7 +638,7 @@ func TestGetImportLineFromUser(t *testing.T) {
 			},
 		}
 
-		line := intermediate.GetImportLineFromUser(user, "myteam")
+		line := intermediate.GetImportLineFromUser(user, "myteam", false)
 
 		channels := *(*line.User.Teams)[0].Channels
 		require.Len(t, channels, 1)
@@ -656,7 +656,7 @@ func TestGetImportLineFromUser(t *testing.T) {
 			},
 		}
 
-		line := intermediate.GetImportLineFromUser(user, "myteam")
+		line := intermediate.GetImportLineFromUser(user, "myteam", false)
 
 		channels := *(*line.User.Teams)[0].Channels
 		require.Len(t, channels, 1)
@@ -671,7 +671,7 @@ func TestGetImportLineFromUser(t *testing.T) {
 			Email:    "charlie@example.com",
 		}
 
-		line := intermediate.GetImportLineFromUser(user, "myteam")
+		line := intermediate.GetImportLineFromUser(user, "myteam", false)
 
 		require.NotNil(t, line.User.Teams)
 		team := (*line.User.Teams)[0]

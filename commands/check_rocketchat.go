@@ -65,7 +65,7 @@ func checkRocketChatCmdF(cmd *cobra.Command, args []string) error {
 
 	transformer := rocketchat.NewTransformer("test", logger)
 
-	transformer.Transform(parsed, false, skipEmptyEmails, defaultEmailDomain)
+	transformer.Transform(parsed, false, skipEmptyEmails, defaultEmailDomain, rocketchat.GuestHandlingGuest)
 
 	transformer.CheckIntermediate()
 

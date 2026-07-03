@@ -39,6 +39,27 @@ subcommands and options:
 mmetl --help
 ```
 
+### RocketChat guest users
+
+RocketChat marks guests with a `guest` role (not a distinct user type). Control
+how they are migrated with `transform rocketchat --guest-handling`:
+
+- `guest` (default) — migrate them as Mattermost guests
+  (`system_guest`/`team_guest`/`channel_guest`). Highest fidelity. **This only
+  behaves correctly if the destination server has Guest Accounts licensed
+  (Professional/Enterprise) and enabled (`GuestAccountsSettings.Enable`).** The
+  import will not fail without it, but the accounts won't behave as guests — use
+  `user` mode for targets without guest licensing.
+- `user` — migrate them as regular Mattermost users. Works everywhere, but
+  grants guests full user permissions.
+- `skip` — drop guest users entirely, along with their memberships and authored
+  posts.
+
+Users whose RocketChat type is neither `user` nor `bot` (for example `app`
+accounts like `rocket.cat`) are always skipped, and any memberships, posts, and
+reactions referencing them are dropped so the import stays referentially
+consistent.
+
 Full CLI reference is generated under [docs/cli](docs/cli/mmetl.md). For the
 end-to-end Slack migration guide, see the
 [Mattermost docs](https://docs.mattermost.com/administration-guide/onboard/migrate-from-slack.html).

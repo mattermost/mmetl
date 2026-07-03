@@ -43,6 +43,10 @@ func init() {
 	TransformRocketChatCmd.Flags().BoolP("skip-attachments", "a", false, "Skips extracting file attachments")
 	TransformRocketChatCmd.Flags().Bool("skip-empty-emails", false, "Ignore empty email addresses from the import file. Note that this results in invalid data.")
 	TransformRocketChatCmd.Flags().String("default-email-domain", "", "If this flag is provided: When a user's email address is empty, the output's email address will be generated from their username and the provided domain.")
+	TransformRocketChatCmd.Flags().String("guest-handling", rocketchat.GuestHandlingGuest, `How to migrate RocketChat guest users (users whose roles include "guest"). One of:
+  "guest" - migrate them as Mattermost guests (system_guest/team_guest/channel_guest). Highest fidelity, but the destination server must have Guest Accounts licensed (Professional/Enterprise) and enabled (GuestAccountsSettings.Enable); otherwise the accounts won't behave correctly.
+  "user"  - migrate them as regular Mattermost users. Works everywhere, but grants guests full user permissions.
+  "skip"  - drop guest users entirely, along with their memberships and authored posts.`)
 	TransformRocketChatCmd.Flags().Bool("debug", false, "Whether to show debug logs or not")
 	TransformRocketChatCmd.Flags().String("bot-owner", "", "Username of the Mattermost user who will own all imported bots. Required if the RocketChat export contains bot users.")
 
@@ -58,8 +62,13 @@ func transformRocketChatCmdF(cmd *cobra.Command, args []string) error {
 	skipAttachments, _ := cmd.Flags().GetBool("skip-attachments")
 	skipEmptyEmails, _ := cmd.Flags().GetBool("skip-empty-emails")
 	defaultEmailDomain, _ := cmd.Flags().GetString("default-email-domain")
+	guestHandling, _ := cmd.Flags().GetString("guest-handling")
 	debug, _ := cmd.Flags().GetBool("debug")
 	botOwner, _ := cmd.Flags().GetString("bot-owner")
+
+	if err := rocketchat.ValidateGuestHandling(guestHandling); err != nil {
+		return err
+	}
 
 	team = strings.ToLower(team)
 
@@ -92,7 +101,7 @@ func transformRocketChatCmdF(cmd *cobra.Command, args []string) error {
 	}
 
 	transformer := rocketchat.NewTransformer(team, logger)
-	transformer.Transform(parsed, skipAttachments, skipEmptyEmails, defaultEmailDomain)
+	transformer.Transform(parsed, skipAttachments, skipEmptyEmails, defaultEmailDomain, guestHandling)
 
 	// Validate that --bot-owner is provided if there are bot users.
 	// Do this before attachment extraction so we fail fast without doing
