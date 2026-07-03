@@ -600,6 +600,15 @@ func (t *Transformer) transformMessages(messages []RocketChatMessage, uploadsByI
 
 		post := t.convertMessage(m, uploadsById)
 		if post == nil {
+			// The root was dropped (e.g. authored by a skipped user). Its
+			// thread replies are skipped in the main loop (they carry a
+			// ThreadID) and never reach convertMessage, so account for them
+			// here — otherwise this content is lost silently and undercounted
+			// in the end-of-transform summary.
+			if replies := threadReplies[m.ID]; len(replies) > 0 {
+				t.droppedPostRefs += len(replies)
+				t.Logger.Warnf("Dropping %d thread reply(ies) because their root post %s was skipped", len(replies), m.ID)
+			}
 			continue
 		}
 

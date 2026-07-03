@@ -557,6 +557,41 @@ func TestTransformMessages(t *testing.T) {
 		assert.Equal(t, "Reply", tr.Intermediate.Posts[0].Replies[0].Message)
 	})
 
+	t.Run("thread assembly - skipped root drops replies and counts them", func(t *testing.T) {
+		tr := NewTransformer("test", newLogger())
+		tr.Intermediate.UsersById = map[string]*intermediate.IntermediateUser{
+			"u2": {Id: "u2", Username: "bob"},
+		}
+		tr.roomIDToType["r1"] = "c"
+		tr.roomIDToChannelName["r1"] = "general"
+		// The root's author is a skipped user (e.g. a guest under
+		// GuestHandlingSkip), so convertMessage returns nil for the root.
+		tr.skippedUsernames["guesty"] = true
+
+		root := RocketChatMessage{
+			ID: "root", RoomID: "r1",
+			User: RCMessageUser{ID: "u1", Username: "guesty"}, Message: "Root",
+			Timestamp: now, ThreadCount: 2,
+		}
+		reply1 := RocketChatMessage{
+			ID: "reply1", RoomID: "r1",
+			User: RCMessageUser{ID: "u2", Username: "bob"}, Message: "Reply 1",
+			Timestamp: now.Add(time.Second), ThreadID: "root",
+		}
+		reply2 := RocketChatMessage{
+			ID: "reply2", RoomID: "r1",
+			User: RCMessageUser{ID: "u2", Username: "bob"}, Message: "Reply 2",
+			Timestamp: now.Add(2 * time.Second), ThreadID: "root",
+		}
+		tr.transformMessages([]RocketChatMessage{root, reply1, reply2}, nil)
+
+		// The whole thread is dropped, but the lost replies must be counted so
+		// the loss is visible in the end-of-transform summary: 1 root (skipped
+		// user) + 2 orphaned replies.
+		assert.Empty(t, tr.Intermediate.Posts)
+		assert.Equal(t, 3, tr.droppedPostRefs)
+	})
+
 	t.Run("reaction conversion - colon stripping", func(t *testing.T) {
 		tr := NewTransformer("test", newLogger())
 		tr.Intermediate.UsersById = map[string]*intermediate.IntermediateUser{
