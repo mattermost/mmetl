@@ -245,6 +245,28 @@ func TestAppendChannelToChannelsToMove(t *testing.T) {
 	}
 }
 
+// TestAppendChannelToChannelsToMove_TeamDirDoesNotExist covers appending to a
+// team's channels file when the "teams/<team name>" directory does not
+// already exist, e.g. when a channel move failed but the append is still
+// attempted, or the append runs before any directory has been created.
+func TestAppendChannelToChannelsToMove_TeamDirDoesNotExist(t *testing.T) {
+	bt := setupGridTransformer(t)
+
+	teamName := "team1"
+
+	channel := ChannelsToMove{SlackChannel: slack.SlackChannel{Id: "1"}, TeamName: teamName}
+	err := bt.appendChannelToTeamChannelsFile(ChannelFilePublic, channel)
+	if err != nil {
+		t.Fatalf("error appending channel to team channels file %v", err)
+	}
+
+	teamUpdatedChannels := readChannelsFile(filepath.Join(bt.dirPath, "teams", teamName, string(ChannelFilePublic)+".json"), t)
+
+	if len(teamUpdatedChannels) != 1 || teamUpdatedChannels[0].Id != "1" {
+		t.Fatalf("channel was not appended. Channels found: %v", teamUpdatedChannels)
+	}
+}
+
 func TestHandleMovingChannels(t *testing.T) {
 	bt := setupGridTransformer(t)
 
@@ -262,6 +284,44 @@ func TestHandleMovingChannels(t *testing.T) {
 	)
 
 	// creating a channel with a single post in it that we can move.
+	writeToFileInTestDir(channelPath, "posts.json",
+		marshalJSON([]Post{{Team: "team1"}}, t),
+		t,
+	)
+
+	slackChannel := []slack.SlackChannel{
+		{Id: "channel1", Name: "channel1"},
+	}
+	err := bt.HandleMovingChannels(slackChannel, ChannelFilePublic)
+
+	if err != nil {
+		t.Fatalf("error moving channel %v", err)
+	}
+
+	channels := readChannelsFile(teamPath+"/channels.json", t)
+
+	if len(channels) != len(slackChannel) {
+		t.Fatal("channel was not moved. Channel IDs in team path are: ", channels)
+	}
+}
+
+// TestHandleMovingChannels_TeamDirDoesNotExist covers moving the very first
+// channel for a team, where the "teams/<team name>" directory does not
+// already exist. This reproduces a customer report where grid-transform
+// failed because the team directory named after teams.json's team name was
+// never created ahead of the move.
+func TestHandleMovingChannels_TeamDirDoesNotExist(t *testing.T) {
+	bt := setupGridTransformer(t)
+
+	bt.Teams = map[string]string{
+		"team1": "team1",
+	}
+
+	teamPath := filepath.Join(bt.dirPath, "teams", "team1")
+	channelPath := filepath.Join(bt.dirPath, "channel1")
+
+	// creating a channel with a single post in it that we can move, without
+	// pre-creating the destination team directory.
 	writeToFileInTestDir(channelPath, "posts.json",
 		marshalJSON([]Post{{Team: "team1"}}, t),
 		t,

@@ -290,6 +290,10 @@ func (t *GridTransformer) performChannelMove(channelType ChannelFiles, channel C
 func (t *GridTransformer) appendChannelToTeamChannelsFile(channelType ChannelFiles, channel ChannelsToMove) error {
 	path := filepath.Join(t.dirPath, "teams", channel.TeamName, string(channelType)+".json")
 
+	if err := os.MkdirAll(filepath.Dir(path), os.ModePerm); err != nil {
+		return errors.Wrap(err, "error creating team directory")
+	}
+
 	// Read the existing channels
 	data, err := os.ReadFile(path)
 	if err != nil && !os.IsNotExist(err) {
@@ -380,6 +384,10 @@ func channelHasBeenMoved(channel slack.SlackChannel, channelsToMove []ChannelsTo
 }
 
 func moveDirectory(source string, destination string) error {
+	if err := os.MkdirAll(filepath.Dir(destination), os.ModePerm); err != nil {
+		return errors.Wrap(err, "error creating destination directory")
+	}
+
 	err := os.Rename(source, destination)
 	if err != nil {
 		return err

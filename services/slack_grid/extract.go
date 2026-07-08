@@ -121,8 +121,14 @@ func (t *GridTransformer) ExtractDirectory(zipReader *zip.Reader) error {
 
 func (t *GridTransformer) ZipTeamDirectories() error {
 	// zip the directories under /teams
+	teamsDir := filepath.Join(t.dirPath, "teams")
 
-	teams, err := t.readDir(filepath.Join(t.dirPath, "teams"))
+	if _, err := os.Stat(teamsDir); os.IsNotExist(err) {
+		t.Logger.Warn("no teams directory found. No channels were moved to a team.")
+		return nil
+	}
+
+	teams, err := t.readDir(teamsDir)
 
 	t.Logger.Infof("Zipping %v team directories...", len(teams))
 
