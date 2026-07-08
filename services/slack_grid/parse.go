@@ -130,17 +130,20 @@ func (t *GridTransformer) ParseGridSlackExportFile(zipReader *zip.Reader) (*Grid
 // Any channels that do not have a valid mapping in the teams.json file or no team ID found are skipped.
 
 func (t *GridTransformer) HandleMovingChannels(slackChannels []slack.SlackChannel, channelType ChannelFiles) error {
-	t.Logger.Infof("Unzipped slack export path being used: %v", t.dirPath)
+	t.Logger.WithField("path", t.dirPath).Info("Unzipped slack export path being used")
 
 	itemsInDir, err := t.readDir(t.dirPath)
-	t.Logger.Debugf("Found %v items in directory.", len(itemsInDir))
+	t.Logger.WithField("count", len(itemsInDir)).Debug("Found items in directory")
 
 	if err != nil {
 		return errors.Wrap(err, "error reading directory")
 	}
 
 	totalChannels := len(slackChannels)
-	t.Logger.Debugf("Found %v %v. Looking for team IDs. \n", totalChannels, channelType)
+	t.Logger.WithFields(log.Fields{
+		"count":        totalChannels,
+		"channel_type": channelType,
+	}).Debug("Looking for team IDs")
 
 	channelsToMove, err := t.getChannelsToMove(slackChannels, itemsInDir, channelType)
 	if err != nil {
@@ -162,22 +165,35 @@ func (t *GridTransformer) getChannelsToMove(slackChannels []slack.SlackChannel, 
 
 		teamID, err := t.findTeamIDForChannel(channel, itemsInDir, channelType)
 		if err != nil {
-			t.Logger.Errorf("error finding team ID for channel: %v", err.Error())
+			t.Logger.WithError(err).WithFields(log.Fields{
+				"channel":    channel.Name,
+				"channel_id": channel.Id,
+			}).Error("error finding team ID for channel")
 			continue
 		}
 
 		if teamID == "" {
-			t.Logger.Errorf(ErrFindingTeamID, channel.Name, channel.Id)
+			t.Logger.WithFields(log.Fields{
+				"channel":    channel.Name,
+				"channel_id": channel.Id,
+			}).Error("could not find team ID for channel")
 			continue
 		}
 
 		moveChannel, err := t.createMoveChannel(channel, teamID, channelType)
 		if err != nil {
-			t.Logger.Errorf("error creating move channel: %v", err.Error())
+			t.Logger.WithError(err).WithFields(log.Fields{
+				"channel":    channel.Name,
+				"channel_id": channel.Id,
+			}).Error("error creating move channel")
 			continue
 		}
 
-		t.Logger.Debugf("Found channel to move.  %v", moveChannel)
+		t.Logger.WithFields(log.Fields{
+			"channel":   moveChannel.Path,
+			"team_name": moveChannel.TeamName,
+			"team_id":   moveChannel.TeamID,
+		}).Debug("Found channel to move")
 		channelsToMove = append(channelsToMove, moveChannel)
 	}
 
@@ -228,11 +244,18 @@ func (t *GridTransformer) parseChannel(file *zip.File, channelType model.Channel
 
 func (t *GridTransformer) moveChannels(channelsToMove []ChannelsToMove, channelType ChannelFiles) error {
 	totalChannels := len(channelsToMove)
-	t.Logger.Infof("Moving %v channels. \n", totalChannels)
+	t.Logger.WithFields(log.Fields{
+		"count":        totalChannels,
+		"channel_type": channelType,
+	}).Info("Moving channels")
 
 	for i, channel := range channelsToMove {
 		if totalChannels > 100 && i%100 == 0 {
-			t.Logger.Infof("Performing %v of %v %v moves \n", i+100, totalChannels, channelType)
+			t.Logger.WithFields(log.Fields{
+				"completed":    i + 100,
+				"total":        totalChannels,
+				"channel_type": channelType,
+			}).Info("Performing channel moves")
 		}
 
 		err := t.performChannelMove(channelType, channel, channelsToMove, i)
@@ -241,7 +264,10 @@ func (t *GridTransformer) moveChannels(channelsToMove []ChannelsToMove, channelT
 		}
 	}
 
-	t.Logger.Infof("Moved %v %v \n", totalChannels, channelType)
+	t.Logger.WithFields(log.Fields{
+		"count":        totalChannels,
+		"channel_type": channelType,
+	}).Info("Moved channels")
 	return nil
 }
 
@@ -259,13 +285,12 @@ func (t *GridTransformer) performChannelMove(channelType ChannelFiles, channel C
 		return errors.Errorf(ErrFindingTeamName, channel.Path)
 	}
 
-	t.Logger.Debugf(
-		"Moving channel %v to team %v. channel ID: %v, team ID: %v",
-		channel.Path,
-		channel.TeamName,
-		channel.TeamID,
-		channel.SlackChannel.Id,
-	)
+	t.Logger.WithFields(log.Fields{
+		"channel":    channel.Path,
+		"channel_id": channel.SlackChannel.Id,
+		"team_name":  channel.TeamName,
+		"team_id":    channel.TeamID,
+	}).Debug("Moving channel to team")
 
 	currentDir := filepath.Join(t.dirPath, channel.Path)
 	newDir := filepath.Join(t.dirPath, "teams", channel.TeamName, channel.Path)
