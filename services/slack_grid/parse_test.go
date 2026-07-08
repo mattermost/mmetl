@@ -67,8 +67,12 @@ func TestParseGridSlackExportFile(t *testing.T) {
 	marshalAndWriteToZipFile(zipWriter, "channels.json", channels, t)
 	marshalAndWriteToZipFile(zipWriter, "groups.json", channels, t)
 
+	// the export must already contain a folder for each team named in teams.json.
+	_, err := zipWriter.Create("teams/team1/")
+	assert.NoError(t, err)
+
 	// Close the zip writer
-	err := zipWriter.Close()
+	err = zipWriter.Close()
 	assert.NoError(t, err)
 
 	// Create a new zip reader
