@@ -192,6 +192,7 @@ type IntermediateUser struct {
 	Memberships []IntermediateMembership `json:"memberships"`
 	DeleteAt    int64                    `json:"delete_at"`
 	IsBot       bool                     `json:"is_bot"`
+	IsGuest     bool                     `json:"is_guest"`
 	DisplayName string                   `json:"display_name"`
 }
 

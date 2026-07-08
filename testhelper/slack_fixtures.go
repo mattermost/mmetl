@@ -300,6 +300,56 @@ func (b *SlackExportBuilder) createZipFile(outputPath, sourceDir string) error {
 	})
 }
 
+// ExportWithGuests creates an export with a regular user, a multi-channel
+// guest (is_restricted) with access to two channels, and a single-channel
+// guest (is_ultra_restricted) with access to only one.
+func ExportWithGuests() *SlackExportBuilder {
+	return NewSlackExportBuilder().
+		AddUser(slack.SlackUser{
+			Id:       "U001",
+			Username: "regular.user",
+			Profile: slack.SlackProfile{
+				RealName: "Regular User",
+				Email:    "regular.user@example.com",
+			},
+		}).
+		AddUser(slack.SlackUser{
+			Id:           "U002",
+			Username:     "multi.guest",
+			IsRestricted: true,
+			Profile: slack.SlackProfile{
+				RealName: "Multi Guest",
+				Email:    "multi.guest@example.com",
+			},
+		}).
+		AddUser(slack.SlackUser{
+			Id:                "U003",
+			Username:          "single.guest",
+			IsRestricted:      true,
+			IsUltraRestricted: true,
+			Profile: slack.SlackProfile{
+				RealName: "Single Guest",
+				Email:    "single.guest@example.com",
+			},
+		}).
+		AddChannel(slack.SlackChannel{
+			Id:      "C001",
+			Name:    "general",
+			Creator: "U001",
+			Created: 1704067200,
+			Members: []string{"U001", "U002", "U003"},
+			Purpose: slack.SlackChannelSub{Value: "General discussion"},
+		}).
+		AddChannel(slack.SlackChannel{
+			Id:      "C002",
+			Name:    "random",
+			Creator: "U001",
+			Created: 1704070800,
+			Members: []string{"U001", "U002"},
+			Purpose: slack.SlackChannelSub{Value: "Non-work banter"},
+		})
+}
+
 // === Convenience builders for common test scenarios ===
 
 // SlackBasicExport creates a simple export with users and channels (no posts)

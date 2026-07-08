@@ -1334,6 +1334,105 @@ func TestTransformSlackE2EMpimsNotMergedWhenMembersDiffer(t *testing.T) {
 		"the {alice,bob,dave} GM must NOT contain posts from the {alice,bob,charlie} GM")
 }
 
+// TestTransformSlackE2EGuestImport verifies that Slack guests (is_restricted
+// and is_ultra_restricted) are imported as Mattermost guests, with the guest
+// role applied consistently at the system, team, and channel level, while
+// regular Slack users keep full member roles.
+func TestTransformSlackE2EGuestImport(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	th := testhelper.SetupHelper(t)
+	defer th.TearDown()
+	t.Cleanup(func() { os.Remove(transformLogFile) })
+
+	ctx := context.Background()
+	tempDir := t.TempDir()
+	slackExportPath := filepath.Join(tempDir, "slack_export.zip")
+	mmExportPath := filepath.Join(tempDir, "mattermost_import.jsonl")
+	teamName := uniqueTeamName("guests")
+
+	err := testhelper.ExportWithGuests().Build(slackExportPath)
+	require.NoError(t, err, "failed to create Slack export fixture")
+
+	team := th.CreateTeam(ctx, teamName, "Guests E2E Team")
+	require.NotNil(t, team)
+
+	args := []string{
+		"transform", "slack",
+		"--team", teamName,
+		"--file", slackExportPath,
+		"--output", mmExportPath,
+		"--skip-attachments",
+	}
+
+	c := commands.RootCmd
+	resetCobraFlags(c)
+	c.SetArgs(args)
+	err = c.Execute()
+	require.NoError(t, err, "transform command should succeed")
+
+	err = th.ImportBulkData(ctx, mmExportPath)
+	require.NoError(t, err, "import should succeed")
+
+	regularUser := th.AssertUserExists(ctx, "regular.user")
+	multiGuest := th.AssertUserExists(ctx, "multi.guest")
+	singleGuest := th.AssertUserExists(ctx, "single.guest")
+
+	assert.False(t, regularUser.IsGuest(), "regular.user should not be a guest")
+	assert.True(t, multiGuest.IsGuest(), "multi.guest (is_restricted) should be imported as a guest")
+	assert.True(t, singleGuest.IsGuest(), "single.guest (is_ultra_restricted) should be imported as a guest")
+
+	// Team-level roles must match the guest status of each user.
+	teamMembers, err := th.GetTeamMembers(ctx, team.Id)
+	require.NoError(t, err)
+	teamMembersByUserID := map[string]*model.TeamMember{}
+	for _, tm := range teamMembers {
+		teamMembersByUserID[tm.UserId] = tm
+	}
+	require.NotNil(t, teamMembersByUserID[regularUser.Id])
+	require.NotNil(t, teamMembersByUserID[multiGuest.Id])
+	require.NotNil(t, teamMembersByUserID[singleGuest.Id])
+	assert.True(t, teamMembersByUserID[regularUser.Id].SchemeUser)
+	assert.False(t, teamMembersByUserID[regularUser.Id].SchemeGuest)
+	assert.True(t, teamMembersByUserID[multiGuest.Id].SchemeGuest)
+	assert.False(t, teamMembersByUserID[multiGuest.Id].SchemeUser)
+	assert.True(t, teamMembersByUserID[singleGuest.Id].SchemeGuest)
+	assert.False(t, teamMembersByUserID[singleGuest.Id].SchemeUser)
+
+	// Channel-level roles: the multi-channel guest should be a guest in both
+	// "general" and "random"; the single-channel guest only in "general".
+	generalChannel := th.AssertChannelExists(ctx, teamName, "general")
+	randomChannel := th.AssertChannelExists(ctx, teamName, "random")
+
+	generalMembers, err := th.GetChannelMembers(ctx, generalChannel.Id)
+	require.NoError(t, err)
+	generalByUserID := map[string]*model.ChannelMember{}
+	for i := range generalMembers {
+		generalByUserID[generalMembers[i].UserId] = &generalMembers[i]
+	}
+	require.NotNil(t, generalByUserID[regularUser.Id])
+	require.NotNil(t, generalByUserID[multiGuest.Id])
+	require.NotNil(t, generalByUserID[singleGuest.Id])
+	assert.False(t, generalByUserID[regularUser.Id].SchemeGuest)
+	assert.True(t, generalByUserID[multiGuest.Id].SchemeGuest)
+	assert.True(t, generalByUserID[singleGuest.Id].SchemeGuest)
+
+	randomMembers, err := th.GetChannelMembers(ctx, randomChannel.Id)
+	require.NoError(t, err)
+	randomByUserID := map[string]*model.ChannelMember{}
+	for i := range randomMembers {
+		randomByUserID[randomMembers[i].UserId] = &randomMembers[i]
+	}
+	require.NotNil(t, randomByUserID[regularUser.Id])
+	require.NotNil(t, randomByUserID[multiGuest.Id])
+	_, singleGuestInRandom := randomByUserID[singleGuest.Id]
+	assert.False(t, singleGuestInRandom, "single.guest should not be a member of random, matching its Slack access scope")
+	assert.False(t, randomByUserID[regularUser.Id].SchemeGuest)
+	assert.True(t, randomByUserID[multiGuest.Id].SchemeGuest)
+}
+
 // joinSorted returns a deterministic comma-joined key from the given strings.
 func joinSorted(s ...string) string {
 	cp := append([]string{}, s...)

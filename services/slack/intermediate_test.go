@@ -796,7 +796,7 @@ func TestTransformUsers(t *testing.T) {
 
 	defaultEmailDomain := ""
 	skipEmptyEmails := false
-	slackTransformer.TransformUsers(users, skipEmptyEmails, defaultEmailDomain)
+	slackTransformer.TransformUsers(users, skipEmptyEmails, defaultEmailDomain, GuestHandlingGuest)
 	require.Len(t, slackTransformer.Intermediate.UsersById, len(users))
 
 	for i, id := range []string{id1, id2, id3} {
@@ -808,6 +808,90 @@ func TestTransformUsers(t *testing.T) {
 		assert.Equal(t, fmt.Sprintf("email%d@example.com", i+1), slackTransformer.Intermediate.UsersById[id].Email)
 		assert.Zero(t, slackTransformer.Intermediate.UsersById[id].DeleteAt)
 	}
+}
+
+func TestTransformUsersGuests(t *testing.T) {
+	multiChannelGuestId := "guest-multi"
+	singleChannelGuestId := "guest-single"
+	regularId := "regular"
+	botId := "bot"
+
+	guestUsers := func() []SlackUser {
+		return []SlackUser{
+			{
+				Id:           multiChannelGuestId,
+				Username:     "multi.guest",
+				IsRestricted: true,
+				Profile: SlackProfile{
+					RealName: "Multi Guest",
+					Email:    "multi.guest@example.com",
+				},
+			},
+			{
+				Id:                singleChannelGuestId,
+				Username:          "single.guest",
+				IsRestricted:      true,
+				IsUltraRestricted: true,
+				Profile: SlackProfile{
+					RealName: "Single Guest",
+					Email:    "single.guest@example.com",
+				},
+			},
+			{
+				Id:       regularId,
+				Username: "regular.user",
+				Profile: SlackProfile{
+					RealName: "Regular User",
+					Email:    "regular.user@example.com",
+				},
+			},
+			{
+				Id:           botId,
+				Username:     "guestbot",
+				IsBot:        true,
+				IsRestricted: true, // Slack never sets this on bots, but guard against it anyway.
+				Profile: SlackProfile{
+					BotID:    "B001",
+					RealName: "Guest Bot",
+				},
+			},
+		}
+	}
+
+	t.Run("guest-handling=guest flags guests but does not drop them", func(t *testing.T) {
+		slackTransformer := NewTransformer("test", log.New())
+		slackTransformer.TransformUsers(guestUsers(), false, "", GuestHandlingGuest)
+
+		require.Len(t, slackTransformer.Intermediate.UsersById, 4)
+		assert.True(t, slackTransformer.Intermediate.UsersById[multiChannelGuestId].IsGuest)
+		assert.True(t, slackTransformer.Intermediate.UsersById[singleChannelGuestId].IsGuest)
+		assert.False(t, slackTransformer.Intermediate.UsersById[regularId].IsGuest)
+		assert.False(t, slackTransformer.Intermediate.UsersById["B001"].IsGuest)
+	})
+
+	t.Run("guest-handling=user flags guests but does not drop them", func(t *testing.T) {
+		slackTransformer := NewTransformer("test", log.New())
+		slackTransformer.TransformUsers(guestUsers(), false, "", GuestHandlingUser)
+
+		require.Len(t, slackTransformer.Intermediate.UsersById, 4)
+		// IsGuest reflects detection regardless of mode; the export mode
+		// (Exporter.EmitGuestRoles) decides whether guest roles are emitted.
+		assert.True(t, slackTransformer.Intermediate.UsersById[multiChannelGuestId].IsGuest)
+		assert.True(t, slackTransformer.Intermediate.UsersById[singleChannelGuestId].IsGuest)
+	})
+
+	t.Run("guest-handling=skip drops guests entirely", func(t *testing.T) {
+		slackTransformer := NewTransformer("test", log.New())
+		slackTransformer.TransformUsers(guestUsers(), false, "", GuestHandlingSkip)
+
+		require.Len(t, slackTransformer.Intermediate.UsersById, 2)
+		assert.Nil(t, slackTransformer.Intermediate.UsersById[multiChannelGuestId])
+		assert.Nil(t, slackTransformer.Intermediate.UsersById[singleChannelGuestId])
+		assert.NotNil(t, slackTransformer.Intermediate.UsersById[regularId])
+		assert.NotNil(t, slackTransformer.Intermediate.UsersById["B001"])
+		assert.True(t, slackTransformer.skippedUserIDs[multiChannelGuestId])
+		assert.True(t, slackTransformer.skippedUserIDs[singleChannelGuestId])
+	})
 }
 
 func TestDeleteAt(t *testing.T) {
@@ -866,7 +950,7 @@ func TestDeleteAt(t *testing.T) {
 
 	defaultEmailDomain := ""
 	skipEmptyEmails := false
-	slackTransformer.TransformUsers(users, skipEmptyEmails, defaultEmailDomain)
+	slackTransformer.TransformUsers(users, skipEmptyEmails, defaultEmailDomain, GuestHandlingGuest)
 	require.Zero(t, slackTransformer.Intermediate.UsersById[activeUsers[0].Id].DeleteAt)
 	require.Zero(t, slackTransformer.Intermediate.UsersById[activeUsers[1].Id].DeleteAt)
 	require.NotZero(t, slackTransformer.Intermediate.UsersById[inactiveUsers[0].Id].DeleteAt)
@@ -1630,7 +1714,7 @@ func TestTransformBotUsers(t *testing.T) {
 			},
 		}
 
-		slackTransformer.TransformUsers(users, false, "")
+		slackTransformer.TransformUsers(users, false, "", GuestHandlingGuest)
 
 		// Regular user
 		regularUser := slackTransformer.Intermediate.UsersById["U001"]
@@ -1665,7 +1749,7 @@ func TestTransformBotUsers(t *testing.T) {
 
 		// This should NOT panic or exit even though the bot has no email
 		// and no --default-email-domain or --skip-empty-emails is set
-		slackTransformer.TransformUsers(users, false, "")
+		slackTransformer.TransformUsers(users, false, "", GuestHandlingGuest)
 
 		botUser := slackTransformer.Intermediate.UsersById["B001"]
 		require.NotNil(t, botUser)
@@ -1688,7 +1772,7 @@ func TestTransformBotUsers(t *testing.T) {
 			},
 		}
 
-		slackTransformer.TransformUsers(users, false, "")
+		slackTransformer.TransformUsers(users, false, "", GuestHandlingGuest)
 
 		botUser := slackTransformer.Intermediate.UsersById["B002"]
 		require.NotNil(t, botUser)
@@ -1710,7 +1794,7 @@ func TestTransformBotUsers(t *testing.T) {
 			},
 		}
 
-		slackTransformer.TransformUsers(users, false, "")
+		slackTransformer.TransformUsers(users, false, "", GuestHandlingGuest)
 
 		// Should be stored under user ID, not empty string
 		botUser := slackTransformer.Intermediate.UsersById["U003"]

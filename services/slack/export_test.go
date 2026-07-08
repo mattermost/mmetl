@@ -606,7 +606,7 @@ func TestGetImportLineFromUser(t *testing.T) {
 			},
 		}
 
-		line := intermediate.GetImportLineFromUser(user, "myteam")
+		line := intermediate.GetImportLineFromUser(user, "myteam", false)
 
 		assert.Equal(t, "user", line.Type)
 		require.NotNil(t, line.User)
@@ -638,7 +638,7 @@ func TestGetImportLineFromUser(t *testing.T) {
 			},
 		}
 
-		line := intermediate.GetImportLineFromUser(user, "myteam")
+		line := intermediate.GetImportLineFromUser(user, "myteam", false)
 
 		channels := *(*line.User.Teams)[0].Channels
 		require.Len(t, channels, 1)
@@ -656,7 +656,7 @@ func TestGetImportLineFromUser(t *testing.T) {
 			},
 		}
 
-		line := intermediate.GetImportLineFromUser(user, "myteam")
+		line := intermediate.GetImportLineFromUser(user, "myteam", false)
 
 		channels := *(*line.User.Teams)[0].Channels
 		require.Len(t, channels, 1)
@@ -671,11 +671,118 @@ func TestGetImportLineFromUser(t *testing.T) {
 			Email:    "charlie@example.com",
 		}
 
-		line := intermediate.GetImportLineFromUser(user, "myteam")
+		line := intermediate.GetImportLineFromUser(user, "myteam", false)
 
 		require.NotNil(t, line.User.Teams)
 		team := (*line.User.Teams)[0]
 		assert.Nil(t, team.Channels)
+	})
+
+	t.Run("multi-channel guest (is_restricted) gets guest roles everywhere when emitGuestRoles is true", func(t *testing.T) {
+		user := &IntermediateUser{
+			Username: "restricted-guest",
+			Email:    "restricted-guest@example.com",
+			IsGuest:  true,
+			Memberships: []IntermediateMembership{
+				{Name: "general"},
+				{Name: "random"},
+			},
+		}
+
+		line := intermediate.GetImportLineFromUser(user, "myteam", true)
+
+		assert.Equal(t, model.SystemGuestRoleId, *line.User.Roles)
+		team := (*line.User.Teams)[0]
+		assert.Equal(t, model.TeamGuestRoleId, *team.Roles)
+		channels := *team.Channels
+		require.Len(t, channels, 2)
+		for _, ch := range channels {
+			assert.Equal(t, model.ChannelGuestRoleId, *ch.Roles)
+		}
+
+		require.Nil(t, imports.ValidateUserImportData(line.User))
+	})
+
+	t.Run("single-channel guest (is_ultra_restricted) gets guest roles everywhere when emitGuestRoles is true", func(t *testing.T) {
+		user := &IntermediateUser{
+			Username: "ultra-restricted-guest",
+			Email:    "ultra-restricted-guest@example.com",
+			IsGuest:  true,
+			Memberships: []IntermediateMembership{
+				{Name: "general"},
+			},
+		}
+
+		line := intermediate.GetImportLineFromUser(user, "myteam", true)
+
+		assert.Equal(t, model.SystemGuestRoleId, *line.User.Roles)
+		team := (*line.User.Teams)[0]
+		assert.Equal(t, model.TeamGuestRoleId, *team.Roles)
+		channels := *team.Channels
+		require.Len(t, channels, 1)
+		assert.Equal(t, model.ChannelGuestRoleId, *channels[0].Roles)
+
+		require.Nil(t, imports.ValidateUserImportData(line.User))
+	})
+
+	t.Run("non-guest user keeps regular roles and passes validation", func(t *testing.T) {
+		user := &IntermediateUser{
+			Username: "regular",
+			Email:    "regular@example.com",
+			Memberships: []IntermediateMembership{
+				{Name: "general"},
+			},
+		}
+
+		line := intermediate.GetImportLineFromUser(user, "myteam", true)
+
+		assert.Equal(t, model.SystemUserRoleId, *line.User.Roles)
+		team := (*line.User.Teams)[0]
+		assert.Equal(t, model.TeamUserRoleId, *team.Roles)
+		channels := *team.Channels
+		require.Len(t, channels, 1)
+		assert.Equal(t, model.ChannelUserRoleId, *channels[0].Roles)
+
+		require.Nil(t, imports.ValidateUserImportData(line.User))
+	})
+
+	t.Run("guest with no channel memberships falls back to a regular member to avoid an invalid import line", func(t *testing.T) {
+		user := &IntermediateUser{
+			Username: "guest-without-channels",
+			Email:    "guest-without-channels@example.com",
+			IsGuest:  true,
+		}
+
+		line := intermediate.GetImportLineFromUser(user, "myteam", true)
+
+		assert.Equal(t, model.SystemUserRoleId, *line.User.Roles)
+		team := (*line.User.Teams)[0]
+		assert.Equal(t, model.TeamUserRoleId, *team.Roles)
+		assert.Nil(t, team.Channels)
+
+		require.Nil(t, imports.ValidateUserImportData(line.User))
+	})
+
+	t.Run("guest keeps regular roles when emitGuestRoles is false (guest-handling=user)", func(t *testing.T) {
+		user := &IntermediateUser{
+			Username: "guest-as-user",
+			Email:    "guest-as-user@example.com",
+			IsGuest:  true,
+			Memberships: []IntermediateMembership{
+				{Name: "general"},
+			},
+		}
+
+		line := intermediate.GetImportLineFromUser(user, "myteam", false)
+
+		assert.Equal(t, model.SystemUserRoleId, *line.User.Roles)
+		team := (*line.User.Teams)[0]
+		assert.Equal(t, model.TeamUserRoleId, *team.Roles)
+		channels := *team.Channels
+		require.Len(t, channels, 1)
+		assert.Equal(t, model.ChannelUserRoleId, *channels[0].Roles)
+
+		require.Nil(t, imports.ValidateUserImportData(line.User))
 	})
 }
 

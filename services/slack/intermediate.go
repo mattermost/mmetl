@@ -111,13 +111,31 @@ func (t *Transformer) ComputeChannelPostStats() {
 	}
 }
 
-func (t *Transformer) TransformUsers(users []SlackUser, skipEmptyEmails bool, defaultEmailDomain string) {
+// TransformUsers converts SlackUser records into IntermediateUser records. A
+// Slack guest (is_restricted or is_ultra_restricted) is always flagged via
+// IsGuest, regardless of guestHandling; guestHandling only decides whether the
+// guest is dropped entirely here ("skip") or kept for later export ("guest"/
+// "user" — the actual role emitted for a kept guest is decided by
+// Exporter.EmitGuestRoles, set from guestHandling by the caller).
+func (t *Transformer) TransformUsers(users []SlackUser, skipEmptyEmails bool, defaultEmailDomain string, guestHandling string) {
 	t.Logger.Info("Transforming users")
 
 	t.Logger.Debugf("TransformUsers: Input SlackUser structs: %+v", users)
 
 	resultUsers := map[string]*IntermediateUser{}
+	guestCount := 0
+	guestsSkipped := 0
 	for _, user := range users {
+		isGuest := !user.IsBot && user.IsGuest()
+		if isGuest {
+			guestCount++
+			if guestHandling == GuestHandlingSkip {
+				guestsSkipped++
+				t.markUserSkipped(user.Id)
+				continue
+			}
+		}
+
 		var deleteAt int64 = 0
 		if user.Deleted {
 			deleteAt = model.GetMillis()
@@ -144,6 +162,7 @@ func (t *Transformer) TransformUsers(users []SlackUser, skipEmptyEmails bool, de
 			Email:       user.Profile.Email,
 			Password:    model.NewId(),
 			DeleteAt:    deleteAt,
+			IsGuest:     isGuest,
 		}
 
 		t.Logger.Debugf("TransformUsers: newUser IntermediateUser struct: %+v", newUser)
@@ -165,11 +184,24 @@ func (t *Transformer) TransformUsers(users []SlackUser, skipEmptyEmails bool, de
 	}
 
 	t.Intermediate.UsersById = resultUsers
+
+	switch guestHandling {
+	case GuestHandlingGuest:
+		t.Logger.Infof("Detected %d guest users; mode=guest (migrating as MM guests)", guestCount)
+	case GuestHandlingUser:
+		t.Logger.Infof("Detected %d guest users; mode=user (migrating as regular users)", guestCount)
+	case GuestHandlingSkip:
+		t.Logger.Infof("Detected %d guest users; mode=skip (skipping %d guest users)", guestCount, guestsSkipped)
+	}
 }
 
 func (t *Transformer) filterValidMembers(members []string, users map[string]*IntermediateUser) []string {
 	validMembers := []string{}
 	for _, member := range members {
+		if t.skippedUserIDs[member] {
+			t.droppedMembershipRefs++
+			continue
+		}
 		if _, ok := users[member]; ok {
 			validMembers = append(validMembers, member)
 		} else {
@@ -632,6 +664,11 @@ func (t *Transformer) CreateIntermediateBotUser(userID string) {
 }
 
 func (t *Transformer) CreateAndAddPostToThreads(post SlackPost, threads map[string]*IntermediatePost, timestamps map[int64]bool, channel *IntermediateChannel) {
+	if t.isSkippedUser(post.User) {
+		t.droppedPostRefs++
+		return
+	}
+
 	author := t.Intermediate.UsersById[post.User]
 	if author == nil {
 		t.CreateIntermediateUser(post.User)
@@ -719,6 +756,10 @@ func (t *Transformer) getReactionsFromPost(post SlackPost) []*IntermediateReacti
 	reactions := []*IntermediateReaction{}
 	for _, reaction := range post.Reactions {
 		for _, reactionUser := range reaction.Users {
+			if t.isSkippedUser(reactionUser) {
+				t.droppedPostRefs++
+				continue
+			}
 			reactionAuthor := t.Intermediate.UsersById[reactionUser]
 			if reactionAuthor == nil {
 				t.CreateIntermediateUser(reactionUser)
@@ -820,6 +861,10 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 					t.Logger.Warn("Unable to import the message as the user field is missing.")
 					continue
 				}
+				if t.isSkippedUser(post.User) {
+					t.droppedPostRefs++
+					continue
+				}
 				author := t.Intermediate.UsersById[post.User]
 				if author == nil {
 					t.CreateIntermediateUser(post.User)
@@ -858,6 +903,10 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 				}
 				if post.Comment.User == "" {
 					t.Logger.Warn("Unable to import the message as the user field is missing.")
+					continue
+				}
+				if t.isSkippedUser(post.Comment.User) {
+					t.droppedPostRefs++
 					continue
 				}
 				author := t.Intermediate.UsersById[post.Comment.User]
@@ -929,6 +978,11 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 				poster := post.User
 				if post.Room != nil && len(post.Room.CreatedBy) > 0 {
 					poster = post.Room.CreatedBy
+				}
+
+				if t.isSkippedUser(poster) {
+					t.droppedPostRefs++
+					continue
 				}
 
 				author := t.Intermediate.UsersById[poster]
@@ -1028,8 +1082,11 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 	return nil
 }
 
-func (t *Transformer) Transform(slackExport *SlackExport, attachmentsDir string, skipAttachments, discardInvalidProps, allowDownload, skipEmptyEmails bool, defaultEmailDomain string) error {
-	t.TransformUsers(slackExport.Users, skipEmptyEmails, defaultEmailDomain)
+func (t *Transformer) Transform(slackExport *SlackExport, attachmentsDir string, skipAttachments, discardInvalidProps, allowDownload, skipEmptyEmails bool, defaultEmailDomain string, guestHandling string) error {
+	// Guests are exported with Mattermost guest roles only in "guest" mode.
+	t.EmitGuestRoles = guestHandling == GuestHandlingGuest
+
+	t.TransformUsers(slackExport.Users, skipEmptyEmails, defaultEmailDomain, guestHandling)
 
 	if err := t.TransformAllChannels(slackExport); err != nil {
 		return err
@@ -1045,6 +1102,11 @@ func (t *Transformer) Transform(slackExport *SlackExport, attachmentsDir string,
 
 	t.ComputeChannelPostStats()
 	t.applyChannelStatsToMemberships()
+
+	if t.droppedPostRefs > 0 || t.droppedMembershipRefs > 0 {
+		t.Logger.Infof("Dropped %d posts and %d channel/DM memberships referencing skipped users",
+			t.droppedPostRefs, t.droppedMembershipRefs)
+	}
 
 	return nil
 }

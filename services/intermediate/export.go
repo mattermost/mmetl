@@ -20,6 +20,12 @@ type Exporter struct {
 	TeamName     string
 	Intermediate *Intermediate
 	Logger       log.FieldLogger
+
+	// EmitGuestRoles controls whether users flagged with IsGuest are exported
+	// with Mattermost guest roles (system_guest / team_guest / channel_guest).
+	// Source-specific transformers set this from their own guest-handling
+	// option; when false, guests are exported with regular user roles.
+	EmitGuestRoles bool
 }
 
 func GetImportLineFromChannel(team string, channel *IntermediateChannel) *imports.LineImportData {
@@ -71,12 +77,29 @@ func GetImportLineFromDirectChannel(team string, channel *IntermediateChannel) *
 	}
 }
 
-func GetImportLineFromUser(user *IntermediateUser, team string) *imports.LineImportData {
+// GetImportLineFromUser builds the bulk-import "user" line. When emitGuestRoles
+// is true and the user is flagged as a guest, the user, team, and channel
+// roles are set to Mattermost's guest roles; otherwise the regular user roles
+// are used. Bots are never guests, so the caller should pass a non-guest user
+// here.
+//
+// Mattermost's importer rejects a user that is a guest in only some of
+// system/team/channel scope (see isValidGuestRoles in mattermost/server's
+// import_validators.go), so a guest with no channel memberships is exported as
+// a regular member instead of producing an invalid line that would abort the
+// whole bulk import.
+func GetImportLineFromUser(user *IntermediateUser, team string, emitGuestRoles bool) *imports.LineImportData {
 	channelMemberships := []imports.UserChannelImportData{}
+	isGuest := emitGuestRoles && user.IsGuest && len(user.Memberships) > 0
+
+	channelRole := model.ChannelUserRoleId
+	if isGuest {
+		channelRole = model.ChannelGuestRoleId
+	}
 	for _, membership := range user.Memberships {
 		ch := imports.UserChannelImportData{
 			Name:  model.NewPointer(membership.Name),
-			Roles: model.NewPointer(model.ChannelUserRoleId),
+			Roles: model.NewPointer(channelRole),
 		}
 		if membership.LastViewedAt > 0 {
 			ch.LastViewedAt = model.NewPointer(membership.LastViewedAt)
@@ -98,6 +121,13 @@ func GetImportLineFromUser(user *IntermediateUser, team string) *imports.LineImp
 		deleteAt = model.NewPointer(user.DeleteAt)
 	}
 
+	systemRole := model.SystemUserRoleId
+	teamRole := model.TeamUserRoleId
+	if isGuest {
+		systemRole = model.SystemGuestRoleId
+		teamRole = model.TeamGuestRoleId
+	}
+
 	return &imports.LineImportData{
 		Type: "user",
 		User: &imports.UserImportData{
@@ -107,13 +137,13 @@ func GetImportLineFromUser(user *IntermediateUser, team string) *imports.LineImp
 			FirstName: model.NewPointer(user.FirstName),
 			LastName:  model.NewPointer(user.LastName),
 			Position:  model.NewPointer(user.Position),
-			Roles:     model.NewPointer(model.SystemUserRoleId),
+			Roles:     model.NewPointer(systemRole),
 			DeleteAt:  deleteAt,
 			Teams: &[]imports.UserTeamImportData{
 				{
 					Name:     model.NewPointer(team),
 					Channels: channelsPtr,
-					Roles:    model.NewPointer(model.TeamUserRoleId),
+					Roles:    model.NewPointer(teamRole),
 				},
 			},
 		},
@@ -339,7 +369,10 @@ func (e *Exporter) ExportUsers(writer io.Writer, botOwner string) error {
 
 	// Write regular users first (bot owner must exist before bots)
 	for _, user := range users {
-		line := GetImportLineFromUser(user, e.TeamName)
+		if e.EmitGuestRoles && user.IsGuest && len(user.Memberships) == 0 {
+			e.Logger.Warnf("Guest user %s has no channel memberships; importing as a regular member instead, since Mattermost requires guests to have at least one channel", user.Username)
+		}
+		line := GetImportLineFromUser(user, e.TeamName, e.EmitGuestRoles)
 		if err := ExportWriteLine(writer, line); err != nil {
 			return err
 		}

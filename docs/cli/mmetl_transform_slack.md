@@ -32,6 +32,10 @@ mmetl transform slack [flags]
       --default-email-domain string   If this flag is provided: When a user's email address is empty, the output's email address will be generated from their username and the provided domain.
   -p, --discard-invalid-props         Skips converting posts with invalid props instead discarding the props themselves
   -f, --file string                   the Slack export file to transform
+      --guest-handling string         How to migrate Slack guest users (single- and multi-channel guests). One of:
+                                        "guest" - migrate them as Mattermost guests (system_guest/team_guest/channel_guest). Highest fidelity, but the destination server must have Guest Accounts licensed (Professional/Enterprise) and enabled (GuestAccountsSettings.Enable); otherwise the accounts won't behave correctly.
+                                        "user"  - migrate them as regular Mattermost users. Works everywhere, but grants guests full user permissions.
+                                        "skip"  - drop guest users entirely, along with their memberships and authored posts. (default "guest")
   -h, --help                          help for slack
   -o, --output string                 the output path (default "bulk-export.jsonl")
   -a, --skip-attachments              Skips copying the attachments from the import file
