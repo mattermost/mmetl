@@ -347,6 +347,13 @@ func ExportWithGuests() *SlackExportBuilder {
 			Created: 1704070800,
 			Members: []string{"U001", "U002"},
 			Purpose: slack.SlackChannelSub{Value: "Non-work banter"},
+		}).
+		// DM between the regular user and the multi-channel guest, to verify
+		// guests are marked scheme_guest (not scheme_user) in direct channels too.
+		AddDirectChannel(slack.SlackChannel{
+			Id:      "D001",
+			Created: 1704067200,
+			Members: []string{"U001", "U002"},
 		})
 }
 

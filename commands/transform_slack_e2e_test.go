@@ -1431,6 +1431,51 @@ func TestTransformSlackE2EGuestImport(t *testing.T) {
 	assert.False(t, singleGuestInRandom, "single.guest should not be a member of random, matching its Slack access scope")
 	assert.False(t, randomByUserID[regularUser.Id].SchemeGuest)
 	assert.True(t, randomByUserID[multiGuest.Id].SchemeGuest)
+
+	// DM channels are a separate import path (direct_channel/DirectChannelMemberImportData)
+	// from regular channels, so a guest's scheme flags there must be checked
+	// independently: a guest appearing only in a DM/MPIM should still be
+	// scheme_guest in that channel, not scheme_user.
+	regularUserChannels, _, err := th.Client.GetChannelsForUserWithLastDeleteAt(ctx, regularUser.Id, 0)
+	require.NoError(t, err)
+
+	expectedDMMembers := map[string]bool{regularUser.Id: true, multiGuest.Id: true}
+	var dmChannel *model.Channel
+	for _, ch := range regularUserChannels {
+		if ch.Type != model.ChannelTypeDirect {
+			continue
+		}
+		members, mErr := th.GetChannelMembers(ctx, ch.Id)
+		require.NoError(t, mErr)
+		if len(members) != len(expectedDMMembers) {
+			continue
+		}
+		match := true
+		for _, m := range members {
+			if !expectedDMMembers[m.UserId] {
+				match = false
+				break
+			}
+		}
+		if match {
+			dmChannel = ch
+			break
+		}
+	}
+	require.NotNil(t, dmChannel, "DM between regular.user and multi.guest should exist in Mattermost")
+
+	dmMembers, err := th.GetChannelMembers(ctx, dmChannel.Id)
+	require.NoError(t, err)
+	dmByUserID := map[string]*model.ChannelMember{}
+	for i := range dmMembers {
+		dmByUserID[dmMembers[i].UserId] = &dmMembers[i]
+	}
+	require.NotNil(t, dmByUserID[regularUser.Id])
+	require.NotNil(t, dmByUserID[multiGuest.Id])
+	assert.True(t, dmByUserID[regularUser.Id].SchemeUser)
+	assert.False(t, dmByUserID[regularUser.Id].SchemeGuest)
+	assert.False(t, dmByUserID[multiGuest.Id].SchemeUser, "guest DM participant must not be scheme_user")
+	assert.True(t, dmByUserID[multiGuest.Id].SchemeGuest, "guest DM participant must be scheme_guest")
 }
 
 // joinSorted returns a deterministic comma-joined key from the given strings.

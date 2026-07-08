@@ -798,7 +798,7 @@ func TestGetImportLineFromDirectChannel(t *testing.T) {
 			LastPostAt:       1704099999000,
 		}
 
-		line := intermediate.GetImportLineFromDirectChannel("myteam", channel)
+		line := intermediate.GetImportLineFromDirectChannel("myteam", channel, nil)
 
 		assert.Equal(t, "direct_channel", line.Type)
 		require.NotNil(t, line.DirectChannel)
@@ -812,7 +812,36 @@ func TestGetImportLineFromDirectChannel(t *testing.T) {
 			assert.Equal(t, int64(5), *p.MsgCountRoot)
 			require.NotNil(t, p.SchemeUser, "SchemeUser must be populated so the server import does not default it to false (MM-68915)")
 			assert.True(t, *p.SchemeUser)
+			require.NotNil(t, p.SchemeGuest)
+			assert.False(t, *p.SchemeGuest)
 		}
+	})
+
+	t.Run("marks guest participants with SchemeGuest instead of SchemeUser", func(t *testing.T) {
+		channel := &IntermediateChannel{
+			Name:             "dm-channel",
+			Topic:            "DM topic",
+			MembersUsernames: []string{"alice", "bob"},
+			Created:          1704067200,
+		}
+
+		line := intermediate.GetImportLineFromDirectChannel("myteam", channel, map[string]bool{"bob": true})
+
+		require.Len(t, line.DirectChannel.Participants, 2)
+		alice := line.DirectChannel.Participants[0]
+		bob := line.DirectChannel.Participants[1]
+
+		assert.Equal(t, "alice", *alice.Username)
+		require.NotNil(t, alice.SchemeUser)
+		assert.True(t, *alice.SchemeUser)
+		require.NotNil(t, alice.SchemeGuest)
+		assert.False(t, *alice.SchemeGuest)
+
+		assert.Equal(t, "bob", *bob.Username)
+		require.NotNil(t, bob.SchemeUser)
+		assert.False(t, *bob.SchemeUser)
+		require.NotNil(t, bob.SchemeGuest)
+		assert.True(t, *bob.SchemeGuest)
 	})
 
 	t.Run("falls back to CreatedMillis when no posts", func(t *testing.T) {
@@ -823,7 +852,7 @@ func TestGetImportLineFromDirectChannel(t *testing.T) {
 			Created:          1704067200,
 		}
 
-		line := intermediate.GetImportLineFromDirectChannel("myteam", channel)
+		line := intermediate.GetImportLineFromDirectChannel("myteam", channel, nil)
 
 		require.Len(t, line.DirectChannel.Participants, 2)
 		assert.Equal(t, int64(1704067200000), *line.DirectChannel.Participants[0].LastViewedAt)
@@ -843,7 +872,7 @@ func TestGetImportLineFromDirectChannel(t *testing.T) {
 			Created:          0, // absent (Slack DM placeholders are normalized to 0 upstream)
 		}
 
-		line := intermediate.GetImportLineFromDirectChannel("myteam", channel)
+		line := intermediate.GetImportLineFromDirectChannel("myteam", channel, nil)
 
 		require.Len(t, line.DirectChannel.Participants, 2)
 		assert.Equal(t, fixedTime.UnixMilli(), *line.DirectChannel.Participants[0].LastViewedAt)
