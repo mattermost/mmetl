@@ -1,10 +1,14 @@
 package intermediate
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"testing"
 
+	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/v8/channels/app/imports"
+	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -73,4 +77,84 @@ func TestCreateRepliesForAttachments(t *testing.T) {
 		assert.Empty(t, createRepliesForAttachments(makeAttachments(POST_MAX_ATTACHMENTS), user, createAt))
 		assert.Empty(t, createRepliesForAttachments(makeAttachments(1), user, createAt))
 	})
+}
+
+// TestGuestWithNoRegularMembershipStaysConsistentInDirectChannels covers the
+// interaction between two guest-handling rules that could otherwise
+// contradict each other:
+//   - GetImportLineFromUser downgrades a guest with zero public/private
+//     channel memberships to a regular member, because Mattermost's importer
+//     rejects a user that is a guest in only some of system/team/channel scope.
+//   - GetImportLineFromDirectChannel (via isEffectiveGuest) must apply the
+//     exact same downgrade to that user's DM/group participant entries, or
+//     the export would produce a user who is "regular" at the system/team
+//     level but "guest" inside a specific DM/MPIM.
+func TestGuestWithNoRegularMembershipStaysConsistentInDirectChannels(t *testing.T) {
+	guest := &IntermediateUser{
+		Id:       "U1",
+		Username: "dm-only-guest",
+		Email:    "guest@example.com",
+		IsGuest:  true,
+		// No Memberships: this guest's only Slack access is a DM, never a
+		// public/private channel.
+	}
+	regular := &IntermediateUser{
+		Id:       "U2",
+		Username: "regular",
+		Email:    "regular@example.com",
+	}
+
+	exporter := &Exporter{
+		TeamName: "myteam",
+		Logger:   log.New(),
+		Intermediate: &Intermediate{
+			UsersById: map[string]*IntermediateUser{
+				guest.Id:   guest,
+				regular.Id: regular,
+			},
+		},
+		EmitGuestRoles: true,
+	}
+
+	// The user line falls back to a regular member: no channel memberships to
+	// be a consistent guest in.
+	userLine := GetImportLineFromUser(guest, exporter.TeamName, exporter.EmitGuestRoles)
+	require.NotNil(t, userLine.User.Roles)
+	assert.Equal(t, model.SystemUserRoleId, *userLine.User.Roles)
+	team := (*userLine.User.Teams)[0]
+	require.NotNil(t, team.Roles)
+	assert.Equal(t, model.TeamUserRoleId, *team.Roles)
+
+	// The same user, participating in a DM with the regular user, must also
+	// be scheme_user there — not scheme_guest — to match the non-guest
+	// system/team roles above.
+	dmChannel := &IntermediateChannel{
+		Name:             "dm-channel",
+		MembersUsernames: []string{guest.Username, regular.Username},
+		Created:          1704067200,
+	}
+
+	var buf bytes.Buffer
+	require.NoError(t, exporter.ExportDirectChannels([]*IntermediateChannel{dmChannel}, &buf))
+
+	var line imports.LineImportData
+	require.NoError(t, json.Unmarshal(buf.Bytes(), &line))
+	require.NotNil(t, line.DirectChannel)
+
+	participantsByUsername := map[string]*imports.DirectChannelMemberImportData{}
+	for _, p := range line.DirectChannel.Participants {
+		participantsByUsername[*p.Username] = p
+	}
+
+	guestParticipant := participantsByUsername[guest.Username]
+	require.NotNil(t, guestParticipant)
+	require.NotNil(t, guestParticipant.SchemeUser)
+	require.NotNil(t, guestParticipant.SchemeGuest)
+	assert.True(t, *guestParticipant.SchemeUser, "downgraded guest must be scheme_user in DMs too")
+	assert.False(t, *guestParticipant.SchemeGuest, "downgraded guest must not be scheme_guest in DMs")
+
+	regularParticipant := participantsByUsername[regular.Username]
+	require.NotNil(t, regularParticipant)
+	assert.True(t, *regularParticipant.SchemeUser)
+	assert.False(t, *regularParticipant.SchemeGuest)
 }
