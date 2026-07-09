@@ -17,5 +17,6 @@ Transforms export files into Mattermost import files
 ### SEE ALSO
 
 * [mmetl](mmetl.md)	 - ETL tool to transform the export files from different providers to be compatible with Mattermost.
+* [mmetl transform confluence](mmetl_transform_confluence.md)	 - Transforms a Confluence export.
 * [mmetl transform slack](mmetl_transform_slack.md)	 - Transforms a Slack export.
 

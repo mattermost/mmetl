@@ -12,10 +12,16 @@ import (
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 
+	"github.com/mattermost/mmetl/services/confluence"
 	"github.com/mattermost/mmetl/services/slack"
 )
 
-const attachmentsInternal = "bulk-export-attachments"
+const (
+	// slackAttachmentsDir is the subdirectory for Slack attachments.
+	slackAttachmentsDir = "bulk-export-attachments"
+	// confluenceAttachmentsDir matches the Mattermost bulk import expected path (model.ExportDataDir).
+	confluenceAttachmentsDir = "data"
+)
 
 var TransformCmd = &cobra.Command{
 	Use:   "transform",
@@ -29,6 +35,15 @@ var TransformSlackCmd = &cobra.Command{
 	Example: "  transform slack --team myteam --file my_export.zip --output mm_export.json",
 	Args:    cobra.NoArgs,
 	RunE:    transformSlackCmdF,
+}
+
+var TransformConfluenceCmd = &cobra.Command{
+	Use:     "confluence",
+	Short:   "Transforms a Confluence export.",
+	Long:    "Transforms a Confluence Cloud CSV space export into a Mattermost Wiki/Pages JSONL file.",
+	Example: "  transform confluence --team myteam --channel docs --file confluence-export.zip --output wiki-import.jsonl",
+	Args:    cobra.NoArgs,
+	RunE:    transformConfluenceCmdF,
 }
 
 func init() {
@@ -51,8 +66,35 @@ func init() {
 	TransformSlackCmd.Flags().Bool("debug", false, "Whether to show debug logs or not")
 	TransformSlackCmd.Flags().String("bot-owner", "", "Username of the Mattermost user who will own all imported bots. Required if the Slack export contains bot users.")
 
+	// Confluence command flags
+	TransformConfluenceCmd.Flags().StringP("team", "t", "", "the target team in Mattermost")
+	if err := TransformConfluenceCmd.MarkFlagRequired("team"); err != nil {
+		panic(err)
+	}
+	TransformConfluenceCmd.Flags().StringP("channel", "c", "", "the target channel in Mattermost for the wikis")
+	if err := TransformConfluenceCmd.MarkFlagRequired("channel"); err != nil {
+		panic(err)
+	}
+	TransformConfluenceCmd.Flags().StringP("file", "f", "", "the Confluence export file (ZIP) to transform")
+	if err := TransformConfluenceCmd.MarkFlagRequired("file"); err != nil {
+		panic(err)
+	}
+	TransformConfluenceCmd.Flags().StringP("output", "o", "wiki-import.jsonl", "the output JSONL file path")
+	TransformConfluenceCmd.Flags().StringP("attachments-dir", "d", "data", "the path for extracted attachments")
+	TransformConfluenceCmd.Flags().StringP("user-mapping", "u", "", "CSV file mapping Confluence users to Mattermost users")
+	TransformConfluenceCmd.Flags().String("fallback-user", "", "Mattermost username to use for unmapped Confluence users")
+	TransformConfluenceCmd.Flags().BoolP("skip-attachments", "a", false, "skip extracting attachments")
+	TransformConfluenceCmd.Flags().Int("max-depth", 10, "maximum page hierarchy depth (deeper pages are flattened)")
+	TransformConfluenceCmd.Flags().Bool("dry-run", false, "validate without writing output files")
+	TransformConfluenceCmd.Flags().Bool("validate-only", false, "only run pre-flight validation, do not transform")
+	TransformConfluenceCmd.Flags().String("mattermost-url", "", "Mattermost server URL for validation (optional)")
+	TransformConfluenceCmd.Flags().String("mattermost-token", "", "Mattermost auth token for validation (optional)")
+	TransformConfluenceCmd.Flags().Bool("create-channel", false, "include channel creation in JSONL output (for new channels)")
+	TransformConfluenceCmd.Flags().Bool("debug", false, "enable debug logging")
+
 	TransformCmd.AddCommand(
 		TransformSlackCmd,
+		TransformConfluenceCmd,
 	)
 
 	RootCmd.AddCommand(
@@ -85,7 +127,7 @@ func transformSlackCmdF(cmd *cobra.Command, args []string) error {
 	}
 
 	// attachments dir
-	attachmentsFullDir := path.Join(attachmentsDir, attachmentsInternal)
+	attachmentsFullDir := path.Join(attachmentsDir, slackAttachmentsDir)
 
 	if !skipAttachments {
 		if fileInfo, err := os.Stat(attachmentsFullDir); os.IsNotExist(err) {
@@ -160,6 +202,201 @@ func transformSlackCmdF(cmd *cobra.Command, args []string) error {
 	}
 
 	slackTransformer.Logger.Info("Transformation succeeded!")
+
+	return nil
+}
+
+func transformConfluenceCmdF(cmd *cobra.Command, args []string) error {
+	team, _ := cmd.Flags().GetString("team")
+	channel, _ := cmd.Flags().GetString("channel")
+	inputFilePath, _ := cmd.Flags().GetString("file")
+	outputFilePath, _ := cmd.Flags().GetString("output")
+	attachmentsDir, _ := cmd.Flags().GetString("attachments-dir")
+	userMappingPath, _ := cmd.Flags().GetString("user-mapping")
+	fallbackUser, _ := cmd.Flags().GetString("fallback-user")
+	skipAttachments, _ := cmd.Flags().GetBool("skip-attachments")
+	maxDepth, _ := cmd.Flags().GetInt("max-depth")
+	dryRun, _ := cmd.Flags().GetBool("dry-run")
+	validateOnly, _ := cmd.Flags().GetBool("validate-only")
+	mattermostURL, _ := cmd.Flags().GetString("mattermost-url")
+	mattermostToken, _ := cmd.Flags().GetString("mattermost-token")
+	createChannel, _ := cmd.Flags().GetBool("create-channel")
+	debug, _ := cmd.Flags().GetBool("debug")
+
+	// Normalize team and channel names to lowercase, as Mattermost expects.
+	team = strings.ToLower(team)
+	channel = strings.ToLower(channel)
+
+	// Validate output file
+	if !dryRun {
+		if fileInfo, err := os.Stat(outputFilePath); err != nil && !os.IsNotExist(err) {
+			return err
+		} else if err == nil && fileInfo.IsDir() {
+			return fmt.Errorf("output file \"%s\" is a directory", outputFilePath)
+		}
+	}
+
+	// Prepare attachments directory
+	attachmentsFullDir := path.Join(attachmentsDir, confluenceAttachmentsDir)
+	if !skipAttachments && !dryRun {
+		if fileInfo, err := os.Stat(attachmentsFullDir); os.IsNotExist(err) {
+			if createErr := os.MkdirAll(attachmentsFullDir, 0755); createErr != nil {
+				return createErr
+			}
+		} else if err != nil {
+			return err
+		} else if !fileInfo.IsDir() {
+			return fmt.Errorf("file \"%s\" is not a directory", attachmentsDir)
+		}
+	}
+
+	// Open input file
+	fileReader, err := os.Open(inputFilePath)
+	if err != nil {
+		return fmt.Errorf("failed to open input file: %w", err)
+	}
+	defer fileReader.Close()
+
+	zipFileInfo, err := fileReader.Stat()
+	if err != nil {
+		return err
+	}
+
+	zipReader, err := zip.NewReader(fileReader, zipFileInfo.Size())
+	if err != nil || zipReader.File == nil {
+		return fmt.Errorf("failed to read ZIP file: %w", err)
+	}
+
+	// Set up logger
+	logger := log.New()
+	logFile, err := os.OpenFile("transform-confluence.log", os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0666)
+	if err != nil {
+		return err
+	}
+	defer logFile.Close()
+	logger.SetOutput(logFile)
+	logger.SetFormatter(customLogFormatter)
+	logger.SetReportCaller(true)
+
+	if debug {
+		logger.Level = log.DebugLevel
+		logger.Info("Debug mode enabled")
+	}
+
+	// Create transformer config
+	config := &confluence.TransformConfig{
+		SkipAttachments:   skipAttachments,
+		AttachmentsDir:    attachmentsFullDir,
+		MaxDepth:          maxDepth,
+		DryRun:            dryRun,
+		AutoCreateChannel: createChannel,
+	}
+
+	// Create transformer
+	confluenceTransformer := confluence.NewTransformer(team, channel, logger, config)
+	confluenceTransformer.ExportFile = inputFilePath
+
+	// Load user mapping if provided
+	if userMappingPath != "" {
+		userMapper, mapErr := confluence.NewUserMapper(userMappingPath, fallbackUser)
+		if mapErr != nil {
+			return fmt.Errorf("failed to load user mapping: %w", mapErr)
+		}
+		confluenceTransformer.UserMapper = userMapper
+		logger.Infof("Loaded %d user mappings (by account ID), %d email mappings", userMapper.GetMappingCount(), userMapper.GetEmailMappingCount())
+	}
+
+	// Parse export
+	logger.Info("Parsing Confluence export...")
+	export, err := confluenceTransformer.ParseConfluenceExport(zipReader)
+	if err != nil {
+		return fmt.Errorf("failed to parse Confluence export: %w", err)
+	}
+
+	// Run pre-flight validation
+	validator := confluence.NewValidator(team, channel)
+	if mattermostURL != "" && mattermostToken != "" {
+		validator.SetServerConfig(mattermostURL, mattermostToken)
+	}
+
+	validationResult := validator.ValidateAll(cmd.Context(), zipReader, export, confluenceTransformer.UserMapper)
+
+	// Print validation results
+	if len(validationResult.Warnings) > 0 {
+		fmt.Println("Validation warnings:")
+		for _, warning := range validationResult.Warnings {
+			fmt.Printf("  ⚠️  %s\n", warning)
+		}
+	}
+	if len(validationResult.Errors) > 0 {
+		fmt.Println("Validation errors:")
+		for _, validationErr := range validationResult.Errors {
+			fmt.Printf("  ❌ %s\n", validationErr)
+		}
+	}
+
+	if !validationResult.Valid {
+		return fmt.Errorf("pre-flight validation failed")
+	}
+
+	if validateOnly {
+		fmt.Println("✅ Pre-flight validation passed")
+		fmt.Printf("  Pages: %d\n", len(export.Pages))
+		fmt.Printf("  Comments: %d\n", len(export.Comments))
+		fmt.Printf("  Users in export: %d\n", len(export.Users))
+		return nil
+	}
+
+	// Extract attachments from ZIP before transform so paths are updated
+	if !skipAttachments && !dryRun {
+		logger.Info("Extracting attachments...")
+		if extractErr := confluenceTransformer.ExtractAttachments(zipReader, export); extractErr != nil {
+			return fmt.Errorf("attachment extraction failed: %w", extractErr)
+		}
+	}
+
+	// Transform
+	logger.Info("Transforming content...")
+	if err = confluenceTransformer.Transform(export); err != nil {
+		return fmt.Errorf("transformation failed: %w", err)
+	}
+
+	// Export (unless dry run)
+	if dryRun {
+		logger.Info("Dry run complete - no output written")
+		fmt.Printf("Dry run complete: %d wikis, %d pages, %d comments would be exported\n",
+			len(confluenceTransformer.Intermediate.Wikis),
+			len(confluenceTransformer.Intermediate.Pages),
+			len(confluenceTransformer.Intermediate.Comments))
+		return nil
+	}
+
+	logger.Info("Writing JSONL output...")
+	if err = confluenceTransformer.ExportWithManifest(outputFilePath, export); err != nil {
+		return fmt.Errorf("failed to write output: %w", err)
+	}
+
+	manifestPath := strings.TrimSuffix(outputFilePath, ".jsonl") + "-manifest.json"
+	logger.Info("Transformation succeeded!")
+	fmt.Printf("Successfully transformed Confluence export to %s\n", outputFilePath)
+	fmt.Printf("  Wikis: %d\n", len(confluenceTransformer.Intermediate.Wikis))
+	fmt.Printf("  Pages: %d\n", len(confluenceTransformer.Intermediate.Pages))
+	fmt.Printf("  Comments: %d\n", len(confluenceTransformer.Intermediate.Comments))
+	fmt.Printf("  Attachments: %d\n", confluenceTransformer.Stats.AttachmentCount)
+	if confluenceTransformer.Stats.AttachmentsExtracted > 0 {
+		fmt.Printf("  Attachments extracted: %d\n", confluenceTransformer.Stats.AttachmentsExtracted)
+	}
+	if confluenceTransformer.Stats.AttachmentsSkipped > 0 {
+		fmt.Printf("  Attachments skipped: %d\n", confluenceTransformer.Stats.AttachmentsSkipped)
+	}
+	fmt.Printf("  Manifest: %s\n", manifestPath)
+	if confluenceTransformer.Stats.UsersUnmapped > 0 {
+		fmt.Printf("  Warning: %d users could not be mapped\n", confluenceTransformer.Stats.UsersUnmapped)
+	}
+	fmt.Printf("\nNext steps:\n")
+	fmt.Printf("  1. Create import ZIP: cd %s && zip -r ../import.zip .\n", attachmentsDir)
+	fmt.Printf("  2. mmctl import upload import.zip\n")
+	fmt.Printf("  3. mmctl import process <import_id>\n")
 
 	return nil
 }
