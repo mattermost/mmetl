@@ -4,11 +4,16 @@
 
 Confluence Cloud's space export format has changed from a single self-describing
 `entities.xml` file to a **relational dump of ~40 CSV tables**. The existing
-mmetl Confluence overlay only parses the legacy XML. This plan adds a **CSV
-parser path** that emits the *same* `ConfluenceExport` struct the XML parser
-produces, so every downstream stage — storage-format→TipTap conversion,
-hierarchy, links, user mapping, export, manifest, validation — is reused
-**unchanged**.
+mmetl Confluence overlay only parses the legacy XML. This plan **replaces the XML
+parser with a CSV parser** that emits the *same* `ConfluenceExport` struct, so
+every downstream stage — storage-format→TipTap conversion, hierarchy, links, user
+mapping, export, manifest, validation — is reused **unchanged**.
+
+**CSV is the only supported input.** We do not need the XML (or HTML) parser: the
+legacy `parseEntitiesXML`/`parseHTMLExport` paths and their XML-only helpers are
+**deleted**, not kept as a fallback. This removes ~800 lines of dead tokenizer
+code and eliminates dual-format branching, detection ambiguity, and XML
+regression surface.
 
 The change is deliberately confined to the parser input layer plus a small
 user-identity indirection. It also folds in the one-time work of porting the
@@ -27,7 +32,7 @@ changes, not the struct or its consumers.
 
 **Goals**
 - `mmetl transform confluence -f <csv-export.zip>` works on the new Cloud CSV export.
-- Auto-detect XML vs CSV vs HTML; keep the legacy XML path fully working.
+- CSV is the sole input format; delete the XML/HTML parser and its dead helpers.
 - Emit identical `ConfluenceExport` semantics from CSV so no downstream code changes.
 - Land the overlay on current `master` as a clean, committed, tested feature.
 - Portable, committed test fixture (current tests hardcode a colleague's local path).
@@ -35,6 +40,9 @@ changes, not the struct or its consumers.
 **Non-Goals**
 - No changes to `tiptap_converter.go`, `export.go`, `hierarchy.go`, `links.go`,
   `manifest.go`, `intermediate.go` transform logic (beyond what item 5 requires).
+- **No backward compatibility with legacy `entities.xml` exports** — explicitly
+  dropped at the user's direction. If a legacy XML export ever resurfaces, it is a
+  separate future effort.
 - No server-side Wiki/Pages import work — that is a separate, gating dependency
   (see Risks). This plan produces JSONL; consuming it is out of scope.
 - Not attempting to fully support blogposts, Team Calendars, whiteboards, or
@@ -50,7 +58,11 @@ Overlay lives **uncommitted** in a bundle, not yet in the repo:
 Key seams (bundle paths):
 - `parser.go:19` `ParseConfluenceExport` — indexes zip files, then branches:
   `entities.xml` present → `parseEntitiesXML` (`parser.go:69`); else `parseHTMLExport`
-  (`parser.go:492`). **This is where the CSV branch is added.**
+  (`parser.go:492`). **Its body is replaced with a CSV-only implementation;
+  `parseEntitiesXML`, `parseHTMLExport`, and every XML-only helper (`getXMLAttr`,
+  `readElementText`, `parseXMLTime`, `parse*Element`, …) plus the `encoding/xml`
+  import are deleted.** (Note: `tiptap_converter.go` also uses `encoding/xml` for
+  storage-format bodies — that is a different file and stays.)
 - `types.go` — `ConfluenceExport` (target struct) and `ConfluencePage`/`ConfluenceComment`/
   `ConfluenceUser`/`ConfluenceAttachment`. **No changes needed.**
 - `intermediate.go:409` `resolveUsername(accountID, export)` — looks up
@@ -65,8 +77,12 @@ Key seams (bundle paths):
   (`validation.go:212`), which the ported command runs *after* parsing and then
   hard-aborts on `!Valid` (`our-changes.patch:202,218`). **This blocks every CSV
   export and must be fixed (item 7).**
-- `confluence_test.go:19` — `TestParseRealExport` reads a hardcoded local zip and
-  `t.Skip`s if absent (not CI-portable).
+- `confluence_test.go:19` — `TestParseRealExport`/`TestTransformRealExport`/
+  `TestExportJSONL` read a hardcoded local **XML** zip and `t.Skip` if absent (not
+  CI-portable). These XML-fixture tests are **removed** (or replaced with CSV
+  equivalents); XML-macro converter tests that don't depend on the parser
+  (`TestConvertHTMLToTipTap_*`) stay — they exercise `tiptap_converter.go`, which
+  is unaffected.
 
 Divergence blocking a clean `git apply` onto `master`:
 - `commands/transform.go`: `master` added the `--bot-owner` flag + bot-export path
@@ -100,15 +116,17 @@ Confirmed headers:
 ID** directly into `CreatedBy`, and `resolveUsername`/the user-supplied mapping
 CSV both key on account ID. So the CSV parser must translate `user_key → aaid`
 and store the **aaid** in `CreatedBy`/`UpdatedBy` and as the `export.Users` map
-key — reproducing XML-path semantics with zero downstream change.
+key, so the account-ID-keyed `--user-mapping` CSV resolves with zero downstream
+change (see item 5).
 
 ## Proposed Approach
 
 Add `services/confluence/csv_parser.go` implementing `parseCSVExport(zipReader,
-export)`, selected by a new detection step in `ParseConfluenceExport`. It loads
-the relevant tables into row structs, joins them, applies current-vs-historical
-filtering, and populates the existing `ConfluenceExport`. All other files are
-reused as-is except a tiny, optional touch to attachment handling (item 6).
+export)`, called directly by a slimmed-down `ParseConfluenceExport`. It loads the
+relevant tables into row structs, joins them, applies current-vs-historical
+filtering, and populates the existing `ConfluenceExport`. The XML/HTML parser is
+deleted (item 2). All other files are reused as-is except attachment handling
+(item 6) and the validation gate (item 7).
 
 ### 1. Port the overlay onto `master` (prerequisite)
 
@@ -124,15 +142,24 @@ reused as-is except a tiny, optional touch to attachment handling (item 6).
 - Gate: `go build ./...` succeeds; `mmetl transform confluence --help` lists flags.
 - Commit this as an isolated "port overlay" commit before touching the parser.
 
-### 2. Format detection in `ParseConfluenceExport` (`parser.go:42-53`)
+### 2. Replace the parser body; delete the XML/HTML paths (`parser.go:42-53`)
 
-Extend the existing branch. Priority order:
-1. If `exportDescriptor.properties` present and parses `exportFormat=csv` → `parseCSVExport`.
-   (Prefer this single-line signal over "presence of `content.csv`" — a multi-space
-   or full-site CSV export may lay files out differently; `exportFormat=csv` is stable.)
-   Fall back to `content.csv`/`content.csv.gz` presence only if the descriptor is absent.
-2. Else if `entities.xml` present → `parseEntitiesXML` (unchanged).
-3. Else → `parseHTMLExport` (unchanged).
+`ParseConfluenceExport` no longer branches — it validates that this is a CSV
+export and calls `parseCSVExport` directly:
+1. If `exportDescriptor.properties` parses `exportFormat=csv`, or `content.csv`/
+   `content.csv.gz` is present → `parseCSVExport`. (Prefer the `exportFormat=csv`
+   single-line signal; a multi-space/full-site export may lay files out
+   differently.)
+2. Otherwise → return a clear error ("unsupported export: expected a Confluence
+   Cloud CSV export"). **No XML/HTML fallback.**
+
+Delete `parseEntitiesXML`, `parseHTMLExport`, `parseHTMLPage`, all `parse*Element`
+readers, and the XML-only helpers (`getXMLAttr`, `readElementText`,
+`readIDElement`, `parseXMLTime`, `skipElement`, …) plus the now-unused
+`encoding/xml` import from `parser.go`. Go won't error on unused *functions*, but
+`make check-style` (golangci `unused`) and the dropped import will — so remove
+them in the same change. Add a CSV timestamp parser (dates look like
+`2024-05-31 10:03:18.78`, not the XML format `parseXMLTime` handled).
 
 Add a `readMaybeGzipCSV(f *zip.File) ([][]string, error)` helper: open, peek 2
 bytes, wrap in `gzip.Reader` iff magic == `0x1f 0x8b`, else read plain; parse
@@ -235,11 +262,11 @@ CSV via `UserMapper`.
 
 **Decision: translate `user_key → aaid` in the parser and store the `aaid`.**
 Rationale: the user-supplied `--user-mapping` CSV is keyed on Atlassian account
-ID (`UserMapper.byAccountID`, `user_mapper.go`), which the XML path already
-produced — orgs build that CSV from Atlassian account IDs, not from Confluence's
-internal `user_key`. Storing the aaid makes the realistic mapping-by-account-ID
-path work and matches XML semantics; `resolveUsername`/`user_mapper.go` need no
-change. Populate `export.Users[aaid] = &ConfluenceUser{AccountID: aaid, ...}`.
+ID (`UserMapper.byAccountID`, `user_mapper.go`) — orgs build that CSV from
+Atlassian account IDs, not from Confluence's internal `user_key`. Storing the
+aaid makes the realistic mapping-by-account-ID path work; `resolveUsername`/
+`user_mapper.go` need no change. Populate
+`export.Users[aaid] = &ConfluenceUser{AccountID: aaid, ...}`.
 
 Important nuance (from advisor): `user_mapping.csv` has **no email column** and
 its `username`/`aaid` are opaque IDs, so Confluence's own mapping yields no
@@ -275,10 +302,10 @@ for space CSV exports. `attachments.go:15` assumes
 `ValidateAll` after parsing and returns `"pre-flight validation failed"` when
 `!Valid` (`our-changes.patch:202,218`). **A CSV export has no `entities.xml`, so
 without this fix every CSV run aborts after a successful parse** — directly
-defeating acceptance criterion #1. Fix: make `ValidateExportFormat` treat
-`exportDescriptor.properties` with `exportFormat=csv` (or presence of
-`content.csv`/`content.csv.gz`) as an equally valid format signal, mirroring the
-detection logic in item 2. Keep the `entities.xml` acceptance for the XML path.
+defeating acceptance criterion #1. Fix: **replace** the `entities.xml` requirement
+in `ValidateExportFormat` with the CSV signal (`exportFormat=csv` or presence of
+`content.csv`/`content.csv.gz`), mirroring the detection in item 2. The
+`entities.xml` check is removed, not kept — there is no XML path anymore.
 
 ## Files to Change / Add
 
@@ -287,18 +314,18 @@ detection logic in item 2. Keep the `entities.xml` acceptance for the XML path.
 | `services/confluence/*.go` (14) | **Add** — port from bundle (item 1) |
 | `commands/transform.go` | **Edit** — manually merge `transform confluence` subcommand onto master's `--bot-owner` version |
 | `go.mod` / `go.sum` | **Edit** — `go mod tidy` (x/net becomes direct) |
-| `services/confluence/parser.go` | **Edit** — add CSV detection branch in `ParseConfluenceExport` |
-| `services/confluence/csv_parser.go` | **Add** — `parseCSVExport` + table loaders + joins + gzip sniff |
+| `services/confluence/parser.go` | **Rewrite** — `ParseConfluenceExport` becomes CSV-only; **delete** `parseEntitiesXML`, `parseHTMLExport`, `parse*Element`, XML-only helpers, and the `encoding/xml` import (item 2) |
+| `services/confluence/csv_parser.go` | **Add** — `parseCSVExport` + table loaders + joins + gzip sniff + CSV timestamp parser |
 | `services/confluence/csv_parser_test.go` | **Add** — unit tests over a committed fixture |
 | `services/confluence/testdata/csv-export-min.zip` | **Add** — small committed CSV-export fixture |
-| `services/confluence/confluence_test.go` | **Edit** — parametrize fixture path, stop hardcoding a local path |
+| `services/confluence/confluence_test.go` | **Edit** — **remove** XML-fixture tests (`TestParseRealExport`/`TestTransformRealExport`/`TestExportJSONL`); keep parser-independent `TestConvertHTMLToTipTap_*` |
 | `services/confluence/attachments.go` | **Edit** — add `// TODO(csv-attachments)` + warn when `backupAttachments=true` but no files match the regex (item 6) |
-| `services/confluence/validation.go` | **Edit** — `ValidateExportFormat` must accept the CSV signal, not only `entities.xml` (item 7 — blocking) |
+| `services/confluence/validation.go` | **Edit** — `ValidateExportFormat` requires the CSV signal, drops the `entities.xml` requirement (item 7 — blocking) |
 | `docs/cli/` | **Regen** — `make docs` (new subcommand docs) |
 
 No changes to: `types.go`, `tiptap_converter.go`, `intermediate.go` (transform),
 `export.go`, `hierarchy.go`, `links.go` (consumer), `manifest.go`, `user_mapper.go`.
-(`validation.go` **does** change — see item 7.)
+(`parser.go` and `validation.go` **do** change — see items 2 and 7.)
 
 ## Testing Strategy
 
@@ -312,7 +339,7 @@ No changes to: `types.go`, `tiptap_converter.go`, `intermediate.go` (transform),
   `user_mapping`, and one storage-format body exercising a macro/`ac:layout`.
 - **Unit tests** (`csv_parser_test.go`):
   - gzip-magic sniff: gzipped vs plain `.gz` both parse.
-  - format detection picks CSV over XML/HTML given `exportFormat=csv`.
+  - a non-CSV/unrecognized zip returns the clear "unsupported export" error.
   - visible-page filter: current+spaceid kept; historical (blank spaceid+prevver)
     → `HistoricalPageIDs`; draft skipped.
   - hierarchy: `parentid`/homepage produce the expected tree + root.
@@ -323,10 +350,6 @@ No changes to: `types.go`, `tiptap_converter.go`, `intermediate.go` (transform),
     export produces valid `wiki`/`page`/`page_comment` JSONL lines.
   - inline anchors read directly from `contentproperties` (no HTML scraping);
     `IsResolved` set from `status=resolved`.
-- **Keep CSV and XML tests in separate files** — do not parametrize both formats
-  through one table-driven test; the join semantics (`prevver`,
-  contentproperties-by-contentid) differ enough that shared helpers would hide
-  format-specific bugs.
 - **End-to-end integration test** over the real sample bundle (zipped):
   `ParseConfluenceExport → TransformPages → TransformComments → Export`, asserting
   final counts match the report (**11 visible pages, 8 current comments, 1 space**).
@@ -337,11 +360,11 @@ No changes to: `types.go`, `tiptap_converter.go`, `intermediate.go` (transform),
 
 - [ ] `mmetl transform confluence -f <csv-export.zip> -t team -c chan` produces a
       non-empty `wiki-import.jsonl` + manifest without errors on the sample.
-- [ ] Legacy `entities.xml` exports still parse (regression-safe): existing XML
-      tests green.
-- [ ] Format auto-detection selects CSV via `exportDescriptor.properties`.
-- [ ] Pre-flight validation (`ValidateExportFormat`) passes for a CSV export and
-      still passes for an XML export (item 7 regression guard).
+- [ ] `ParseConfluenceExport` accepts CSV via `exportDescriptor.properties`; a
+      non-CSV zip returns a clear "unsupported export" error.
+- [ ] XML/HTML parser code and `encoding/xml` import removed from `parser.go`;
+      `make check-style` reports no unused-code/import errors.
+- [ ] Pre-flight validation (`ValidateExportFormat`) passes for a CSV export.
 - [ ] `.gz`-suffixed-but-plaintext files and genuinely-gzipped files both parse.
 - [ ] Visible pages only (current + spaced); historical versions and drafts excluded.
 - [ ] Comments threaded; historical comment versions excluded.
@@ -376,5 +399,8 @@ No changes to: `types.go`, `tiptap_converter.go`, `intermediate.go` (transform),
 
 ## Rollback
 
-The feature is additive and gated behind a new subcommand + format detection.
-Rollback = revert the commits; the Slack path and legacy XML path are untouched.
+The feature is gated behind a new `transform confluence` subcommand — the Slack
+path is untouched, so rollback = revert the commits. Note that because the XML
+parser is deleted (not kept as a fallback), reverting only the CSV commits would
+also restore the XML parser; a partial rollback that keeps the port but drops CSV
+is not a supported state.
