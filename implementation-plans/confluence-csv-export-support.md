@@ -400,13 +400,24 @@ what adding it would take. Two structural facts frame the whole list:
 | Table(s) | Data lost | To add later |
 |----------|-----------|--------------|
 | `spacepermissions`, `spaceroles`, `spacerole_*`, `space_owner` | Space-level permissions / roles / ownership | Map to channel membership + roles; needs a channel-ACL design |
-| `content_perm(_set)` | Per-page view/edit restrictions | New `page` restriction field + importer support; parser join already speced (item 10) |
+| `content_perm(_set)` | Per-page **view/edit restrictions** — allowlists of who may read (View) vs. edit (Edit) a specific page, overriding space defaults | New `page` restriction field + importer support; parser join already speced (item 10) |
 | `likes` | Page/comment likes | Map to reactions; needs a reaction line type |
 | `notifications` | Watches / subscriptions | Map to follows; low value, likely never |
 | `AO_BAF3AA_AOINLINE_TASK` | Inline-task **state** (status/assignee/due date) | Task markup in the body still renders; state needs a task model |
 | `content_relation` | Page "copy" relationships | Cosmetic; likely never |
 | `pagetemplates`, `templateattachment*`, `templateproperties` | Space templates | Separate template-import feature |
 | `AO_950DC3_*` (Team Calendars), `AO_187CCC_SIDEBAR_LINK`, `content_data_classification_mapping`, `bandana`, `os_propertyentry`, `space_alias` | Calendars, sidebar links, data classification, space config | Out of scope; mostly empty in practice |
+
+> **⚠️ Confidentiality note (deferred — do later):** page **View** restrictions
+> are security-relevant, not cosmetic — a view-restricted Confluence page was
+> deliberately hidden from most of the org. Because v1 drops restrictions and has
+> no per-page ACL target, **every restricted page imports fully visible to
+> everyone in the target channel** — an over-exposure of previously-confidential
+> content. We are accepting this for v1 and will handle it later. The eventual fix
+> has two parts: (1) **detect + warn/exclude** restricted pages so a human decides,
+> and (2) **map restrictions to an ACL** (channel visibility/membership, or a
+> real per-page restriction field once the importer supports one). Until then,
+> migrations of spaces with restricted pages should be treated as widening access.
 
 ### Fields dropped within imported entities
 | Entity | Dropped field(s) | To add later |
