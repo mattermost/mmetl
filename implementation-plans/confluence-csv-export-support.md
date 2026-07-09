@@ -233,11 +233,16 @@ Load into a small in-memory model keyed by `contentid`. Steps, in dependency ord
    `resolve_wiki_placeholders` expects (verify the existing shape and adapt the
    emit, not the consumer).
 9. **`label.csv` + `content_label.csv`** → join labels onto pages (`labelabletype=CONTENT`).
-10. **`content_perm_set.csv` + `content_perm.csv`** → `PageRestrictions` (types.go:80),
-    joined `content_perm.cps_id → content_perm_set.id → content_perm_set.content_id`.
-    The `username` column in `content_perm` actually holds **`user_key`** values
-    (verified) — key restrictions off `user_key`; do not look them up in
-    `user_mapping.username`.
+10. **`content_perm_set.csv` + `content_perm.csv`** → **parse only; not emitted in
+    v1** (see "Data fidelity" below). The join is
+    `content_perm.cps_id → content_perm_set.id → content_perm_set.content_id`, and
+    the `username` column holds **`user_key`** values (verified) — key off
+    `user_key`, not `user_mapping.username`. `ConfluencePage.Restrictions`
+    (`types.go:72`) can hold this, but neither `IntermediatePage` nor
+    `PageImportData` has a restrictions field, so it cannot reach the JSONL without
+    type + server-importer changes. **Recommendation: skip parsing restrictions in
+    v1** to avoid populating a struct nothing reads; defer to the follow-up in the
+    Data fidelity section.
 
 ### 4. Current-vs-historical / draft filtering
 
@@ -371,6 +376,58 @@ No changes to: `types.go`, `tiptap_converter.go`, `intermediate.go` (transform),
 - [ ] Users resolve through the existing `UserMapper` unchanged (aaid indirection).
 - [ ] `make check-style` and `make test` pass; `make docs` up to date.
 - [ ] Committed CSV fixture; no test depends on a machine-local path.
+
+## Data Fidelity — What Is Not Migrated (and how to add it later)
+
+This documents everything in the CSV export that v1 drops, so migrations set
+expectations correctly and we can pick items up incrementally. Each item notes
+what adding it would take. Two structural facts frame the whole list:
+
+- The **output line types** (`wiki`, `page`, `page_comment`) only have the fields
+  in `export.go`'s `*ImportData` structs. Anything with no field there cannot be
+  emitted regardless of what the parser collects.
+- Adding any dropped field is a **three-layer change**: parser → a new field on
+  the `Intermediate*` + `*ImportData` struct → **server-side Wiki/Pages importer
+  support** for that field. The third layer is outside this repo, so most of these
+  are gated on the importer, not on mmetl.
+
+### Content format note
+- **Pages**: `content` is **TipTap JSON**. **Comments**: `content` is **Markdown**
+  (`transformComment`, `intermediate.go:371`) — comments render as normal posts,
+  not rich pages. Intentional; listed here so it isn't mistaken for a gap.
+
+### Entire tables dropped
+| Table(s) | Data lost | To add later |
+|----------|-----------|--------------|
+| `spacepermissions`, `spaceroles`, `spacerole_*`, `space_owner` | Space-level permissions / roles / ownership | Map to channel membership + roles; needs a channel-ACL design |
+| `content_perm(_set)` | Per-page view/edit restrictions | New `page` restriction field + importer support; parser join already speced (item 10) |
+| `likes` | Page/comment likes | Map to reactions; needs a reaction line type |
+| `notifications` | Watches / subscriptions | Map to follows; low value, likely never |
+| `AO_BAF3AA_AOINLINE_TASK` | Inline-task **state** (status/assignee/due date) | Task markup in the body still renders; state needs a task model |
+| `content_relation` | Page "copy" relationships | Cosmetic; likely never |
+| `pagetemplates`, `templateattachment*`, `templateproperties` | Space templates | Separate template-import feature |
+| `AO_950DC3_*` (Team Calendars), `AO_187CCC_SIDEBAR_LINK`, `content_data_classification_mapping`, `bandana`, `os_propertyentry`, `space_alias` | Calendars, sidebar links, data classification, space config | Out of scope; mostly empty in practice |
+
+### Fields dropped within imported entities
+| Entity | Dropped field(s) | To add later |
+|--------|------------------|--------------|
+| Page | **version number**, **last-modified time**, **last modifier**, `versioncomment` | Add `update_at`/`edited_by`/`version` to `PageImportData` + importer support |
+| Page | Only the **current version** is imported — no version history | Would require a page-revision import model |
+| Comment | update time, last editor | Add fields to `PageCommentImportData` + importer support |
+| Attachment | media type, file size, uploader, upload time, attachment comment | Extend `AttachmentImportData.Props` (parser can fill from the attachment table) |
+| `contentproperties` | All keys except `inline-marker-ref`, `inline-original-selection`, `status=resolved` (e.g. `sync-rev`, `share-id`, cover/appearance, `sourceTemplateKey`, `collabService`) | Case-by-case; most are Confluence-internal and not meaningful in Mattermost |
+
+### Records excluded by design
+- **Drafts** (`content_status=draft`) — skipped.
+- **Historical versions** — skipped; only the live page/comment.
+- **`CUSTOM` content** (~74% of `content.csv`) — plugin storage, not user content.
+- **Blogposts** — not handled (see Risk #5); decide map-to-page vs exclude.
+
+### Preserved in v1 (for contrast)
+Page hierarchy (parent + `child_position` order), space→wiki mapping, page body
+(TipTap) and comment body (Markdown), comment threads + resolved state + inline
+anchors, labels (as `import_labels` prop), cross-page links
+(`resolve_wiki_placeholders`), creator + creation time, attachment bytes + path.
 
 ## Risks & Open Questions
 
