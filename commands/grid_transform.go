@@ -47,7 +47,7 @@ func gridTransformCmdF(cmd *cobra.Command, args []string) error {
 	logger := log.New()
 	logFile, err := os.OpenFile("grid-transform-slack.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
 	if err != nil {
-		logger.WithError(err).Error("error creating zip reader")
+		logger.WithError(err).Error("error creating log file")
 		return err
 	}
 	defer logFile.Close()
