@@ -104,7 +104,7 @@ func gridTransformCmdF(cmd *cobra.Command, args []string) error {
 	err = slackTransformer.ExtractDirectory(zipReader)
 	if err != nil {
 		logger.WithError(err).Error("error extracting zip file")
-		return nil
+		return err
 	}
 
 	slackExport, err := slackTransformer.ParseGridSlackExportFile(zipReader)

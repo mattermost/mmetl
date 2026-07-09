@@ -71,6 +71,16 @@ func (t *GridTransformer) checkForDuplicateTeamNames() bool {
 func (t *GridTransformer) checkTeamFoldersExist(zipReader *zip.Reader) bool {
 	valid := true
 	for teamID, teamName := range t.Teams {
+		// Reject unsafe team names that could escape the export tree
+		if strings.Contains(teamName, "..") || strings.ContainsAny(teamName, "/\\") {
+			t.Logger.WithFields(log.Fields{
+				"team_name": teamName,
+				"team_id":   teamID,
+			}).Error("invalid team name contains path separators or traversal segments")
+			valid = false
+			continue
+		}
+
 		prefix := "teams/" + teamName + "/"
 		found := false
 		for _, file := range zipReader.File {
