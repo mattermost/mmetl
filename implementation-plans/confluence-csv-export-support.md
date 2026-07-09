@@ -115,9 +115,10 @@ Confirmed headers:
 `user_key → aaid` (Atlassian account ID). The XML export path put the **account
 ID** directly into `CreatedBy`, and `resolveUsername`/the user-supplied mapping
 CSV both key on account ID. So the CSV parser must translate `user_key → aaid`
-and store the **aaid** in `CreatedBy`/`UpdatedBy` and as the `export.Users` map
-key, so the account-ID-keyed `--user-mapping` CSV resolves with zero downstream
-change (see item 5).
+and store the **aaid** in `CreatedBy`/`UpdatedBy`, keying `export.Users` by both
+the aaid and the user_key (see item 5). Note body **@-mentions embed the account
+ID** (`<ri:user ri:account-id="…">`, verified — matches the `aaid` column), so
+aaid keying is what makes mentions resolve, not just the external mapping.
 
 ## Proposed Approach
 
@@ -265,13 +266,27 @@ Either choice keeps shared code unchanged **as long as it is applied
 consistently**; the difference is which key reaches the external `--user-mapping`
 CSV via `UserMapper`.
 
-**Decision: translate `user_key → aaid` in the parser and store the `aaid`.**
-Rationale: the user-supplied `--user-mapping` CSV is keyed on Atlassian account
-ID (`UserMapper.byAccountID`, `user_mapper.go`) — orgs build that CSV from
-Atlassian account IDs, not from Confluence's internal `user_key`. Storing the
-aaid makes the realistic mapping-by-account-ID path work; `resolveUsername`/
-`user_mapper.go` need no change. Populate
-`export.Users[aaid] = &ConfluenceUser{AccountID: aaid, ...}`.
+**Decision: store the `aaid` as the identity, and key `export.Users` by BOTH the
+`aaid` and the `user_key` (alias to the same struct).**
+- `CreatedBy`/`UpdatedBy` = `aaid`, so `resolveUsername` and the external
+  account-ID-keyed `--user-mapping` CSV (`UserMapper.byAccountID`, `user_mapper.go`)
+  resolve — orgs build that CSV from Atlassian account IDs, not Confluence's
+  internal `user_key`, so aaid is the realistic key.
+- Populate `export.Users[aaid] = u` **and** `export.Users[user_key] = u` (same
+  `*ConfluenceUser{AccountID: aaid, ...}`). This costs nothing and closes the
+  mention-resolution gap below.
+
+**Why both keys — mention resolution (reviewer catch, verified).** Body mentions
+become `{{CONF_USER:<key>}}` placeholders (`links.go:145`) that
+`ResolveUserMentions`/`resolveUserMention` (`links.go:270,291`) resolve by looking
+`<key>` up directly in `export.Users`. The capture regex accepts **both**
+`ri:account-id` and `ri:userkey`. In the sample, **all 100 mentions use
+`<ri:user ri:account-id="…">` and those account-ids exactly match the `aaid`
+column** — so an aaid-keyed map is *required* for Cloud CSV mentions to resolve
+(a user_key-only key would miss every mention). Adding the `user_key` alias also
+covers any `ri:userkey` markup (Server/DC-origin content) without a `links.go`
+change — keeping this **parser-only**. (The CSV reader un-doubles the `""`-escaped
+quotes in the body field, so the post-parse markup is normal `ri:account-id="…"`.)
 
 Important nuance (from advisor): `user_mapping.csv` has **no email column** and
 its `username`/`aaid` are opaque IDs, so Confluence's own mapping yields no
@@ -279,10 +294,10 @@ human-readable names. The external `--user-mapping` CSV is therefore the
 *primary* human-resolution mechanism for CSV exports; unmapped users fall through
 to `resolveUsername`'s `confluence_user_<id>` last resort exactly as today.
 
-> Open decision for reviewer: the domain advisor instead recommended storing the
-> raw `user_key`. That only works if the org keys their `--user-mapping` CSV on
-> Confluence internal user_keys (which they typically don't have). Flagging for
-> confirmation, but the plan proceeds with **aaid** as the safer default.
+> Resolved: the earlier aaid-vs-user_key tension (advisor preferred raw
+> `user_key`) is moot once `export.Users` is keyed by **both** — external mapping
+> works via the aaid, and both mention placeholder forms resolve. Identity stored
+> on the page/comment stays the aaid.
 
 ### 6. Attachments (known unknown — design the seam, flag the risk)
 
@@ -341,7 +356,8 @@ No changes to: `types.go`, `tiptap_converter.go`, `intermediate.go` (transform),
   blank `spaceid`, plus the current v4), a draft row, the space homepage
   ("Overview"), a page with a parent, the inline-comment `contentproperties` rows
   (`inline-marker-ref`/`inline-original-selection`/`status=resolved`),
-  `user_mapping`, and one storage-format body exercising a macro/`ac:layout`.
+  `user_mapping`, and one storage-format body exercising a macro/`ac:layout` and a
+  `<ri:user ri:account-id="…">` mention.
 - **Unit tests** (`csv_parser_test.go`):
   - gzip-magic sniff: gzipped vs plain `.gz` both parse.
   - a non-CSV/unrecognized zip returns the clear "unsupported export" error.
@@ -349,8 +365,11 @@ No changes to: `types.go`, `tiptap_converter.go`, `intermediate.go` (transform),
     → `HistoricalPageIDs`; draft skipped.
   - hierarchy: `parentid`/homepage produce the expected tree + root.
   - comment threading via `parentcommentid`.
-  - user_key→aaid: `CreatedBy` is the aaid; `export.Users` keyed by aaid;
-    end-to-end `resolveUsername` with a supplied mapping CSV resolves correctly.
+  - user_key→aaid: `CreatedBy` is the aaid; `export.Users` keyed by **both** aaid
+    and user_key; end-to-end `resolveUsername` with a supplied mapping CSV resolves.
+  - **mention resolution**: a body `<ri:user ri:account-id="<aaid>">` resolves to
+    `@user` (aaid key path); a synthetic `<ri:user ri:userkey="<user_key>">`
+    resolves via the alias — neither leaves a `{{CONF_USER:…}}` placeholder.
   - bodies: storage format lands verbatim in `Content`; a full parse→transform→
     export produces valid `wiki`/`page`/`page_comment` JSONL lines.
   - inline anchors read directly from `contentproperties` (no HTML scraping);
