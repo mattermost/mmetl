@@ -69,6 +69,15 @@ func (t *GridTransformer) checkForDuplicateTeamNames() bool {
 // names must match the folders Slack already put in the export, not
 // arbitrary display names.
 func (t *GridTransformer) checkTeamFoldersExist(zipReader *zip.Reader) bool {
+	existingTeamFolders := make(map[string]bool)
+	for _, file := range zipReader.File {
+		if rest, ok := strings.CutPrefix(file.Name, "teams/"); ok {
+			if idx := strings.Index(rest, "/"); idx >= 0 {
+				existingTeamFolders[rest[:idx]] = true
+			}
+		}
+	}
+
 	valid := true
 	for teamID, teamName := range t.Teams {
 		// Reject unsafe team names that could escape the export tree
@@ -81,19 +90,11 @@ func (t *GridTransformer) checkTeamFoldersExist(zipReader *zip.Reader) bool {
 			continue
 		}
 
-		prefix := "teams/" + teamName + "/"
-		found := false
-		for _, file := range zipReader.File {
-			if strings.HasPrefix(file.Name, prefix) {
-				found = true
-				break
-			}
-		}
-		if !found {
+		if !existingTeamFolders[teamName] {
 			t.Logger.WithFields(log.Fields{
 				"team_name": teamName,
 				"team_id":   teamID,
-				"path":      prefix,
+				"path":      "teams/" + teamName + "/",
 			}).Error("folder not found for team in the export archive")
 			valid = false
 		}
