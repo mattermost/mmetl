@@ -10,6 +10,7 @@ import (
 	"encoding/csv"
 	"errors"
 	"io"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -30,12 +31,14 @@ const (
 	fileContentProperties = "contentproperties.csv"
 	fileLabel             = "label.csv"
 	fileContentLabel      = "content_label.csv"
+	fileContentPermSet    = "content_perm_set.csv"
 )
 
 // Confluence content types (content.csv "contenttype" column).
 const (
 	contentTypePage             = "PAGE"
 	contentTypeComment          = "COMMENT"
+	contentTypeAttachment       = "ATTACHMENT"
 	contentTypeSpaceDescription = "SPACEDESCRIPTION"
 	contentTypeCustom           = "CUSTOM"
 )
@@ -55,6 +58,17 @@ func (tb *csvTable) col(row []string, name string) string {
 		return ""
 	}
 	return strings.TrimSpace(row[i])
+}
+
+// firstCol returns the first of the candidate names present in the header, or ""
+// if none are present. Used to tolerate schema variation across Cloud versions.
+func (tb *csvTable) firstCol(names ...string) string {
+	for _, n := range names {
+		if _, ok := tb.header[n]; ok {
+			return n
+		}
+	}
+	return ""
 }
 
 // findFile returns the zip entry for base, trying both the plain name and the
@@ -187,11 +201,15 @@ func parseCSVTimestamp(s string) time.Time {
 // the same ConfluenceExport shape as the (removed) XML parser so all downstream
 // transform/export code is reused unchanged.
 func (t *Transformer) parseCSVExport(fileIndex map[string]*zip.File, export *ConfluenceExport) error {
-	// Descriptor (optional) — space key and export metadata.
+	// Descriptor (optional) — space key, org id, and export metadata. The org id
+	// namespaces source IDs across Confluence instances.
 	if f := findFile(fileIndex, fileDescriptor); f != nil {
 		if props, err := readProperties(f); err == nil {
 			if key := props["spaceKey"]; key != "" && export.SpaceKey == "" {
 				export.SpaceKey = key
+			}
+			if org := props["organizationId"]; org != "" {
+				export.OrganizationID = org
 			}
 		}
 	}
@@ -218,6 +236,10 @@ func (t *Transformer) parseCSVExport(fileIndex map[string]*zip.File, export *Con
 	}
 
 	if err := t.loadLabels(fileIndex, export); err != nil {
+		return err
+	}
+
+	if err := t.loadRestrictions(fileIndex, export); err != nil {
 		return err
 	}
 
@@ -356,12 +378,33 @@ func (t *Transformer) loadContent(fileIndex map[string]*zip.File, export *Conflu
 				ParentID:  tb.col(row, "parentcommentid"),
 				CreatedBy: resolveActor(tb.col(row, "creator"), userKeyToAaid),
 				CreatedAt: parseCSVTimestamp(tb.col(row, "creationdate")),
+				UpdatedBy: resolveActor(tb.col(row, "lastmodifier"), userKeyToAaid),
+				UpdatedAt: parseCSVTimestamp(tb.col(row, "lastmoddate")),
 			}
 			// Version rows (prevver set) are historical edits of a live comment.
 			if prevver := tb.col(row, "prevver"); prevver != "" {
 				export.HistoricalCommentIDs[id] = true
 			}
 			export.Comments = append(export.Comments, comment)
+
+		case contentTypeAttachment:
+			// ATTACHMENT rows carry attachment metadata; the file bytes live under
+			// attachments/ in the ZIP (see attachments.go). MediaType/FileSize are
+			// filled best-effort from contentproperties.csv when present.
+			pageID := tb.col(row, "pageid")
+			if pageID == "" {
+				pageID = tb.col(row, "parentid")
+			}
+			att := &ConfluenceAttachment{
+				ID:        id,
+				PageID:    pageID,
+				FileName:  tb.col(row, "title"),
+				CreatedBy: resolveActor(tb.col(row, "creator"), userKeyToAaid),
+				CreatedAt: parseCSVTimestamp(tb.col(row, "creationdate")),
+			}
+			if pageID != "" {
+				export.Attachments[pageID] = append(export.Attachments[pageID], att)
+			}
 
 		default:
 			// SPACEDESCRIPTION and CUSTOM (plugin content-property storage) are not imported.
@@ -466,6 +509,66 @@ func (t *Transformer) loadContentProperties(fileIndex map[string]*zip.File, expo
 			if p.markerRef != "" {
 				export.InlineCommentAnchors[p.markerRef] = p.selection
 			}
+		}
+	}
+
+	// Best-effort: fill attachment media-type/file-size from content properties.
+	// The observed sample carries none, so absence is expected and harmless.
+	attByID := make(map[string]*ConfluenceAttachment)
+	for _, atts := range export.Attachments {
+		for _, att := range atts {
+			attByID[att.ID] = att
+		}
+	}
+	if len(attByID) > 0 {
+		for _, row := range tb.rows {
+			att, ok := attByID[tb.col(row, "contentid")]
+			if !ok {
+				continue
+			}
+			switch tb.col(row, "propertyname") {
+			case "media-type", "mediaType":
+				att.MediaType = tb.col(row, "stringval")
+			case "file-size", "fileSize":
+				if n, err := strconv.ParseInt(tb.col(row, "longval"), 10, 64); err == nil {
+					att.FileSize = n
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// loadRestrictions detects pages carrying a View restriction from
+// content_perm_set.csv. It records content IDs only (principals are not
+// resolved); the transform surfaces these as warnings and manifest entries so a
+// view-restricted page is not silently widened on import. Column names are
+// probed defensively because the CSV schema is unverified for restrictions.
+func (t *Transformer) loadRestrictions(fileIndex map[string]*zip.File, export *ConfluenceExport) error {
+	tb, err := readCSV(fileIndex, fileContentPermSet)
+	if err != nil {
+		return err
+	}
+	if tb == nil {
+		return nil
+	}
+
+	typeCol := tb.firstCol("cps_type", "type", "permtype", "permission_type")
+	idCol := tb.firstCol("cont_id", "content_id", "contentid", "contid")
+	if idCol == "" {
+		t.Logger.Warn("content_perm_set.csv present but no recognizable content-id column; skipping restriction detection")
+		return nil
+	}
+
+	for _, row := range tb.rows {
+		cid := tb.col(row, idCol)
+		if cid == "" {
+			continue
+		}
+		// When the type column is absent, treat any permission set as a possible
+		// view restriction rather than miss one (conservative — only a warning).
+		if typeCol == "" || strings.EqualFold(tb.col(row, typeCol), "VIEW") {
+			export.RestrictedPageIDs[cid] = true
 		}
 	}
 	return nil

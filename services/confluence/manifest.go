@@ -10,22 +10,32 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"time"
 )
 
 // Manifest contains metadata about the migration for audit and verification.
 type Manifest struct {
-	Version          string            `json:"version"`
-	Generator        string            `json:"generator"`
-	GeneratorVersion string            `json:"generator_version"`
-	CreatedAt        time.Time         `json:"created_at"`
-	Source           ManifestSource    `json:"source"`
-	Target           ManifestTarget    `json:"target"`
-	Counts           ManifestCounts    `json:"counts"`
-	Checksums        ManifestChecksums `json:"checksums,omitempty"`
-	Users            []ManifestUser    `json:"users,omitempty"`
-	Warnings         []string          `json:"warnings,omitempty"`
-	Errors           []string          `json:"errors,omitempty"`
+	Version          string                   `json:"version"`
+	Generator        string                   `json:"generator"`
+	GeneratorVersion string                   `json:"generator_version"`
+	CreatedAt        time.Time                `json:"created_at"`
+	Source           ManifestSource           `json:"source"`
+	Target           ManifestTarget           `json:"target"`
+	Counts           ManifestCounts           `json:"counts"`
+	Checksums        ManifestChecksums        `json:"checksums,omitempty"`
+	Users            []ManifestUser           `json:"users,omitempty"`
+	RestrictedPages  []ManifestRestrictedPage `json:"restricted_pages,omitempty"`
+	Warnings         []string                 `json:"warnings,omitempty"`
+	Errors           []string                 `json:"errors,omitempty"`
+}
+
+// ManifestRestrictedPage records a page that carried a View restriction in
+// Confluence. Restrictions are detected but not imported, so this list flags
+// pages whose access will change on import.
+type ManifestRestrictedPage struct {
+	ID    string `json:"id"`
+	Title string `json:"title,omitempty"`
 }
 
 // ManifestUser records a source Confluence user and the Mattermost username it
@@ -38,19 +48,14 @@ type ManifestUser struct {
 	MattermostUsername string `json:"mattermost_username,omitempty"`
 }
 
-// ManifestSource describes the source of the migration.
+// ManifestSource describes the source of the migration. OrganizationID and
+// SpaceKey together form the source namespace that scopes all bundle source IDs.
 type ManifestSource struct {
-	Type       string              `json:"type"`
-	SpaceKey   string              `json:"space_key,omitempty"`
-	SpaceName  string              `json:"space_name,omitempty"`
-	Spaces     []ManifestSpaceInfo `json:"spaces,omitempty"`
-	ExportFile string              `json:"export_file"`
-}
-
-// ManifestSpaceInfo describes a single space in a multi-space export.
-type ManifestSpaceInfo struct {
-	Key  string `json:"key"`
-	Name string `json:"name"`
+	Type           string `json:"type"`
+	OrganizationID string `json:"organization_id,omitempty"`
+	SpaceKey       string `json:"space_key,omitempty"`
+	SpaceName      string `json:"space_name,omitempty"`
+	ExportFile     string `json:"export_file"`
 }
 
 // ManifestTarget describes the target of the migration.
@@ -62,7 +67,6 @@ type ManifestTarget struct {
 // ManifestCounts contains entity counts from the migration.
 type ManifestCounts struct {
 	Spaces         int `json:"spaces,omitempty"`
-	Wikis          int `json:"wikis,omitempty"`
 	Pages          int `json:"pages"`
 	Comments       int `json:"comments"`
 	Attachments    int `json:"attachments"`
@@ -91,13 +95,14 @@ type MigrationStats struct {
 // NewManifest creates a new manifest with basic information.
 func NewManifest(export *ConfluenceExport, teamName, channelName, exportFilePath string) *Manifest {
 	manifest := &Manifest{
-		Version:          "1",
+		Version:          "2",
 		Generator:        "mmetl-confluence",
-		GeneratorVersion: "1.0.0",
+		GeneratorVersion: "2.0.0",
 		CreatedAt:        time.Now().UTC(),
 		Source: ManifestSource{
-			Type:       "confluence",
-			ExportFile: filepath.Base(exportFilePath),
+			Type:           "confluence",
+			OrganizationID: export.OrganizationID,
+			ExportFile:     filepath.Base(exportFilePath),
 		},
 		Target: ManifestTarget{
 			Team:    teamName,
@@ -105,16 +110,14 @@ func NewManifest(export *ConfluenceExport, teamName, channelName, exportFilePath
 		},
 	}
 
-	// Handle multi-space exports
-	if len(export.Spaces) > 0 {
-		for key, space := range export.Spaces {
-			manifest.Source.Spaces = append(manifest.Source.Spaces, ManifestSpaceInfo{
-				Key:  key,
-				Name: space.Name,
-			})
-		}
-	} else if export.SpaceKey != "" {
-		// Legacy single-space export
+	// A CSV export covers a single space. Prefer the parsed record; fall back to
+	// the descriptor-level key/name.
+	for _, space := range export.Spaces {
+		manifest.Source.SpaceKey = space.Key
+		manifest.Source.SpaceName = space.Name
+		break
+	}
+	if manifest.Source.SpaceKey == "" && export.SpaceKey != "" {
 		manifest.Source.SpaceKey = export.SpaceKey
 		manifest.Source.SpaceName = export.SpaceName
 	}
@@ -123,15 +126,37 @@ func NewManifest(export *ConfluenceExport, teamName, channelName, exportFilePath
 }
 
 // SetCounts sets the entity counts in the manifest.
-func (m *Manifest) SetCounts(pages, comments, wikis int, stats *MigrationStats) {
+func (m *Manifest) SetCounts(pages, comments, spaces int, stats *MigrationStats) {
 	m.Counts = ManifestCounts{
-		Spaces:         len(m.Source.Spaces),
-		Wikis:          wikis,
+		Spaces:         spaces,
 		Pages:          pages,
 		Comments:       comments,
 		Attachments:    stats.AttachmentCount,
 		UsersUnmapped:  stats.UsersUnmapped,
 		PagesFlattened: stats.PagesFlattened,
+	}
+}
+
+// SetRestrictedPages records pages that carried a View restriction, resolving
+// content IDs to titles where possible.
+func (m *Manifest) SetRestrictedPages(export *ConfluenceExport) {
+	if len(export.RestrictedPageIDs) == 0 {
+		return
+	}
+	titleByID := make(map[string]string, len(export.Pages))
+	for _, p := range export.Pages {
+		titleByID[p.ID] = p.Title
+	}
+	ids := make([]string, 0, len(export.RestrictedPageIDs))
+	for id := range export.RestrictedPageIDs {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		m.RestrictedPages = append(m.RestrictedPages, ManifestRestrictedPage{
+			ID:    id,
+			Title: titleByID[id],
+		})
 	}
 }
 

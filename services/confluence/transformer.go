@@ -27,8 +27,6 @@ type TransformConfig struct {
 	MaxDepth int
 	// DryRun validates without writing output
 	DryRun bool
-	// AutoCreateChannel generates a channel entry in the JSONL output
-	AutoCreateChannel bool
 }
 
 // NewTransformer creates a new Confluence transformer.

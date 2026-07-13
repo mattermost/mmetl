@@ -6,14 +6,27 @@ package confluence
 import "time"
 
 // ConfluenceExport represents a parsed Confluence space export.
-// Supports both single-space and multi-space exports.
+//
+// A Confluence Cloud CSV export always covers a single space; the Spaces map is
+// the parse-side shape (the natural seam should site/multi-space exports ever
+// appear), but the transform/export side commits to one space per bundle.
 type ConfluenceExport struct {
-	// Legacy single-space fields (for backward compatibility)
+	// SpaceKey/SpaceName describe the single space this export covers.
 	SpaceKey  string
 	SpaceName string
 
-	// Multi-space support
+	// OrganizationID namespaces source IDs (page IDs, space keys) across
+	// Confluence instances. Derived from exportDescriptor.properties.
+	OrganizationID string
+
+	// Spaces holds the parsed space records keyed by space key. A CSV export
+	// yields exactly one; more than one is rejected at transform time.
 	Spaces map[string]*SpaceInfo // spaceKey -> space info
+
+	// RestrictedPageIDs holds content IDs carrying a View restriction. These are
+	// detected and surfaced (not resolved into an ACL) so a view-restricted page
+	// is not silently widened on import.
+	RestrictedPageIDs map[string]bool
 
 	Pages           []*ConfluencePage
 	Comments        []*ConfluenceComment
@@ -93,6 +106,8 @@ type ConfluenceComment struct {
 	BodyContentID      string // Reference to BodyContent object
 	CreatedBy          string // Account ID
 	CreatedAt          time.Time
+	UpdatedBy          string // Account ID
+	UpdatedAt          time.Time
 	InlineAnchor       *InlineAnchor // For inline comments
 	HistoricalIDs      []string      // IDs of historical versions (old edits) of this comment
 	ContentPropertyIDs []string      // IDs of ContentProperty objects for this comment

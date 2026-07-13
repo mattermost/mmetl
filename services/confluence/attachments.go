@@ -187,7 +187,7 @@ func (t *Transformer) ExtractAttachments(zipReader *zip.Reader, export *Confluen
 	}
 
 	if extraCount > 0 {
-		t.Logger.Infof("Extracted %d additional attachments not in XML metadata", extraCount)
+		t.Logger.Infof("Extracted %d additional attachments not present in the CSV metadata", extraCount)
 	}
 
 	t.Logger.Infof("Attachment extraction complete: %d extracted, %d skipped", extractedCount, skippedCount)

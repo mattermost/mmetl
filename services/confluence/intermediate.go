@@ -4,42 +4,31 @@
 package confluence
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
 // Intermediate holds the transformed data ready for export.
 type Intermediate struct {
-	// Single channel for all wikis (auto-created or user-specified)
-	Channel *IntermediateChannel
+	// Single Space — one bundle covers exactly one Confluence space.
+	Space *IntermediateSpace
 
-	// Multiple wikis (one per Confluence space)
-	Wikis []*IntermediateWiki
-
-	// Legacy single-space field (for backward compatibility)
-	Wiki *IntermediateWiki
+	// SourceOrganizationID namespaces source IDs across Confluence instances.
+	SourceOrganizationID string
 
 	Pages    []*IntermediatePage
 	Comments []*IntermediateComment
 }
 
-// IntermediateChannel represents the channel to be created for the migration.
-type IntermediateChannel struct {
+// IntermediateSpace represents the Space to be created. The backing channel is
+// resolved at import time from the import request, so it is not modeled here.
+type IntermediateSpace struct {
 	Team        string
-	Name        string // Channel name (lowercase)
-	DisplayName string // Display name
-	Type        string // "O" for public, "P" for private
-	Purpose     string
-	Header      string
-}
-
-// IntermediateWiki represents a wiki to be created (one per Confluence space).
-type IntermediateWiki struct {
-	Team        string
-	Channel     string // Channel name this wiki belongs to
-	Title       string // Wiki title (= Confluence space name)
+	Title       string // Space title (= Confluence space name)
 	Description string
 	SpaceKey    string // Original Confluence space key for tracking
 }
@@ -50,9 +39,8 @@ type IntermediatePage struct {
 	ImportSourceID string // Confluence page ID for idempotency
 	Title          string
 
-	// Space/Channel tracking (for multi-space exports)
+	// Space tracking
 	SpaceKey string // Original Confluence space key
-	Channel  string // Target channel name
 
 	// Hierarchy
 	ParentImportSourceID string // Parent's Confluence page ID
@@ -100,6 +88,7 @@ type IntermediateComment struct {
 	// Metadata
 	User     string
 	CreateAt int64
+	UpdateAt int64
 
 	// Props
 	Props model.StringInterface
@@ -144,19 +133,10 @@ func (t *Transformer) TransformPages(export *ConfluenceExport) error {
 		return err
 	}
 
-	// Set up channel (if auto-creating)
-	if t.Config.AutoCreateChannel {
-		t.Intermediate.Channel = &IntermediateChannel{
-			Team:        t.TeamName,
-			Name:        t.ChannelName,
-			DisplayName: t.deriveChannelDisplayName(export),
-			Type:        "O", // Public by default
-			Purpose:     "Migrated from Confluence",
-		}
+	// Set up the single Space (one bundle = one Confluence space).
+	if err := t.setupSpace(export); err != nil {
+		return err
 	}
-
-	// Set up wikis (one per space)
-	t.setupWikisFromSpaces(export)
 
 	// Build children lookup map (pageID -> list of child page info)
 	// This is used to generate child page links for children/pagetree macros
@@ -185,51 +165,35 @@ func (t *Transformer) TransformPages(export *ConfluenceExport) error {
 	return nil
 }
 
-// setupWikisFromSpaces creates wiki entries for each space in the export.
-func (t *Transformer) setupWikisFromSpaces(export *ConfluenceExport) {
-	if len(export.Spaces) > 0 {
-		// Multi-space export
-		for spaceKey, space := range export.Spaces {
-			wiki := &IntermediateWiki{
-				Team:        t.TeamName,
-				Channel:     t.ChannelName,
-				Title:       space.Name,
-				Description: "Migrated from Confluence space: " + spaceKey,
-				SpaceKey:    spaceKey,
-			}
-			t.Intermediate.Wikis = append(t.Intermediate.Wikis, wiki)
-		}
-	} else if export.SpaceKey != "" {
-		// Single-space export (legacy)
-		wiki := &IntermediateWiki{
+// setupSpace builds the single IntermediateSpace from the export. A Confluence
+// CSV export always covers one space; more than one is rejected here so the
+// single-space assumption is enforced rather than silently mis-handled.
+func (t *Transformer) setupSpace(export *ConfluenceExport) error {
+	if len(export.Spaces) > 1 {
+		return fmt.Errorf("multi-space exports are not supported; import one space per bundle (found %d spaces)", len(export.Spaces))
+	}
+
+	t.Intermediate.SourceOrganizationID = export.OrganizationID
+
+	// Prefer the parsed space record; fall back to the descriptor-level space key.
+	for _, space := range export.Spaces {
+		t.Intermediate.Space = &IntermediateSpace{
 			Team:        t.TeamName,
-			Channel:     t.ChannelName,
+			Title:       space.Name,
+			Description: "Migrated from Confluence space: " + space.Key,
+			SpaceKey:    space.Key,
+		}
+		return nil
+	}
+	if export.SpaceKey != "" {
+		t.Intermediate.Space = &IntermediateSpace{
+			Team:        t.TeamName,
 			Title:       export.SpaceName,
 			Description: "Migrated from Confluence space: " + export.SpaceKey,
 			SpaceKey:    export.SpaceKey,
 		}
-		t.Intermediate.Wikis = append(t.Intermediate.Wikis, wiki)
 	}
-
-	// Set legacy Wiki field for backward compatibility (first wiki)
-	if len(t.Intermediate.Wikis) > 0 {
-		t.Intermediate.Wiki = t.Intermediate.Wikis[0]
-	}
-}
-
-// deriveChannelDisplayName creates a display name for the channel.
-func (t *Transformer) deriveChannelDisplayName(export *ConfluenceExport) string {
-	if len(export.Spaces) == 1 {
-		// Single space - use space name
-		for _, space := range export.Spaces {
-			return space.Name
-		}
-	}
-	if export.SpaceName != "" {
-		return export.SpaceName
-	}
-	// Multiple spaces or unknown - use generic name
-	return "Confluence Import"
+	return nil
 }
 
 // transformPage converts a single Confluence page to intermediate format.
@@ -240,6 +204,13 @@ func (t *Transformer) transformPage(confPage *ConfluencePage, export *Confluence
 	if err != nil {
 		t.Logger.Warnf("Failed to convert content for page %s, using raw HTML wrapper: %v", confPage.ID, err)
 		// Fallback: wrap raw HTML in a code block
+		tiptapContent = wrapRawHTMLInCodeBlock(confPage.Content)
+	} else if !json.Valid([]byte(tiptapContent)) {
+		// Guard against a converter that returns malformed JSON: fall back to the
+		// code-block wrapper and count it, so invalid bodies are never emitted.
+		msg := fmt.Sprintf("page %s produced invalid TipTap JSON; using raw HTML code-block fallback", confPage.ID)
+		t.Logger.Warn(msg)
+		t.Stats.Warnings = append(t.Stats.Warnings, msg)
 		tiptapContent = wrapRawHTMLInCodeBlock(confPage.Content)
 	}
 
@@ -298,12 +269,11 @@ func (t *Transformer) transformPage(confPage *ConfluencePage, export *Confluence
 		ImportSourceID:       confPage.ID,
 		Title:                pageTitle,
 		SpaceKey:             spaceKey,
-		Channel:              t.ChannelName,
 		ParentImportSourceID: confPage.ParentID,
 		Content:              tiptapContent,
 		User:                 username,
 		CreateAt:             confPage.CreatedAt.UnixMilli(),
-		UpdateAt:             confPage.UpdatedAt.UnixMilli(),
+		UpdateAt:             timeMillis(confPage.UpdatedAt),
 		Props:                props,
 	}
 
@@ -409,6 +379,7 @@ func (t *Transformer) transformComment(confComment *ConfluenceComment, export *C
 		IsResolved:                  confComment.IsResolved,
 		User:                        username,
 		CreateAt:                    confComment.CreatedAt.UnixMilli(),
+		UpdateAt:                    timeMillis(confComment.UpdatedAt),
 		Props:                       props,
 	}
 
@@ -498,6 +469,15 @@ func looksLikeAccountID(s string) bool {
 		return true
 	}
 	return false
+}
+
+// timeMillis returns the Unix-millisecond timestamp, or 0 for a zero time so the
+// value is omitted rather than emitted as a bogus far-past timestamp.
+func timeMillis(ts time.Time) int64 {
+	if ts.IsZero() {
+		return 0
+	}
+	return ts.UnixMilli()
 }
 
 // wrapRawHTMLInCodeBlock wraps HTML in a TipTap code block as fallback.

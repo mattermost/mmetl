@@ -8,9 +8,18 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 
 	"github.com/mattermost/mattermost/server/public/model"
+)
+
+// Docs storage caps the emitted bundle must respect. Body and SearchText are
+// each capped at 2 MiB; page Props at 64 KiB.
+const (
+	PageBodyMaxBytes       = 2 * 1024 * 1024
+	PageSearchTextMaxBytes = 2 * 1024 * 1024
+	PagePropsMaxBytes      = 64 * 1024
 )
 
 // ValidationResult holds the results of pre-flight validation.
@@ -28,8 +37,13 @@ type Validator struct {
 	MattermostToken string
 	// TeamName is the target team name
 	TeamName string
-	// ChannelName is the target channel name
+	// ChannelName is the target channel name (deprecated in v2; the backing
+	// channel is resolved at import time). Only used for optional server checks.
 	ChannelName string
+	// RequireUserMapping fails validation when any author is unmapped.
+	RequireUserMapping bool
+	// FailOnRestricted fails validation when any page carries a View restriction.
+	FailOnRestricted bool
 }
 
 // NewValidator creates a new validator.
@@ -97,21 +111,55 @@ func (v *Validator) ValidateExportContent(export *ConfluenceExport) *ValidationR
 		result.Warnings = append(result.Warnings, fmt.Sprintf("%d pages have empty content", emptyContentCount))
 	}
 
-	// Check content sizes
-	const maxContentSize = 10 * 1024 * 1024 // 10MB
+	// Check content sizes against the Docs Body cap (2 MiB). This is a pre-flight
+	// heads-up on the raw storage-format body; the authoritative check runs on the
+	// emitted TipTap body at export time.
 	oversizedPages := []string{}
 	for _, page := range export.Pages {
-		if len(page.Content) > maxContentSize {
+		if len(page.Content) > PageBodyMaxBytes {
 			oversizedPages = append(oversizedPages, page.Title)
 		}
 	}
 	if len(oversizedPages) > 0 {
 		result.Warnings = append(result.Warnings,
-			fmt.Sprintf("%d pages exceed max content size (10MB): %s",
+			fmt.Sprintf("%d pages exceed the Docs body limit (2 MiB): %s",
 				len(oversizedPages), strings.Join(oversizedPages[:min(3, len(oversizedPages))], ", ")))
 	}
 
+	// Surface view-restricted pages. Restrictions are detected, not resolved into
+	// an ACL, so importing them widens access unless the operator intervenes.
+	if len(export.RestrictedPageIDs) > 0 {
+		titles := restrictedPageTitles(export)
+		msg := fmt.Sprintf("%d pages have a View restriction that will NOT be preserved on import: %s",
+			len(export.RestrictedPageIDs), strings.Join(titles[:min(5, len(titles))], ", "))
+		if v.FailOnRestricted {
+			result.Valid = false
+			result.Errors = append(result.Errors, msg)
+		} else {
+			result.Warnings = append(result.Warnings, msg)
+		}
+	}
+
 	return result
+}
+
+// restrictedPageTitles resolves restricted content IDs to page titles for
+// human-readable reporting, falling back to the bare ID when unknown.
+func restrictedPageTitles(export *ConfluenceExport) []string {
+	titleByID := make(map[string]string, len(export.Pages))
+	for _, p := range export.Pages {
+		titleByID[p.ID] = p.Title
+	}
+	titles := make([]string, 0, len(export.RestrictedPageIDs))
+	for id := range export.RestrictedPageIDs {
+		if title := titleByID[id]; title != "" {
+			titles = append(titles, title)
+		} else {
+			titles = append(titles, id)
+		}
+	}
+	sort.Strings(titles)
+	return titles
 }
 
 // ValidateUserMapping validates user mappings and returns warnings for unmapped users.
@@ -119,7 +167,12 @@ func (v *Validator) ValidateUserMapping(export *ConfluenceExport, userMapper *Us
 	result := &ValidationResult{Valid: true}
 
 	if userMapper == nil {
-		result.Warnings = append(result.Warnings, "no user mapping provided - users will be auto-generated")
+		if v.RequireUserMapping {
+			result.Valid = false
+			result.Errors = append(result.Errors, "no user mapping provided but --require-user-mapping is set")
+		} else {
+			result.Warnings = append(result.Warnings, "no user mapping provided - users will be auto-generated")
+		}
 		return result
 	}
 
@@ -145,8 +198,13 @@ func (v *Validator) ValidateUserMapping(export *ConfluenceExport, userMapper *Us
 	}
 
 	if len(unmappedUsers) > 0 {
-		result.Warnings = append(result.Warnings,
-			fmt.Sprintf("%d Confluence users not in mapping file (will use fallback)", len(unmappedUsers)))
+		msg := fmt.Sprintf("%d Confluence users not in mapping file (will use fallback)", len(unmappedUsers))
+		if v.RequireUserMapping {
+			result.Valid = false
+			result.Errors = append(result.Errors, strings.Replace(msg, "will use fallback", "--require-user-mapping is set", 1))
+		} else {
+			result.Warnings = append(result.Warnings, msg)
+		}
 	}
 
 	return result
@@ -176,6 +234,12 @@ func (v *Validator) ValidateServer(ctx context.Context) *ValidationResult {
 			result.Valid = false
 			result.Errors = append(result.Errors, fmt.Sprintf("failed to check team: %v", err))
 		}
+		return result
+	}
+
+	// The backing channel is resolved at import time in v2, so a channel is only
+	// checked when one was explicitly supplied.
+	if v.ChannelName == "" {
 		return result
 	}
 
@@ -226,7 +290,11 @@ func (v *Validator) ValidateAll(ctx context.Context, zipReader *zip.Reader, expo
 
 		// User mapping validation
 		userResult := v.ValidateUserMapping(export, userMapper)
+		combined.Errors = append(combined.Errors, userResult.Errors...)
 		combined.Warnings = append(combined.Warnings, userResult.Warnings...)
+		if !userResult.Valid {
+			combined.Valid = false
+		}
 	}
 
 	// Server validation (optional)

@@ -29,6 +29,7 @@ func (t *Transformer) ParseConfluenceExport(zipReader *zip.Reader) (*ConfluenceE
 		HistoricalPageIDs:    make(map[string]bool),
 		InlineCommentAnchors: make(map[string]string),
 		ContentProperties:    make(map[string]*ContentProperty),
+		RestrictedPageIDs:    make(map[string]bool),
 	}
 
 	// Index files in the ZIP by name.

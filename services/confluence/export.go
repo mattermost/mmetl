@@ -5,6 +5,7 @@ package confluence
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"sort"
@@ -13,40 +14,45 @@ import (
 	"github.com/pkg/errors"
 )
 
-// JSONL output types for wiki/page import
-// These match the types expected by the Mattermost wiki import functionality
+// JSONL output types for the Mattermost Docs (Spaces/Pages) import contract.
+//
+// This is the v2 contract, named in Docs terms (space/page/page_comment). There
+// is no shipped consumer of an earlier version, so no compatibility shim exists.
+// Entity source IDs (page IDs, space keys) are bare and interpreted within the
+// bundle's source namespace (see SourceImportData); importers must scope all
+// source-ID lookups to the job, never globally.
 
 // LineImportData represents a single line in the JSONL import file.
 type LineImportData struct {
-	Type                    string                             `json:"type"`
-	Version                 *int                               `json:"version,omitempty"`
-	Channel                 *ChannelImportData                 `json:"channel,omitempty"`
-	Wiki                    *WikiImportData                    `json:"wiki,omitempty"`
-	Page                    *PageImportData                    `json:"page,omitempty"`
-	PageComment             *PageCommentImportData             `json:"page_comment,omitempty"`
-	ResolveWikiPlaceholders *ResolveWikiPlaceholdersImportData `json:"resolve_wiki_placeholders,omitempty"`
+	Type                     string                              `json:"type"`
+	Version                  *int                                `json:"version,omitempty"`
+	Source                   *SourceImportData                   `json:"source,omitempty"`
+	Space                    *SpaceImportData                    `json:"space,omitempty"`
+	Page                     *PageImportData                     `json:"page,omitempty"`
+	PageComment              *PageCommentImportData              `json:"page_comment,omitempty"`
+	ResolveSpacePlaceholders *ResolveSpacePlaceholdersImportData `json:"resolve_space_placeholders,omitempty"`
 }
 
-// ResolveWikiPlaceholdersImportData triggers post-import placeholder resolution.
-type ResolveWikiPlaceholdersImportData struct {
-	Team               *string `json:"team"`
-	WikiImportSourceId *string `json:"wiki_import_source_id"`
+// SourceImportData carries the bundle-level source namespace so numeric page IDs
+// and space keys cannot collide across Confluence instances. It rides on the
+// version line and is carried once per bundle (not per entity line).
+type SourceImportData struct {
+	OrganizationId *string `json:"organization_id,omitempty"`
+	SpaceKey       *string `json:"space_key,omitempty"`
 }
 
-// ChannelImportData represents a channel to be created.
-type ChannelImportData struct {
-	Team        *string `json:"team"`
-	Name        *string `json:"name"`
-	DisplayName *string `json:"display_name"`
-	Type        *string `json:"type"` // "O" for public, "P" for private
-	Purpose     *string `json:"purpose,omitempty"`
-	Header      *string `json:"header,omitempty"`
+// ResolveSpacePlaceholdersImportData triggers post-import placeholder resolution,
+// scoped to the space's pages.
+type ResolveSpacePlaceholdersImportData struct {
+	Team                *string `json:"team"`
+	SpaceImportSourceId *string `json:"space_import_source_id"`
 }
 
-// WikiImportData represents a wiki to be imported.
-type WikiImportData struct {
+// SpaceImportData represents a Space to be imported. The backing channel is
+// resolved at import time from the import request, so it is not part of this
+// contract.
+type SpaceImportData struct {
 	Team        *string                `json:"team"`
-	Channel     *string                `json:"channel"`
 	Title       *string                `json:"title,omitempty"`
 	Description *string                `json:"description,omitempty"`
 	Props       *model.StringInterface `json:"props,omitempty"`
@@ -55,12 +61,13 @@ type WikiImportData struct {
 // PageImportData represents a page to be imported.
 type PageImportData struct {
 	Team                 *string                 `json:"team"`
-	WikiImportSourceId   *string                 `json:"wiki_import_source_id"`
+	SpaceImportSourceId  *string                 `json:"space_import_source_id"`
 	User                 *string                 `json:"user"`
 	Title                *string                 `json:"title"`
 	Content              *string                 `json:"content"`
 	ParentImportSourceId *string                 `json:"parent_import_source_id,omitempty"`
 	CreateAt             *int64                  `json:"create_at,omitempty"`
+	UpdateAt             *int64                  `json:"update_at,omitempty"`
 	Props                *model.StringInterface  `json:"props,omitempty"`
 	Attachments          *[]AttachmentImportData `json:"attachments,omitempty"`
 }
@@ -72,6 +79,7 @@ type PageCommentImportData struct {
 	User                        *string                `json:"user"`
 	Content                     *string                `json:"content"`
 	CreateAt                    *int64                 `json:"create_at,omitempty"`
+	UpdateAt                    *int64                 `json:"update_at,omitempty"`
 	IsResolved                  *bool                  `json:"is_resolved,omitempty"`
 	Props                       *model.StringInterface `json:"props,omitempty"`
 }
@@ -104,23 +112,15 @@ func (t *Transformer) Export(outputFilePath string) error {
 	}
 	defer outputFile.Close()
 
-	// Write version line
+	// Write version line (carries the bundle-level source namespace)
 	t.Logger.Info("Exporting version")
 	if err := t.ExportVersion(outputFile); err != nil {
 		return err
 	}
 
-	// Export channel (if auto-creating)
-	if t.Intermediate.Channel != nil {
-		t.Logger.Info("Exporting channel")
-		if err := t.ExportChannel(outputFile); err != nil {
-			return err
-		}
-	}
-
-	// Export wikis (one per space)
-	t.Logger.Infof("Exporting %d wikis", len(t.Intermediate.Wikis))
-	if err := t.ExportWikis(outputFile); err != nil {
+	// Export the single space
+	t.Logger.Info("Exporting space")
+	if err := t.ExportSpace(outputFile); err != nil {
 		return err
 	}
 
@@ -136,7 +136,7 @@ func (t *Transformer) Export(outputFilePath string) error {
 		return err
 	}
 
-	// Export resolve_wiki_placeholders directive to resolve cross-page links
+	// Export resolve_space_placeholders directive to resolve cross-page links
 	t.Logger.Info("Exporting placeholder resolution directive")
 	if err := t.ExportResolvePlaceholders(outputFile); err != nil {
 		return err
@@ -145,80 +145,56 @@ func (t *Transformer) Export(outputFilePath string) error {
 	return nil
 }
 
-// ExportVersion writes the version line.
+// sourceImportData builds the bundle-level source namespace, or nil when neither
+// an organization id nor a space key is available.
+func (t *Transformer) sourceImportData() *SourceImportData {
+	if t.Intermediate == nil {
+		return nil
+	}
+	src := &SourceImportData{}
+	if t.Intermediate.SourceOrganizationID != "" {
+		src.OrganizationId = model.NewPointer(t.Intermediate.SourceOrganizationID)
+	}
+	if t.Intermediate.Space != nil && t.Intermediate.Space.SpaceKey != "" {
+		src.SpaceKey = model.NewPointer(t.Intermediate.Space.SpaceKey)
+	}
+	if src.OrganizationId == nil && src.SpaceKey == nil {
+		return nil
+	}
+	return src
+}
+
+// ExportVersion writes the version line, including the source namespace.
 func (t *Transformer) ExportVersion(writer io.Writer) error {
-	version := 1
+	version := 2
 	versionLine := &LineImportData{
 		Type:    "version",
 		Version: &version,
+		Source:  t.sourceImportData(),
 	}
 	return ExportWriteLine(writer, versionLine)
 }
 
-// ExportChannel writes the channel line (if auto-creating).
-func (t *Transformer) ExportChannel(writer io.Writer) error {
-	if t.Intermediate.Channel == nil {
+// ExportSpace writes the single space line.
+func (t *Transformer) ExportSpace(writer io.Writer) error {
+	if t.Intermediate == nil || t.Intermediate.Space == nil {
 		return nil
 	}
 
-	ch := t.Intermediate.Channel
-	channelLine := &LineImportData{
-		Type: "channel",
-		Channel: &ChannelImportData{
-			Team:        model.NewPointer(ch.Team),
-			Name:        model.NewPointer(ch.Name),
-			DisplayName: model.NewPointer(ch.DisplayName),
-			Type:        model.NewPointer(ch.Type),
-			Purpose:     optionalString(ch.Purpose),
-			Header:      optionalString(ch.Header),
-		},
-	}
-	return ExportWriteLine(writer, channelLine)
-}
-
-// ExportWikis writes wiki lines for all spaces.
-func (t *Transformer) ExportWikis(writer io.Writer) error {
-	for _, wiki := range t.Intermediate.Wikis {
-		props := model.StringInterface{
-			"import_source_id": wiki.SpaceKey,
-		}
-		wikiLine := &LineImportData{
-			Type: "wiki",
-			Wiki: &WikiImportData{
-				Team:        model.NewPointer(wiki.Team),
-				Channel:     model.NewPointer(wiki.Channel),
-				Title:       model.NewPointer(wiki.Title),
-				Description: model.NewPointer(wiki.Description),
-				Props:       &props,
-			},
-		}
-		if err := ExportWriteLine(writer, wikiLine); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// ExportWiki writes the wiki line (legacy single-wiki support).
-func (t *Transformer) ExportWiki(writer io.Writer) error {
-	if t.Intermediate.Wiki == nil {
-		return nil
-	}
-
+	space := t.Intermediate.Space
 	props := model.StringInterface{
-		"import_source_id": t.Intermediate.Wiki.SpaceKey,
+		"import_source_id": space.SpaceKey,
 	}
-	wikiLine := &LineImportData{
-		Type: "wiki",
-		Wiki: &WikiImportData{
-			Team:        model.NewPointer(t.Intermediate.Wiki.Team),
-			Channel:     model.NewPointer(t.Intermediate.Wiki.Channel),
-			Title:       model.NewPointer(t.Intermediate.Wiki.Title),
-			Description: model.NewPointer(t.Intermediate.Wiki.Description),
+	spaceLine := &LineImportData{
+		Type: "space",
+		Space: &SpaceImportData{
+			Team:        model.NewPointer(space.Team),
+			Title:       model.NewPointer(space.Title),
+			Description: model.NewPointer(space.Description),
 			Props:       &props,
 		},
 	}
-	return ExportWriteLine(writer, wikiLine)
+	return ExportWriteLine(writer, spaceLine)
 }
 
 // ExportPages writes all page lines.
@@ -258,27 +234,45 @@ func (t *Transformer) GetImportLineFromPage(page *IntermediatePage) *LineImportD
 	props["import_source_id"] = page.ImportSourceID
 	props["import_source"] = "confluence"
 
-	// Wiki source id = SpaceKey (matches WikiImportData.Props["import_source_id"]).
-	// Fall back to the transformer-level SpaceKey for legacy single-space exports
-	// where IntermediatePage.SpaceKey may be unset.
-	wikiSourceId := page.SpaceKey
-	if wikiSourceId == "" && t.Intermediate != nil && t.Intermediate.Wiki != nil {
-		wikiSourceId = t.Intermediate.Wiki.SpaceKey
+	// Space source id = SpaceKey (matches SpaceImportData.Props["import_source_id"]).
+	// Fall back to the single Space's key when IntermediatePage.SpaceKey is unset.
+	spaceSourceId := page.SpaceKey
+	if spaceSourceId == "" && t.Intermediate != nil && t.Intermediate.Space != nil {
+		spaceSourceId = t.Intermediate.Space.SpaceKey
 	}
+
+	// Enforce Docs size limits on the emitted body and props (warn, don't drop).
+	t.checkPageLimits(page, props)
 
 	return &LineImportData{
 		Type: "page",
 		Page: &PageImportData{
 			Team:                 model.NewPointer(t.TeamName),
-			WikiImportSourceId:   model.NewPointer(wikiSourceId),
+			SpaceImportSourceId:  model.NewPointer(spaceSourceId),
 			User:                 model.NewPointer(page.User),
 			Title:                model.NewPointer(page.Title),
 			Content:              model.NewPointer(page.Content),
 			ParentImportSourceId: optionalString(page.ParentImportSourceID),
 			CreateAt:             model.NewPointer(page.CreateAt),
+			UpdateAt:             optionalInt64(page.UpdateAt),
 			Props:                &props,
 			Attachments:          attachments,
 		},
+	}
+}
+
+// checkPageLimits warns (via stats + logger) when a page's emitted body or props
+// exceed the Docs storage caps. The page is still emitted; the operator decides.
+func (t *Transformer) checkPageLimits(page *IntermediatePage, props model.StringInterface) {
+	if n := len(page.Content); n > PageBodyMaxBytes {
+		msg := fmt.Sprintf("page %q body is %d bytes, exceeding the %d-byte Docs limit", page.Title, n, PageBodyMaxBytes)
+		t.Logger.Warn(msg)
+		t.Stats.Warnings = append(t.Stats.Warnings, msg)
+	}
+	if b, err := json.Marshal(props); err == nil && len(b) > PagePropsMaxBytes {
+		msg := fmt.Sprintf("page %q props are %d bytes, exceeding the %d-byte Docs limit", page.Title, len(b), PagePropsMaxBytes)
+		t.Logger.Warn(msg)
+		t.Stats.Warnings = append(t.Stats.Warnings, msg)
 	}
 }
 
@@ -347,33 +341,21 @@ func topologicalSortComments(comments []*IntermediateComment) []*IntermediateCom
 	return result
 }
 
-// ExportResolvePlaceholders writes one directive per wiki to resolve cross-page link
-// placeholders after all pages are imported. Resolution is wiki-scoped (uses the
-// wiki's backing channel for page lookup), so each wiki gets its own line.
+// ExportResolvePlaceholders writes the directive that resolves cross-page link
+// placeholders after all pages are imported. Resolution is space-scoped.
 func (t *Transformer) ExportResolvePlaceholders(writer io.Writer) error {
-	emit := func(spaceKey string) error {
-		sourceId := spaceKey
-		line := &LineImportData{
-			Type: "resolve_wiki_placeholders",
-			ResolveWikiPlaceholders: &ResolveWikiPlaceholdersImportData{
-				Team:               &t.TeamName,
-				WikiImportSourceId: &sourceId,
-			},
-		}
-		return ExportWriteLine(writer, line)
+	if t.Intermediate == nil || t.Intermediate.Space == nil {
+		return nil
 	}
-
-	if t.Intermediate != nil {
-		for _, w := range t.Intermediate.Wikis {
-			if err := emit(w.SpaceKey); err != nil {
-				return err
-			}
-		}
-		if t.Intermediate.Wiki != nil && len(t.Intermediate.Wikis) == 0 {
-			return emit(t.Intermediate.Wiki.SpaceKey)
-		}
+	sourceId := t.Intermediate.Space.SpaceKey
+	line := &LineImportData{
+		Type: "resolve_space_placeholders",
+		ResolveSpacePlaceholders: &ResolveSpacePlaceholdersImportData{
+			Team:                &t.TeamName,
+			SpaceImportSourceId: &sourceId,
+		},
 	}
-	return nil
+	return ExportWriteLine(writer, line)
 }
 
 // GetImportLineFromComment converts an intermediate comment to JSONL import format.
@@ -412,6 +394,7 @@ func (t *Transformer) GetImportLineFromComment(comment *IntermediateComment) *Li
 			User:                        model.NewPointer(comment.User),
 			Content:                     model.NewPointer(comment.Content),
 			CreateAt:                    model.NewPointer(comment.CreateAt),
+			UpdateAt:                    optionalInt64(comment.UpdateAt),
 			IsResolved:                  isResolved,
 			Props:                       &props,
 		},
@@ -424,6 +407,15 @@ func optionalString(s string) *string {
 		return nil
 	}
 	return &s
+}
+
+// optionalInt64 returns a pointer to the value if non-zero, otherwise nil, so
+// unset timestamps are omitted rather than emitted as epoch zero.
+func optionalInt64(v int64) *int64 {
+	if v == 0 {
+		return nil
+	}
+	return &v
 }
 
 // ExportWithManifest writes the transformed data to a JSONL file and generates a manifest.
@@ -458,7 +450,12 @@ func (t *Transformer) ExportWithManifest(outputFilePath string, export *Confluen
 
 	// Generate manifest
 	manifest := NewManifest(export, t.TeamName, t.ChannelName, t.ExportFile)
-	manifest.SetCounts(len(t.Intermediate.Pages), len(t.Intermediate.Comments), len(t.Intermediate.Wikis), t.Stats)
+	spaces := 0
+	if t.Intermediate.Space != nil {
+		spaces = 1
+	}
+	manifest.SetCounts(len(t.Intermediate.Pages), len(t.Intermediate.Comments), spaces, t.Stats)
+	manifest.SetRestrictedPages(export)
 
 	// Set user mapping count if available
 	if t.UserMapper != nil {
