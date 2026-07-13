@@ -42,8 +42,8 @@ var TransformSlackCmd = &cobra.Command{
 var TransformConfluenceCmd = &cobra.Command{
 	Use:     "confluence",
 	Short:   "Transforms a Confluence export.",
-	Long:    "Transforms a Confluence Cloud CSV space export into a Mattermost Wiki/Pages JSONL file.",
-	Example: "  transform confluence --team myteam --channel docs --file confluence-export.zip --output wiki-import.jsonl",
+	Long:    "Transforms a Confluence Cloud CSV space export into a Mattermost Docs (Spaces/Pages) import bundle.",
+	Example: "  transform confluence --team myteam --file confluence-export.zip --bundle import.zip",
 	Args:    cobra.NoArgs,
 	RunE:    transformConfluenceCmdF,
 }
@@ -421,9 +421,7 @@ func transformConfluenceCmdF(cmd *cobra.Command, args []string) error {
 		if confluenceTransformer.Stats.UsersUnmapped > 0 {
 			fmt.Printf("  Warning: %d users could not be mapped\n", confluenceTransformer.Stats.UsersUnmapped)
 		}
-		fmt.Printf("\nNext steps:\n")
-		fmt.Printf("  1. mmctl import upload %s\n", bundlePath)
-		fmt.Printf("  2. mmctl import process <import_id>\n")
+		printImporterNotice()
 		return nil
 	}
 
@@ -443,29 +441,44 @@ func transformConfluenceCmdF(cmd *cobra.Command, args []string) error {
 	if confluenceTransformer.Stats.UsersUnmapped > 0 {
 		fmt.Printf("  Warning: %d users could not be mapped\n", confluenceTransformer.Stats.UsersUnmapped)
 	}
-	fmt.Printf("\nNext steps:\n")
-	fmt.Printf("  Simplest: re-run with --bundle import.zip to get a ready-to-upload archive.\n")
-	fmt.Printf("  Or build the archive manually (the JSONL must sit at the archive root):\n")
-	fmt.Printf("    zip -r import.zip %s %s\n", outputFilePath, path.Join(attachmentsDir, confluenceAttachmentsDir))
-	fmt.Printf("  Then: mmctl import upload import.zip && mmctl import process <import_id>\n")
+	fmt.Printf("\nTip: re-run with --bundle <out.zip> to produce a single self-contained archive\n")
+	fmt.Printf("(import.jsonl at the archive root, plus import-manifest.json and data/).\n")
+	printImporterNotice()
 
 	return nil
 }
 
+// printImporterNotice explains that the emitted bundle uses the Docs v2 import
+// contract, for which no importer yet exists. In particular, Mattermost bulk
+// import (mmctl import) only accepts the v1 format and rejects these line types,
+// so we must not tell users to upload the bundle with it.
+func printImporterNotice() {
+	fmt.Printf("\nImportant: this output uses the Mattermost Docs (Spaces/Pages) v2 import\n")
+	fmt.Printf("contract. The Docs-plugin importer for it is not available yet, and\n")
+	fmt.Printf("Mattermost bulk import (mmctl import) does NOT accept this format. Do not\n")
+	fmt.Printf("upload this output via mmctl import; keep it until the Docs importer lands.\n")
+}
+
 // zipDir writes every file under srcDir into a zip archive at destPath, using
 // paths relative to srcDir so the archive contains import.jsonl,
-// import-manifest.json, and data/ at its root.
-func zipDir(srcDir, destPath string) error {
+// import-manifest.json, and data/ at its root. Each input file is closed as it
+// is written (no per-file defers accumulating across a large walk), and the zip
+// writer's Close — which flushes the central directory — is checked so a
+// finalization failure is not reported as success.
+func zipDir(srcDir, destPath string) (err error) {
 	out, err := os.Create(destPath)
 	if err != nil {
 		return err
 	}
-	defer out.Close()
+	defer func() {
+		if cerr := out.Close(); cerr != nil && err == nil {
+			err = cerr
+		}
+	}()
 
 	zw := zip.NewWriter(out)
-	defer zw.Close()
 
-	return filepath.Walk(srcDir, func(p string, info os.FileInfo, walkErr error) error {
+	walkErr := filepath.Walk(srcDir, func(p string, info os.FileInfo, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
@@ -484,10 +497,17 @@ func zipDir(srcDir, destPath string) error {
 		if openErr != nil {
 			return openErr
 		}
-		defer f.Close()
 		_, copyErr := io.Copy(w, f)
+		if closeErr := f.Close(); closeErr != nil && copyErr == nil {
+			copyErr = closeErr
+		}
 		return copyErr
 	})
+	if walkErr != nil {
+		_ = zw.Close()
+		return walkErr
+	}
+	return zw.Close()
 }
 
 var customLogFormatter = &log.JSONFormatter{

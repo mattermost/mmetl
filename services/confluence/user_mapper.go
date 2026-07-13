@@ -211,6 +211,29 @@ func (um *UserMapper) ResolveUser(accountID, email, username string) string {
 	return ""
 }
 
+// ResolvesExplicitly reports whether the mapping file maps this user by any key
+// (account ID, email, or Confluence username), independent of any fallback. It
+// mirrors the mapper lookups used during transformation so strict validation
+// does not reject a mapping that transformation would successfully use.
+func (um *UserMapper) ResolvesExplicitly(accountID, email, username string) bool {
+	if accountID != "" {
+		if _, err := um.GetUsername(accountID); err == nil {
+			return true
+		}
+	}
+	if email != "" {
+		if _, err := um.GetUsernameByEmail(email); err == nil {
+			return true
+		}
+	}
+	if username != "" {
+		if _, err := um.GetUsernameByConfluenceUsername(username); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
 // GetMappingCount returns the number of user mappings loaded.
 func (um *UserMapper) GetMappingCount() int {
 	return len(um.byAccountID)

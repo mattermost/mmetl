@@ -10,7 +10,7 @@ Transforms a Confluence export.
 
 ### Synopsis
 
-Transforms a Confluence Cloud CSV space export into a Mattermost Wiki/Pages JSONL file.
+Transforms a Confluence Cloud CSV space export into a Mattermost Docs (Spaces/Pages) import bundle.
 
 ```
 mmetl transform confluence [flags]
@@ -19,7 +19,7 @@ mmetl transform confluence [flags]
 ### Examples
 
 ```
-  transform confluence --team myteam --channel docs --file confluence-export.zip --output wiki-import.jsonl
+  transform confluence --team myteam --file confluence-export.zip --bundle import.zip
 ```
 
 ### Options

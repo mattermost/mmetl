@@ -97,7 +97,8 @@ func (v *Validator) ValidateExportContent(export *ConfluenceExport) *ValidationR
 	}
 
 	if export.SpaceKey == "" {
-		result.Warnings = append(result.Warnings, "export has no space key")
+		result.Valid = false
+		result.Errors = append(result.Errors, "export has no space key; a single, non-empty space key is required")
 	}
 
 	// Check for pages with empty content
@@ -189,10 +190,25 @@ func (v *Validator) ValidateUserMapping(export *ConfluenceExport, userMapper *Us
 		}
 	}
 
-	// Check which users are unmapped
+	// Check which users are unmapped. Mirror the transform's mapper lookups
+	// (account ID, email, and Confluence username, including email derived from
+	// the username or account ID) so strict mode agrees with what transformation
+	// would actually resolve.
 	unmappedUsers := []string{}
 	for userID := range userIDs {
-		if _, err := userMapper.GetUsername(userID); err != nil {
+		accountID := userID
+		var email, username string
+		if u, ok := export.Users[accountID]; ok {
+			username = u.Username
+			email = u.Email
+			if email == "" && strings.Contains(username, "@") {
+				email = username
+			}
+		}
+		if strings.Contains(accountID, "@") {
+			email = accountID
+		}
+		if !userMapper.ResolvesExplicitly(accountID, email, username) {
 			unmappedUsers = append(unmappedUsers, userID)
 		}
 	}

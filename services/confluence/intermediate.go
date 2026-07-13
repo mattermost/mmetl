@@ -214,10 +214,16 @@ func (t *Transformer) transformPage(confPage *ConfluencePage, export *Confluence
 		tiptapContent = wrapRawHTMLInCodeBlock(confPage.Content)
 	}
 
-	// Build filename → attachment ID mapping for this page
+	// Build filename → attachment ID mapping for this page, limited to
+	// attachments whose bytes were actually extracted (FilePath set). A content
+	// placeholder must only resolve to a CONF_FILE we are actually shipping;
+	// otherwise it would dangle.
 	filenameToID := make(map[string]string)
 	if attachments, ok := export.Attachments[confPage.ID]; ok {
 		for _, att := range attachments {
+			if att.FilePath == "" {
+				continue
+			}
 			filenameToID[att.FileName] = att.ID
 		}
 	}
@@ -277,9 +283,15 @@ func (t *Transformer) transformPage(confPage *ConfluencePage, export *Confluence
 		Props:                props,
 	}
 
-	// Handle attachments
+	// Handle attachments. Only emit attachments that were successfully extracted
+	// (non-empty FilePath); emitting an entry with an empty path would ship a
+	// broken reference in an otherwise "successful" bundle.
 	if attachments, ok := export.Attachments[confPage.ID]; ok && !t.Config.SkipAttachments {
 		for _, att := range attachments {
+			if att.FilePath == "" {
+				t.Logger.Warnf("Skipping attachment %q (id %s) on page %s: file was not extracted", att.FileName, att.ID, confPage.ID)
+				continue
+			}
 			page.Attachments = append(page.Attachments, IntermediateAttachment{
 				Path:     att.FilePath,
 				SourceID: att.ID,

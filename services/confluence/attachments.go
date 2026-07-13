@@ -98,42 +98,36 @@ func (t *Transformer) ExtractAttachments(zipReader *zip.Reader, export *Confluen
 		for _, att := range attachments {
 			var zipFile *zip.File
 			var zipPath string
+			var srcMap map[string]*zip.File
 
-			// Strategy 1: Exact match by attachment ID
+			// Strategy 1: exact match by attachment ID under the metadata page.
 			if pageFiles != nil {
 				if f, ok := pageFiles[att.ID]; ok {
-					zipFile = f
-					zipPath = f.Name
+					zipFile, zipPath, srcMap = f, f.Name, pageFiles
 				}
 			}
 
-			// Strategy 2: Try different page ID (use attachment's own PageID)
+			// Strategy 2: exact match by attachment ID under the attachment's own page.
 			if zipFile == nil && att.PageID != "" && att.PageID != pageID {
 				if altPageFiles := zipAttachmentsByPage[att.PageID]; altPageFiles != nil {
 					if f, ok := altPageFiles[att.ID]; ok {
-						zipFile = f
-						zipPath = f.Name
+						zipFile, zipPath, srcMap = f, f.Name, altPageFiles
 					}
 				}
 			}
 
-			// Strategy 3: Fall back to any available file under the page (for mismatched metadata)
-			if zipFile == nil && pageFiles != nil && len(pageFiles) > 0 {
-				for attID, f := range pageFiles {
-					zipFile = f
-					zipPath = f.Name
-					t.Logger.Debugf("Fallback match: expected ID %s, using %s", att.ID, attID)
-					delete(pageFiles, attID) // Mark as used
-					break
-				}
-			}
-
+			// Only deterministic, id-verified matches are accepted. We never fall
+			// back to an arbitrary file under the page: that could silently swap
+			// two attachments. An unmatched entry is skipped (and not emitted).
 			if zipFile == nil {
-				t.Logger.Warnf("Attachment file not found in ZIP: %s (page: %s, attachment ID: %s)",
-					att.FilePath, pageID, att.ID)
+				t.Logger.Warnf("No id-verified file for attachment in ZIP: %s (page: %s, attachment ID: %s) — skipping",
+					att.FileName, pageID, att.ID)
 				skippedCount++
 				continue
 			}
+
+			// Mark consumed so it cannot match another entry or be re-emitted.
+			delete(srcMap, att.ID)
 
 			// Determine output path: {pageID}/{filename} (relative to data/ directory)
 			// The server adds "data/" prefix during import, so JSONL paths should NOT include it
@@ -164,34 +158,20 @@ func (t *Transformer) ExtractAttachments(zipReader *zip.Reader, export *Confluen
 		}
 	}
 
-	// Also extract any attachments in ZIP that weren't in the metadata
-	extraCount := 0
-	for pageID, pageFiles := range zipAttachmentsByPage {
-		for attachmentID, f := range pageFiles {
-			// Generate a filename from the path
-			fileName := fmt.Sprintf("attachment_%s", attachmentID)
-			outputFullPath := filepath.Join(t.Config.AttachmentsDir, pageID, fileName)
-
-			outputDir := filepath.Dir(outputFullPath)
-			if err := os.MkdirAll(outputDir, 0755); err != nil {
-				t.Logger.Warnf("Failed to create directory for extra attachment: %v", err)
-				continue
-			}
-
-			if err := extractZipFile(f, outputFullPath); err != nil {
-				t.Logger.Warnf("Failed to extract extra attachment %s: %v", f.Name, err)
-				continue
-			}
-			extraCount++
-		}
+	// Files in the ZIP that were not referenced by any attachment metadata are
+	// intentionally NOT extracted: pages reference attachments by source ID, so
+	// an unreferenced file could never be resolved and would only inflate the
+	// bundle, its checksum, and the extraction counts.
+	unreferenced := 0
+	for _, pageFiles := range zipAttachmentsByPage {
+		unreferenced += len(pageFiles)
 	}
-
-	if extraCount > 0 {
-		t.Logger.Infof("Extracted %d additional attachments not present in the CSV metadata", extraCount)
+	if unreferenced > 0 {
+		t.Logger.Infof("Ignoring %d ZIP attachment file(s) not referenced by any page metadata", unreferenced)
 	}
 
 	t.Logger.Infof("Attachment extraction complete: %d extracted, %d skipped", extractedCount, skippedCount)
-	t.Stats.AttachmentsExtracted = extractedCount + extraCount
+	t.Stats.AttachmentsExtracted = extractedCount
 	t.Stats.AttachmentsSkipped = skippedCount
 
 	return nil

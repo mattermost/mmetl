@@ -9,6 +9,7 @@ import (
 	"compress/gzip"
 	"encoding/csv"
 	"errors"
+	"fmt"
 	"io"
 	"strconv"
 	"strings"
@@ -203,10 +204,12 @@ func parseCSVTimestamp(s string) time.Time {
 func (t *Transformer) parseCSVExport(fileIndex map[string]*zip.File, export *ConfluenceExport) error {
 	// Descriptor (optional) — space key, org id, and export metadata. The org id
 	// namespaces source IDs across Confluence instances.
+	descriptorKey := ""
 	if f := findFile(fileIndex, fileDescriptor); f != nil {
 		if props, err := readProperties(f); err == nil {
-			if key := props["spaceKey"]; key != "" && export.SpaceKey == "" {
-				export.SpaceKey = key
+			descriptorKey = props["spaceKey"]
+			if descriptorKey != "" && export.SpaceKey == "" {
+				export.SpaceKey = descriptorKey
 			}
 			if org := props["organizationId"]; org != "" {
 				export.OrganizationID = org
@@ -215,6 +218,13 @@ func (t *Transformer) parseCSVExport(fileIndex map[string]*zip.File, export *Con
 	}
 
 	if err := t.loadSpaces(fileIndex, export); err != nil {
+		return err
+	}
+
+	// Enforce a single, non-empty, consistent space key before any downstream
+	// filesystem writes (extraction/export). A CSV export always covers one
+	// space; the Space and its pages must share one authoritative key.
+	if err := validateSingleSpaceKey(export, descriptorKey); err != nil {
 		return err
 	}
 
@@ -243,6 +253,35 @@ func (t *Transformer) parseCSVExport(fileIndex map[string]*zip.File, export *Con
 		return err
 	}
 
+	return nil
+}
+
+// validateSingleSpaceKey enforces that the export resolves to exactly one
+// non-empty space key, and that a descriptor key (when present) matches the
+// spaces.csv key. On success it pins export.SpaceKey to the authoritative key.
+func validateSingleSpaceKey(export *ConfluenceExport, descriptorKey string) error {
+	if len(export.Spaces) > 1 {
+		return fmt.Errorf("multi-space exports are not supported; import one space per bundle (found %d spaces)", len(export.Spaces))
+	}
+
+	var csvKey string
+	for k := range export.Spaces {
+		csvKey = k
+	}
+
+	if descriptorKey != "" && csvKey != "" && descriptorKey != csvKey {
+		return fmt.Errorf("space key mismatch: exportDescriptor.properties has %q but spaces.csv has %q", descriptorKey, csvKey)
+	}
+
+	key := csvKey
+	if key == "" {
+		key = descriptorKey
+	}
+	if key == "" {
+		return fmt.Errorf("export has no space key (neither exportDescriptor.properties nor spaces.csv provided one)")
+	}
+
+	export.SpaceKey = key
 	return nil
 }
 

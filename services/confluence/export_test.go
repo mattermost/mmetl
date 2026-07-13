@@ -128,17 +128,24 @@ func TestExport_AttachmentsPopulatedAndResolved(t *testing.T) {
 			"300,ATTACHMENT,diagram.png,1,ukey1,2024-01-01 10:00:00.0,ukey1,2024-01-01 10:00:00.0,,current,100,,\n",
 		"bodycontent.csv": "bodycontentid,body,contentid,bodytypeid\n" +
 			"1,\"<p>See <ac:image><ri:attachment ri:filename=\"\"diagram.png\"\" /></ac:image></p>\",100,2\n",
+		// The attachment bytes, under the legacy layout attachments/{page}/{id}/{version}.
+		"attachments/100/300/1": "PNGDATA",
 	}
 
-	// Parse populates export.Attachments from the ATTACHMENT row. SkipAttachments
-	// is false so the page's attachments array is emitted (no extraction needed).
-	tr := NewTransformer("team", "channel", quietLogger(), &TransformConfig{MaxDepth: 10})
-	export, err := tr.ParseConfluenceExport(buildFixtureZip(t, files))
+	// Parse populates export.Attachments from the ATTACHMENT row.
+	zr := buildFixtureZip(t, files)
+	tr := NewTransformer("team", "channel", quietLogger(), &TransformConfig{MaxDepth: 10, AttachmentsDir: t.TempDir()})
+	export, err := tr.ParseConfluenceExport(zr)
 	require.NoError(t, err)
 	require.Contains(t, export.Attachments, "100")
 	require.Len(t, export.Attachments["100"], 1)
 	assert.Equal(t, "diagram.png", export.Attachments["100"][0].FileName)
 	assert.Equal(t, "300", export.Attachments["100"][0].ID)
+
+	// Extraction is required before the attachment (and its content placeholder)
+	// is emitted — only successfully extracted files ship.
+	require.NoError(t, tr.ExtractAttachments(zr, export))
+	assert.Equal(t, "100/diagram.png", export.Attachments["100"][0].FilePath)
 
 	lines := exportLines(t, tr, export)
 	pages := linesOfType(lines, "page")
