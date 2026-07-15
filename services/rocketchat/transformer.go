@@ -3,7 +3,6 @@ package rocketchat
 import (
 	"fmt"
 	"regexp"
-	"slices"
 	"sort"
 	"strings"
 
@@ -495,6 +494,9 @@ func (t *Transformer) transformSubscriptions(subscriptions []RocketChatSubscript
 		channelByRoomID[ch.Id] = ch
 	}
 
+	channelMemberSets := make(map[string]map[string]struct{}, len(channelByRoomID))
+	userMembershipSets := make(map[string]map[string]struct{}, len(t.Intermediate.UsersById))
+
 	for i := range subscriptions {
 		sub := &subscriptions[i]
 
@@ -523,13 +525,30 @@ func (t *Transformer) transformSubscriptions(subscriptions []RocketChatSubscript
 		}
 
 		// Add to channel Members (by user ID) if not already present.
-		if !slices.Contains(ch.Members, sub.User.ID) {
+		memberSet, ok := channelMemberSets[sub.RoomID]
+		if !ok {
+			memberSet = make(map[string]struct{}, len(ch.Members))
+			for _, id := range ch.Members {
+				memberSet[id] = struct{}{}
+			}
+			channelMemberSets[sub.RoomID] = memberSet
+		}
+		if _, exists := memberSet[sub.User.ID]; !exists {
+			memberSet[sub.User.ID] = struct{}{}
 			ch.Members = append(ch.Members, sub.User.ID)
 		}
 
-		if !slices.ContainsFunc(user.Memberships, func(m intermediate.IntermediateMembership) bool {
-			return m.Name == ch.Name
-		}) {
+		// Add channel to the user's memberships if not already present.
+		membershipSet, ok := userMembershipSets[sub.User.ID]
+		if !ok {
+			membershipSet = make(map[string]struct{}, len(user.Memberships))
+			for _, m := range user.Memberships {
+				membershipSet[m.Name] = struct{}{}
+			}
+			userMembershipSets[sub.User.ID] = membershipSet
+		}
+		if _, exists := membershipSet[ch.Name]; !exists {
+			membershipSet[ch.Name] = struct{}{}
 			user.Memberships = append(user.Memberships, intermediate.IntermediateMembership{Name: ch.Name})
 		}
 	}
