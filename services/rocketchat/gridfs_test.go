@@ -23,7 +23,7 @@ func buildBSONChunksFile(t *testing.T, dir string, chunks []GridFSChunk) string 
 	return p
 }
 
-func TestLoadGridFSChunks(t *testing.T) {
+func TestBuildGridFSIndex(t *testing.T) {
 	t.Run("single chunk file", func(t *testing.T) {
 		dir := t.TempDir()
 		chunks := []GridFSChunk{
@@ -31,15 +31,15 @@ func TestLoadGridFSChunks(t *testing.T) {
 		}
 		p := buildBSONChunksFile(t, dir, chunks)
 
-		result, err := LoadGridFSChunks(p)
+		idx, err := BuildGridFSIndex(p)
 		require.NoError(t, err)
-		require.Len(t, result["file1"], 1)
-		assert.Equal(t, []byte("hello world"), result["file1"][0].Data)
+		require.Len(t, idx.byFile["file1"], 1)
+		assert.True(t, idx.Has("file1"))
 	})
 
 	t.Run("multiple chunks sorted by n", func(t *testing.T) {
 		dir := t.TempDir()
-		// Write in reverse order — Load should sort by N.
+		// Write in reverse order — the index should sort by N.
 		chunks := []GridFSChunk{
 			{FilesID: "file1", N: 2, Data: []byte("world")},
 			{FilesID: "file1", N: 0, Data: []byte("hello ")},
@@ -47,12 +47,12 @@ func TestLoadGridFSChunks(t *testing.T) {
 		}
 		p := buildBSONChunksFile(t, dir, chunks)
 
-		result, err := LoadGridFSChunks(p)
+		idx, err := BuildGridFSIndex(p)
 		require.NoError(t, err)
-		require.Len(t, result["file1"], 3)
-		assert.Equal(t, 0, result["file1"][0].N)
-		assert.Equal(t, 1, result["file1"][1].N)
-		assert.Equal(t, 2, result["file1"][2].N)
+		require.Len(t, idx.byFile["file1"], 3)
+		assert.Equal(t, 0, idx.byFile["file1"][0].n)
+		assert.Equal(t, 1, idx.byFile["file1"][1].n)
+		assert.Equal(t, 2, idx.byFile["file1"][2].n)
 	})
 
 	t.Run("multiple files grouped correctly", func(t *testing.T) {
@@ -63,10 +63,10 @@ func TestLoadGridFSChunks(t *testing.T) {
 		}
 		p := buildBSONChunksFile(t, dir, chunks)
 
-		result, err := LoadGridFSChunks(p)
+		idx, err := BuildGridFSIndex(p)
 		require.NoError(t, err)
-		assert.Len(t, result["file1"], 1)
-		assert.Len(t, result["file2"], 1)
+		assert.Len(t, idx.byFile["file1"], 1)
+		assert.Len(t, idx.byFile["file2"], 1)
 	})
 
 	t.Run("empty chunks file", func(t *testing.T) {
@@ -74,20 +74,24 @@ func TestLoadGridFSChunks(t *testing.T) {
 		p := filepath.Join(dir, "chunks.bson")
 		require.NoError(t, os.WriteFile(p, []byte{}, 0600))
 
-		result, err := LoadGridFSChunks(p)
+		idx, err := BuildGridFSIndex(p)
 		require.NoError(t, err)
-		assert.Empty(t, result)
+		assert.Empty(t, idx.byFile)
+		assert.False(t, idx.Has("file1"))
 	})
 }
 
-func TestReassembleGridFSFile(t *testing.T) {
+func TestGridFSIndexWriteFile(t *testing.T) {
 	t.Run("single chunk", func(t *testing.T) {
 		dir := t.TempDir()
 		outPath := filepath.Join(dir, "out.bin")
-		chunks := []GridFSChunk{
-			{N: 0, Data: []byte("hello world")},
-		}
-		require.NoError(t, ReassembleGridFSFile(chunks, outPath))
+		p := buildBSONChunksFile(t, dir, []GridFSChunk{
+			{FilesID: "file1", N: 0, Data: []byte("hello world")},
+		})
+		idx, err := BuildGridFSIndex(p)
+		require.NoError(t, err)
+
+		require.NoError(t, idx.WriteFile("file1", outPath))
 		data, err := os.ReadFile(outPath)
 		require.NoError(t, err)
 		assert.Equal(t, []byte("hello world"), data)
@@ -96,34 +100,32 @@ func TestReassembleGridFSFile(t *testing.T) {
 	t.Run("multiple chunks concatenated in order", func(t *testing.T) {
 		dir := t.TempDir()
 		outPath := filepath.Join(dir, "out.bin")
-		chunks := []GridFSChunk{
-			{N: 0, Data: []byte("Hello, ")},
-			{N: 1, Data: []byte("brave ")},
-			{N: 2, Data: []byte("new world!")},
-		}
-		require.NoError(t, ReassembleGridFSFile(chunks, outPath))
+		// Deliberately out of order on disk — reassembly must follow chunk number.
+		p := buildBSONChunksFile(t, dir, []GridFSChunk{
+			{FilesID: "file1", N: 2, Data: []byte("new world!")},
+			{FilesID: "file1", N: 0, Data: []byte("Hello, ")},
+			{FilesID: "file1", N: 1, Data: []byte("brave ")},
+		})
+		idx, err := BuildGridFSIndex(p)
+		require.NoError(t, err)
+
+		require.NoError(t, idx.WriteFile("file1", outPath))
 		data, err := os.ReadFile(outPath)
 		require.NoError(t, err)
 		assert.Equal(t, []byte("Hello, brave new world!"), data)
 	})
 
-	t.Run("empty chunks produces empty file", func(t *testing.T) {
-		dir := t.TempDir()
-		outPath := filepath.Join(dir, "out.bin")
-		require.NoError(t, ReassembleGridFSFile(nil, outPath))
-		data, err := os.ReadFile(outPath)
-		require.NoError(t, err)
-		assert.Empty(t, data)
-	})
-
 	t.Run("gap in sequence returns error and no output file", func(t *testing.T) {
 		dir := t.TempDir()
 		outPath := filepath.Join(dir, "out.bin")
-		chunks := []GridFSChunk{
-			{N: 0, Data: []byte("part0")},
-			{N: 2, Data: []byte("part2")}, // N:1 missing
-		}
-		err := ReassembleGridFSFile(chunks, outPath)
+		p := buildBSONChunksFile(t, dir, []GridFSChunk{
+			{FilesID: "file1", N: 0, Data: []byte("part0")},
+			{FilesID: "file1", N: 2, Data: []byte("part2")}, // N:1 missing
+		})
+		idx, err := BuildGridFSIndex(p)
+		require.NoError(t, err)
+
+		err = idx.WriteFile("file1", outPath)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "gap or duplicate")
 		_, statErr := os.Stat(outPath)
@@ -133,11 +135,14 @@ func TestReassembleGridFSFile(t *testing.T) {
 	t.Run("duplicate chunk N returns error and no output file", func(t *testing.T) {
 		dir := t.TempDir()
 		outPath := filepath.Join(dir, "out.bin")
-		chunks := []GridFSChunk{
-			{N: 0, Data: []byte("part0")},
-			{N: 0, Data: []byte("dup0")},
-		}
-		err := ReassembleGridFSFile(chunks, outPath)
+		p := buildBSONChunksFile(t, dir, []GridFSChunk{
+			{FilesID: "file1", N: 0, Data: []byte("part0")},
+			{FilesID: "file1", N: 0, Data: []byte("dup0")},
+		})
+		idx, err := BuildGridFSIndex(p)
+		require.NoError(t, err)
+
+		err = idx.WriteFile("file1", outPath)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "gap or duplicate")
 		_, statErr := os.Stat(outPath)
@@ -157,11 +162,13 @@ func TestExtractAttachments(t *testing.T) {
 		uploads := map[string]*RocketChatUpload{
 			"up1": {ID: "up1", Name: "photo.jpg", Store: "GridFS:Uploads", Complete: true},
 		}
-		chunks := map[string][]GridFSChunk{
-			"up1": {{N: 0, Data: content}},
-		}
+		chunksPath := buildBSONChunksFile(t, dir, []GridFSChunk{
+			{FilesID: "up1", N: 0, Data: content},
+		})
+		idx, err := BuildGridFSIndex(chunksPath)
+		require.NoError(t, err)
 
-		err := ExtractAttachments(uploads, chunks, outDir, "", logger)
+		err = ExtractAttachments(uploads, idx, outDir, "", logger)
 		require.NoError(t, err)
 
 		expectedPath := filepath.Join(outDir, "up1_photo.jpg")
@@ -216,7 +223,13 @@ func TestExtractAttachments(t *testing.T) {
 			"up1": {ID: "up1", Name: "missing.jpg", Store: "GridFS:Uploads", Complete: true},
 		}
 
-		err := ExtractAttachments(uploads, map[string][]GridFSChunk{}, outDir, "", logger)
+		// Index built from an empty chunks file — up1 has no chunks.
+		emptyChunks := filepath.Join(dir, "empty.chunks.bson")
+		require.NoError(t, os.WriteFile(emptyChunks, []byte{}, 0600))
+		idx, err := BuildGridFSIndex(emptyChunks)
+		require.NoError(t, err)
+
+		err = ExtractAttachments(uploads, idx, outDir, "", logger)
 		require.NoError(t, err) // should not error, just warn
 	})
 
@@ -235,11 +248,13 @@ func TestExtractAttachments(t *testing.T) {
 		uploads := map[string]*RocketChatUpload{
 			"up1": {ID: "up1", Name: filename, Store: "GridFS:Uploads", Complete: true},
 		}
-		chunks := map[string][]GridFSChunk{
-			"up1": {{N: 0, Data: content}},
-		}
+		chunksPath := buildBSONChunksFile(t, dir, []GridFSChunk{
+			{FilesID: "up1", N: 0, Data: content},
+		})
+		idx, err := BuildGridFSIndex(chunksPath)
+		require.NoError(t, err)
 
-		err := ExtractAttachments(uploads, chunks, outDir, "", logger)
+		err = ExtractAttachments(uploads, idx, outDir, "", logger)
 		require.NoError(t, err)
 
 		// NFC normalization composes "e" + combining accent → "é", then

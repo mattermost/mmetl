@@ -120,17 +120,17 @@ func transformRocketChatCmdF(cmd *cobra.Command, args []string) error {
 
 	if !skipAttachments {
 		chunksFilePath := path.Join(dumpDir, "rocketchat_uploads.chunks.bson")
-		var gridfsChunks map[string][]rocketchat.GridFSChunk
+		var gridfsIndex *rocketchat.GridFSIndex
 		if _, err := os.Stat(chunksFilePath); err == nil {
-			gridfsChunks, err = rocketchat.LoadGridFSChunks(chunksFilePath)
+			gridfsIndex, err = rocketchat.BuildGridFSIndex(chunksFilePath)
 			if err != nil {
-				return fmt.Errorf("failed to load GridFS chunks from %s: %w. "+
+				return fmt.Errorf("failed to index GridFS chunks from %s: %w. "+
 					"Fix the dump, or re-run with --skip-attachments to proceed without attachments", chunksFilePath, err)
 			}
 		}
 
 		attachmentsOutput := path.Join(attachmentsDir, "bulk-export-attachments")
-		if err := rocketchat.ExtractAttachments(parsed.UploadsByID, gridfsChunks, attachmentsOutput, uploadsDir, logger); err != nil {
+		if err := rocketchat.ExtractAttachments(parsed.UploadsByID, gridfsIndex, attachmentsOutput, uploadsDir, logger); err != nil {
 			return err
 		}
 	}

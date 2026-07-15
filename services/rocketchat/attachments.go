@@ -12,20 +12,33 @@ import (
 )
 
 // ExtractAttachments extracts all complete uploads into outputDir.
-// For GridFS uploads (store starts with "GridFS:"), binary data is read from
-// gridfsChunks (keyed by upload._id). For FileSystem uploads, files are copied
-// from uploadsDir (the path provided by the user via --uploads-dir).
+// For GridFS uploads (store starts with "GridFS:"), binary data is streamed one
+// chunk at a time from gridfsIndex (which may be nil if the export has no GridFS
+// chunks file). For FileSystem uploads, files are copied from uploadsDir (the
+// path provided by the user via --uploads-dir).
 //
 // Skips uploads that are incomplete or whose source cannot be found.
 func ExtractAttachments(
 	uploads map[string]*RocketChatUpload,
-	gridfsChunks map[string][]GridFSChunk,
+	gridfsIndex *GridFSIndex,
 	outputDir string,
 	uploadsDir string,
 	logger log.FieldLogger,
 ) error {
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
 		return fmt.Errorf("creating attachments directory %s: %w", outputDir, err)
+	}
+
+	// Open the GridFS chunks file once and share it across all GridFS uploads for
+	// random-access reads, rather than re-opening it for every attachment.
+	var chunksFile *os.File
+	if gridfsIndex != nil {
+		var err error
+		chunksFile, err = os.Open(gridfsIndex.path)
+		if err != nil {
+			return fmt.Errorf("opening GridFS chunks file %s: %w", gridfsIndex.path, err)
+		}
+		defer chunksFile.Close()
 	}
 
 	done := 0
@@ -54,13 +67,12 @@ func ExtractAttachments(
 		var extractErr error
 		switch {
 		case strings.HasPrefix(upload.Store, "GridFS:"):
-			chunks, ok := gridfsChunks[upload.ID]
-			if !ok || len(chunks) == 0 {
+			if gridfsIndex == nil || !gridfsIndex.Has(upload.ID) {
 				logger.Warnf("GridFS chunks not found for upload %s (%s), skipping", upload.ID, upload.Name)
 				skipped++
 				continue
 			}
-			extractErr = ReassembleGridFSFile(chunks, destPath)
+			extractErr = gridfsIndex.reassembleFrom(chunksFile, upload.ID, destPath)
 
 		case upload.Store == "FileSystem":
 			if uploadsDir == "" {
