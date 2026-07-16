@@ -130,15 +130,28 @@ func (idx *GridFSIndex) reassembleFrom(r io.ReaderAt, filesID, outputPath string
 	if err != nil {
 		return fmt.Errorf("creating output file %s: %w", outputPath, err)
 	}
-	defer out.Close()
+	return writeChunks(out, r, locs, outputPath)
+}
+
+// writeChunks streams each chunk in locs from r into out, in order, and closes
+// out. It reports a delayed write error surfaced by Close — e.g. a failed flush
+// on a full disk or network filesystem — rather than discarding it, so a
+// truncated output file is never mistaken for a successful extraction. An
+// earlier read/write error takes precedence over the Close error.
+func writeChunks(out io.WriteCloser, r io.ReaderAt, locs []gridFSChunkLoc, name string) (err error) {
+	defer func() {
+		if cerr := out.Close(); cerr != nil && err == nil {
+			err = fmt.Errorf("closing %s: %w", name, cerr)
+		}
+	}()
 
 	for _, loc := range locs {
-		chunk, err := readChunkAt(r, loc.offset)
-		if err != nil {
-			return fmt.Errorf("reading chunk %d of %s: %w", loc.n, outputPath, err)
+		chunk, rerr := readChunkAt(r, loc.offset)
+		if rerr != nil {
+			return fmt.Errorf("reading chunk %d of %s: %w", loc.n, name, rerr)
 		}
-		if _, err := out.Write(chunk.Data); err != nil {
-			return fmt.Errorf("writing chunk %d to %s: %w", loc.n, outputPath, err)
+		if _, werr := out.Write(chunk.Data); werr != nil {
+			return fmt.Errorf("writing chunk %d to %s: %w", loc.n, name, werr)
 		}
 	}
 	return nil

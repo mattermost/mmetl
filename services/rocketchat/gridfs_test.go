@@ -1,6 +1,8 @@
 package rocketchat
 
 import (
+	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -10,6 +12,60 @@ import (
 
 	log "github.com/sirupsen/logrus"
 )
+
+// fakeWriteCloser lets a test deterministically trigger write and/or close
+// failures that are otherwise hard to provoke against a real filesystem.
+type fakeWriteCloser struct {
+	buf       bytes.Buffer
+	failWrite bool
+	failClose bool
+}
+
+func (f *fakeWriteCloser) Write(p []byte) (int, error) {
+	if f.failWrite {
+		return 0, fmt.Errorf("simulated write failure")
+	}
+	return f.buf.Write(p)
+}
+
+func (f *fakeWriteCloser) Close() error {
+	if f.failClose {
+		return fmt.Errorf("simulated close failure")
+	}
+	return nil
+}
+
+func TestWriteChunks(t *testing.T) {
+	dir := t.TempDir()
+	// A single-chunk BSON file; the chunk document begins at offset 0.
+	chunksPath := buildBSONChunksFile(t, dir, []GridFSChunk{
+		{FilesID: "f1", N: 0, Data: []byte("payload")},
+	})
+	f, err := os.Open(chunksPath)
+	require.NoError(t, err)
+	defer f.Close()
+	locs := []gridFSChunkLoc{{offset: 0, n: 0}}
+
+	t.Run("writes chunk data and succeeds", func(t *testing.T) {
+		w := &fakeWriteCloser{}
+		require.NoError(t, writeChunks(w, f, locs, "out.bin"))
+		assert.Equal(t, "payload", w.buf.String())
+	})
+
+	t.Run("propagates a delayed Close error", func(t *testing.T) {
+		w := &fakeWriteCloser{failClose: true}
+		err := writeChunks(w, f, locs, "out.bin")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "closing out.bin")
+	})
+
+	t.Run("write error takes precedence over Close error", func(t *testing.T) {
+		w := &fakeWriteCloser{failWrite: true, failClose: true}
+		err := writeChunks(w, f, locs, "out.bin")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "writing chunk 0")
+	})
+}
 
 // buildBSONChunksFile creates a BSON file containing the given chunks.
 func buildBSONChunksFile(t *testing.T, dir string, chunks []GridFSChunk) string {

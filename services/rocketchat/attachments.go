@@ -122,7 +122,7 @@ func ExtractAttachments(
 }
 
 // copyFile copies src to dst, creating dst if necessary.
-func copyFile(src, dst string) error {
+func copyFile(src, dst string) (err error) {
 	in, err := os.Open(src)
 	if err != nil {
 		return fmt.Errorf("opening source file %s: %w", src, err)
@@ -133,10 +133,17 @@ func copyFile(src, dst string) error {
 	if err != nil {
 		return fmt.Errorf("creating destination file %s: %w", dst, err)
 	}
-	defer out.Close()
+	// Surface a delayed write error from Close (e.g. a failed flush) so a
+	// truncated copy is not reported as success, without masking an earlier
+	// copy error.
+	defer func() {
+		if cerr := out.Close(); cerr != nil && err == nil {
+			err = fmt.Errorf("closing %s: %w", dst, cerr)
+		}
+	}()
 
-	if _, err := io.Copy(out, in); err != nil {
-		return fmt.Errorf("copying %s to %s: %w", src, dst, err)
+	if _, cerr := io.Copy(out, in); cerr != nil {
+		return fmt.Errorf("copying %s to %s: %w", src, dst, cerr)
 	}
 	return nil
 }
