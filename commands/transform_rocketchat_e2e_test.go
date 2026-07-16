@@ -207,6 +207,107 @@ func TestTransformRocketChatImportE2E(t *testing.T) {
 	require.NotNil(t, findPostByMessage(dmPosts, "Can we sync on the migration?"))
 }
 
+func TestTransformRocketChatE2EBotImport(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	th := testhelper.SetupHelper(t)
+	t.Cleanup(func() { os.Remove("transform-rocketchat.log") })
+
+	t.Run("bots and deactivated users import with posts and ownership", func(t *testing.T) {
+		ctx := context.Background()
+		dir := t.TempDir()
+		outputPath := filepath.Join(dir, "mattermost_import.jsonl")
+		teamName := uniqueTeamName("rcbots")
+		baseTime := time.Date(2024, 2, 1, 10, 0, 0, 0, time.UTC)
+
+		users := []any{
+			rcBSONUser{ID: "alice-id", Username: "alice", Name: "Alice Anderson", Emails: []rcMail{{Address: "alice@example.com", Verified: true}}, Active: true, Roles: []string{"user"}, Type: "user"},
+			rcBSONUser{ID: "former-id", Username: "former", Name: "Former Employee", Emails: []rcMail{{Address: "former@example.com", Verified: true}}, Active: false, Roles: []string{"user"}, Type: "user"},
+			rcBSONUser{ID: "helperbot-id", Username: "helperbot", Name: "Helper Bot", Active: true, Roles: []string{"bot", "user"}, Type: "bot"},
+			rcBSONUser{ID: "oldbot-id", Username: "oldbot", Name: "Old Bot", Active: false, Roles: []string{"bot", "user"}, Type: "bot"},
+		}
+		rooms := []any{rcRoom{ID: "engineering-id", Type: "c", Name: "engineering", FName: "Engineering"}}
+		messages := []any{
+			rcMessage{ID: "human-post", RoomID: "engineering-id", User: rcMsgUser{ID: "alice-id", Username: "alice"}, Message: "Starting the deploy", Timestamp: baseTime},
+			rcMessage{ID: "bot-post", RoomID: "engineering-id", User: rcMsgUser{ID: "helperbot-id", Username: "helperbot"}, Message: "Deployment completed successfully", Timestamp: baseTime.Add(time.Minute)},
+		}
+		subscriptions := []any{
+			rcSubscription{RoomID: "engineering-id", User: rcMsgUser{ID: "alice-id", Username: "alice"}},
+			rcSubscription{RoomID: "engineering-id", User: rcMsgUser{ID: "former-id", Username: "former"}},
+		}
+		writeDumpDir(t, dir, users, rooms, messages, subscriptions)
+
+		team := th.CreateTeam(ctx, teamName, "RocketChat Bots E2E Team")
+		resetRCFlags()
+		commands.RootCmd.SetArgs([]string{
+			"transform", "rocketchat",
+			"--team", teamName,
+			"--dump-dir", dir,
+			"--output", outputPath,
+			"--skip-attachments",
+			"--bot-owner", "admin",
+		})
+		require.NoError(t, commands.RootCmd.Execute())
+
+		exportData, err := os.ReadFile(outputPath)
+		require.NoError(t, err)
+		botLines := findLinesByType(splitJSONLLines(t, exportData), "bot")
+		oldBotLine := findUserByUsername(botLines, "oldbot")
+		require.NotNil(t, oldBotLine)
+		assert.NotZero(t, oldBotLine["delete_at"])
+
+		th.ValidateImportFileOrFail(ctx, outputPath)
+		require.NoError(t, th.ImportBulkData(ctx, outputPath))
+
+		alice := th.AssertUserExists(ctx, "alice")
+		assert.False(t, alice.IsBot)
+		th.AssertUserInTeam(ctx, team.Id, alice.Id)
+
+		former := th.AssertUserExists(ctx, "former")
+		assert.NotZero(t, former.DeleteAt)
+
+		helperBot := th.AssertBotExists(ctx, "helperbot")
+		assert.Equal(t, "Helper Bot", helperBot.DisplayName)
+		assert.Zero(t, helperBot.DeleteAt)
+		assert.Equal(t, th.AdminUser.Id, helperBot.OwnerId)
+		helperBotUser := th.AssertUserExists(ctx, "helperbot")
+		assert.True(t, helperBotUser.IsBot)
+
+		oldBot := th.AssertBotExists(ctx, "oldbot")
+		assert.Equal(t, "Old Bot", oldBot.DisplayName)
+		assert.Equal(t, th.AdminUser.Id, oldBot.OwnerId)
+
+		engineering := th.AssertChannelExists(ctx, teamName, "engineering")
+		posts, err := th.GetChannelPosts(ctx, engineering.Id, 0, 100)
+		require.NoError(t, err)
+		botPost := findPostByMessage(posts, "Deployment completed successfully")
+		require.NotNil(t, botPost)
+		assert.Equal(t, helperBotUser.Id, botPost.UserId)
+	})
+
+	t.Run("transform fails without bot owner", func(t *testing.T) {
+		dir := t.TempDir()
+		outputPath := filepath.Join(dir, "mattermost_import.jsonl")
+		writeDumpDir(t, dir,
+			[]any{rcBSONUser{ID: "bot-id", Username: "buildbot", Name: "Build Bot", Active: true, Roles: []string{"bot", "user"}, Type: "bot"}},
+			[]any{}, []any{}, []any{})
+
+		resetRCFlags()
+		commands.RootCmd.SetArgs([]string{
+			"transform", "rocketchat",
+			"--team", uniqueTeamName("rcnoowner"),
+			"--dump-dir", dir,
+			"--output", outputPath,
+			"--skip-attachments",
+		})
+		err := commands.RootCmd.Execute()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "--bot-owner")
+	})
+}
+
 func TestTransformRocketChatE2E(t *testing.T) {
 	ts1 := time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)
 	ts2 := time.Date(2024, 1, 1, 12, 1, 0, 0, time.UTC)
