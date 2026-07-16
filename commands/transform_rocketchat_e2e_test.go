@@ -2,15 +2,18 @@ package commands_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/mattermost/mattermost/server/public/model"
 	"go.mongodb.org/mongo-driver/bson"
 
 	"github.com/mattermost/mmetl/commands"
+	"github.com/mattermost/mmetl/testhelper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -57,21 +60,28 @@ type rcMail struct {
 }
 
 type rcRoom struct {
-	ID        string   `bson:"_id"`
-	Type      string   `bson:"t"`
-	Name      string   `bson:"name"`
-	FName     string   `bson:"fname"`
-	Usernames []string `bson:"usernames"`
-	UIDs      []string `bson:"uids"`
+	ID          string   `bson:"_id"`
+	Type        string   `bson:"t"`
+	Name        string   `bson:"name"`
+	FName       string   `bson:"fname"`
+	Description *string  `bson:"description"`
+	Topic       string   `bson:"topic"`
+	Usernames   []string `bson:"usernames"`
+	UIDs        []string `bson:"uids"`
 }
 
 type rcMessage struct {
-	ID        string    `bson:"_id"`
-	RoomID    string    `bson:"rid"`
-	User      rcMsgUser `bson:"u"`
-	Message   string    `bson:"msg"`
-	Timestamp time.Time `bson:"ts"`
-	ThreadID  string    `bson:"tmid"`
+	ID        string                    `bson:"_id"`
+	RoomID    string                    `bson:"rid"`
+	User      rcMsgUser                 `bson:"u"`
+	Message   string                    `bson:"msg"`
+	Timestamp time.Time                 `bson:"ts"`
+	ThreadID  string                    `bson:"tmid"`
+	Reactions map[string]rcReactionInfo `bson:"reactions"`
+}
+
+type rcReactionInfo struct {
+	Usernames []string `bson:"usernames"`
 }
 
 type rcMsgUser struct {
@@ -90,6 +100,111 @@ func writeDumpDir(t *testing.T, dir string, users []any, rooms []any, messages [
 	marshalBSONFileCmds(t, filepath.Join(dir, "rocketchat_room.bson"), rooms)
 	marshalBSONFileCmds(t, filepath.Join(dir, "rocketchat_message.bson"), messages)
 	marshalBSONFileCmds(t, filepath.Join(dir, "rocketchat_subscription.bson"), subs)
+}
+
+// TestTransformRocketChatImportE2E exercises the documented migration path:
+// mongodump-shaped BSON -> mmetl transform -> Mattermost bulk import -> API checks.
+func TestTransformRocketChatImportE2E(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	th := testhelper.SetupHelper(t)
+	ctx := context.Background()
+	dir := t.TempDir()
+	outputPath := filepath.Join(dir, "mattermost_import.jsonl")
+	teamName := uniqueTeamName("rce2e")
+	t.Cleanup(func() { os.Remove("transform-rocketchat.log") })
+
+	description := "Coordination for the engineering team"
+	users := []any{
+		rcBSONUser{ID: "alice-id", Username: "alice", Name: "Alice Anderson", Emails: []rcMail{{Address: "alice@example.com", Verified: true}}, Active: true, Roles: []string{"user"}, Type: "user"},
+		rcBSONUser{ID: "bob-id", Username: "bob", Name: "Bob Brown", Emails: []rcMail{{Address: "bob@example.com", Verified: true}}, Active: true, Roles: []string{"user"}, Type: "user"},
+		rcBSONUser{ID: "carol-id", Username: "carol", Name: "Carol Clark", Emails: []rcMail{{Address: "carol@example.com", Verified: true}}, Active: true, Roles: []string{"user"}, Type: "user"},
+	}
+	rooms := []any{
+		rcRoom{ID: "engineering-id", Type: "c", Name: "engineering", FName: "Engineering", Description: &description, Topic: "Sprint planning and code review"},
+		rcRoom{ID: "secret-id", Type: "p", Name: "secret-project", FName: "Secret Project"},
+		rcRoom{ID: "alice-bob-dm", Type: "d", Usernames: []string{"alice", "bob"}, UIDs: []string{"alice-id", "bob-id"}},
+	}
+	baseTime := time.Date(2024, 1, 2, 9, 30, 0, 0, time.UTC)
+	messages := []any{
+		rcMessage{
+			ID: "engineering-root", RoomID: "engineering-id", User: rcMsgUser{ID: "alice-id", Username: "alice"},
+			Message: "Morning all! Kicking off the sprint", Timestamp: baseTime,
+			Reactions: map[string]rcReactionInfo{":thumbsup:": {Usernames: []string{"bob"}}},
+		},
+		rcMessage{ID: "engineering-reply", RoomID: "engineering-id", User: rcMsgUser{ID: "bob-id", Username: "bob"}, Message: "I can review the migration PR", Timestamp: baseTime.Add(time.Minute), ThreadID: "engineering-root"},
+		rcMessage{ID: "secret-root", RoomID: "secret-id", User: rcMsgUser{ID: "carol-id", Username: "carol"}, Message: "Confidential prototype update", Timestamp: baseTime.Add(2 * time.Minute)},
+		rcMessage{ID: "dm-root", RoomID: "alice-bob-dm", User: rcMsgUser{ID: "alice-id", Username: "alice"}, Message: "Can we sync on the migration?", Timestamp: baseTime.Add(3 * time.Minute)},
+	}
+	subscriptions := []any{
+		rcSubscription{RoomID: "engineering-id", User: rcMsgUser{ID: "alice-id", Username: "alice"}},
+		rcSubscription{RoomID: "engineering-id", User: rcMsgUser{ID: "bob-id", Username: "bob"}},
+		rcSubscription{RoomID: "secret-id", User: rcMsgUser{ID: "alice-id", Username: "alice"}},
+		rcSubscription{RoomID: "secret-id", User: rcMsgUser{ID: "carol-id", Username: "carol"}},
+	}
+	writeDumpDir(t, dir, users, rooms, messages, subscriptions)
+
+	team := th.CreateTeam(ctx, teamName, "RocketChat E2E Team")
+	resetRCFlags()
+	commands.RootCmd.SetArgs([]string{
+		"transform", "rocketchat",
+		"--team", teamName,
+		"--dump-dir", dir,
+		"--output", outputPath,
+		"--skip-attachments",
+	})
+	require.NoError(t, commands.RootCmd.Execute())
+
+	validation := th.ValidateImportFileOrFail(ctx, outputPath)
+	assert.Equal(t, uint64(3), validation.UserCount)
+	assert.Equal(t, uint64(2), validation.ChannelCount)
+	assert.Equal(t, uint64(2), validation.PostCount)
+	assert.Equal(t, uint64(1), validation.DirectPostCount)
+	require.NoError(t, th.ImportBulkData(ctx, outputPath))
+
+	alice := th.AssertUserExists(ctx, "alice")
+	bob := th.AssertUserExists(ctx, "bob")
+	carol := th.AssertUserExists(ctx, "carol")
+	assert.Equal(t, "alice@example.com", alice.Email)
+	assert.Equal(t, "Alice", alice.FirstName)
+	assert.Equal(t, "Anderson", alice.LastName)
+	th.AssertUserInTeam(ctx, team.Id, alice.Id)
+	th.AssertUserInTeam(ctx, team.Id, bob.Id)
+	th.AssertUserInTeam(ctx, team.Id, carol.Id)
+
+	engineering := th.AssertChannelExists(ctx, teamName, "engineering")
+	assert.Equal(t, model.ChannelTypeOpen, engineering.Type)
+	assert.Equal(t, description, engineering.Purpose)
+	assert.Equal(t, "Sprint planning and code review", engineering.Header)
+	assertChannelMembers(t, th, ctx, engineering.Id, []string{alice.Id, bob.Id}, []string{carol.Id})
+
+	secret := th.AssertChannelExists(ctx, teamName, "secret-project")
+	assert.Equal(t, model.ChannelTypePrivate, secret.Type)
+	assertChannelMembers(t, th, ctx, secret.Id, []string{alice.Id, carol.Id}, []string{bob.Id})
+	secretPosts, err := th.GetChannelPosts(ctx, secret.Id, 0, 100)
+	require.NoError(t, err)
+	require.NotNil(t, findPostByMessage(secretPosts, "Confidential prototype update"))
+
+	engineeringPosts, err := th.GetChannelPosts(ctx, engineering.Id, 0, 100)
+	require.NoError(t, err)
+	root := findPostByMessage(engineeringPosts, "Morning all! Kicking off the sprint")
+	require.NotNil(t, root)
+	reply := findPostByMessage(engineeringPosts, "I can review the migration PR")
+	require.NotNil(t, reply)
+	assert.Equal(t, root.Id, reply.RootId)
+	reactions, _, err := th.Client.GetReactions(ctx, root.Id)
+	require.NoError(t, err)
+	require.Len(t, reactions, 1)
+	assert.Equal(t, bob.Id, reactions[0].UserId)
+	assert.Equal(t, "thumbsup", reactions[0].EmojiName)
+
+	dm, _, err := th.Client.CreateDirectChannel(ctx, alice.Id, bob.Id)
+	require.NoError(t, err)
+	dmPosts, err := th.GetChannelPosts(ctx, dm.Id, 0, 100)
+	require.NoError(t, err)
+	require.NotNil(t, findPostByMessage(dmPosts, "Can we sync on the migration?"))
 }
 
 func TestTransformRocketChatE2E(t *testing.T) {
@@ -548,4 +663,33 @@ func collectMessages(postLines []map[string]any) []string {
 		}
 	}
 	return msgs
+}
+
+func findPostByMessage(posts *model.PostList, message string) *model.Post {
+	if posts == nil {
+		return nil
+	}
+	for _, post := range posts.Posts {
+		if post.Message == message {
+			return post
+		}
+	}
+	return nil
+}
+
+func assertChannelMembers(t *testing.T, th *testhelper.TestHelper, ctx context.Context, channelID string, expected, unexpected []string) {
+	t.Helper()
+	members, err := th.GetChannelMembers(ctx, channelID)
+	require.NoError(t, err)
+
+	memberIDs := make(map[string]struct{}, len(members))
+	for _, member := range members {
+		memberIDs[member.UserId] = struct{}{}
+	}
+	for _, userID := range expected {
+		assert.Contains(t, memberIDs, userID)
+	}
+	for _, userID := range unexpected {
+		assert.NotContains(t, memberIDs, userID)
+	}
 }
