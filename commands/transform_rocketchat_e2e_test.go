@@ -308,6 +308,76 @@ func TestTransformRocketChatE2EBotImport(t *testing.T) {
 	})
 }
 
+func TestTransformRocketChatE2EGroupDMs(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	th := testhelper.SetupHelper(t)
+	ctx := context.Background()
+	dir := t.TempDir()
+	outputPath := filepath.Join(dir, "mattermost_import.jsonl")
+	teamName := uniqueTeamName("rcgdm")
+	t.Cleanup(func() { os.Remove("transform-rocketchat.log") })
+
+	users := []any{
+		rcBSONUser{ID: "alice-id", Username: "alice", Name: "Alice Anderson", Emails: []rcMail{{Address: "alice@example.com", Verified: true}}, Active: true, Roles: []string{"user"}, Type: "user"},
+		rcBSONUser{ID: "bob-id", Username: "bob", Name: "Bob Brown", Emails: []rcMail{{Address: "bob@example.com", Verified: true}}, Active: true, Roles: []string{"user"}, Type: "user"},
+		rcBSONUser{ID: "carol-id", Username: "carol", Name: "Carol Clark", Emails: []rcMail{{Address: "carol@example.com", Verified: true}}, Active: true, Roles: []string{"user"}, Type: "user"},
+		rcBSONUser{ID: "dave-id", Username: "dave", Name: "Dave Davis", Emails: []rcMail{{Address: "dave@example.com", Verified: true}}, Active: true, Roles: []string{"user"}, Type: "user"},
+	}
+	rooms := []any{
+		rcRoom{ID: "release-gdm", Type: "d", UIDs: []string{"alice-id", "bob-id", "carol-id"}, Usernames: []string{"alice", "bob", "carol"}},
+		rcRoom{ID: "ops-gdm", Type: "d", UIDs: []string{"alice-id", "bob-id", "dave-id"}, Usernames: []string{"alice", "bob", "dave"}},
+	}
+	baseTime := time.Date(2024, 3, 1, 11, 0, 0, 0, time.UTC)
+	messages := []any{
+		rcMessage{ID: "release-post", RoomID: "release-gdm", User: rcMsgUser{ID: "carol-id", Username: "carol"}, Message: "Release checklist is ready", Timestamp: baseTime},
+		rcMessage{ID: "ops-post", RoomID: "ops-gdm", User: rcMsgUser{ID: "dave-id", Username: "dave"}, Message: "Operations handoff is ready", Timestamp: baseTime.Add(time.Minute)},
+	}
+	writeDumpDir(t, dir, users, rooms, messages, []any{})
+
+	team := th.CreateTeam(ctx, teamName, "RocketChat Group DM E2E Team")
+	resetRCFlags()
+	commands.RootCmd.SetArgs([]string{
+		"transform", "rocketchat",
+		"--team", teamName,
+		"--dump-dir", dir,
+		"--output", outputPath,
+		"--skip-attachments",
+	})
+	require.NoError(t, commands.RootCmd.Execute())
+
+	exportData, err := os.ReadFile(outputPath)
+	require.NoError(t, err)
+	exportLines := splitJSONLLines(t, exportData)
+	require.Len(t, findLinesByType(exportLines, "direct_channel"), 2)
+	require.Len(t, findLinesByType(exportLines, "direct_post"), 2)
+	th.ValidateImportFileOrFail(ctx, outputPath)
+	require.NoError(t, th.ImportBulkData(ctx, outputPath))
+
+	alice := th.AssertUserExists(ctx, "alice")
+	bob := th.AssertUserExists(ctx, "bob")
+	carol := th.AssertUserExists(ctx, "carol")
+	dave := th.AssertUserExists(ctx, "dave")
+	for _, user := range []*model.User{alice, bob, carol, dave} {
+		th.AssertUserInTeam(ctx, team.Id, user.Id)
+	}
+
+	releaseChannel := findGroupChannelByMembers(t, th, ctx, alice.Id, []string{alice.Id, bob.Id, carol.Id})
+	require.NotNil(t, releaseChannel)
+	opsChannel := findGroupChannelByMembers(t, th, ctx, alice.Id, []string{alice.Id, bob.Id, dave.Id})
+	require.NotNil(t, opsChannel)
+	assert.NotEqual(t, releaseChannel.Id, opsChannel.Id)
+
+	releasePosts, err := th.GetChannelPosts(ctx, releaseChannel.Id, 0, 100)
+	require.NoError(t, err)
+	require.NotNil(t, findPostByMessage(releasePosts, "Release checklist is ready"))
+	opsPosts, err := th.GetChannelPosts(ctx, opsChannel.Id, 0, 100)
+	require.NoError(t, err)
+	require.NotNil(t, findPostByMessage(opsPosts, "Operations handoff is ready"))
+}
+
 func TestTransformRocketChatE2E(t *testing.T) {
 	ts1 := time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)
 	ts2 := time.Date(2024, 1, 1, 12, 1, 0, 0, time.UTC)
@@ -793,4 +863,36 @@ func assertChannelMembers(t *testing.T, th *testhelper.TestHelper, ctx context.C
 	for _, userID := range unexpected {
 		assert.NotContains(t, memberIDs, userID)
 	}
+}
+
+func findGroupChannelByMembers(t *testing.T, th *testhelper.TestHelper, ctx context.Context, userID string, expectedIDs []string) *model.Channel {
+	t.Helper()
+	channels, _, err := th.Client.GetChannelsForUserWithLastDeleteAt(ctx, userID, 0)
+	require.NoError(t, err)
+
+	expected := make(map[string]struct{}, len(expectedIDs))
+	for _, id := range expectedIDs {
+		expected[id] = struct{}{}
+	}
+	for _, channel := range channels {
+		if channel.Type != model.ChannelTypeGroup {
+			continue
+		}
+		members, memberErr := th.GetChannelMembers(ctx, channel.Id)
+		require.NoError(t, memberErr)
+		if len(members) != len(expected) {
+			continue
+		}
+		matches := true
+		for _, member := range members {
+			if _, ok := expected[member.UserId]; !ok {
+				matches = false
+				break
+			}
+		}
+		if matches {
+			return channel
+		}
+	}
+	return nil
 }
