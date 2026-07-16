@@ -127,6 +127,8 @@ func transformRocketChatCmdF(cmd *cobra.Command, args []string) error {
 				return fmt.Errorf("failed to index GridFS chunks from %s: %w. "+
 					"Fix the dump, or re-run with --skip-attachments to proceed without attachments", chunksFilePath, err)
 			}
+		} else if !os.IsNotExist(err) {
+			return fmt.Errorf("stat GridFS chunks file %s: %w", chunksFilePath, err)
 		}
 
 		attachmentsOutput := path.Join(attachmentsDir, "bulk-export-attachments")

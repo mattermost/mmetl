@@ -216,7 +216,7 @@ func TestExtractAttachments(t *testing.T) {
 
 		content := []byte("binary file content")
 		uploads := map[string]*RocketChatUpload{
-			"up1": {ID: "up1", Name: "photo.jpg", Store: "GridFS:Uploads", Complete: true},
+			"up1": {ID: "up1", Name: "photo.jpg", Size: int64(len(content)), Store: "GridFS:Uploads", Complete: true},
 		}
 		chunksPath := buildBSONChunksFile(t, dir, []GridFSChunk{
 			{FilesID: "up1", N: 0, Data: content},
@@ -276,7 +276,7 @@ func TestExtractAttachments(t *testing.T) {
 		outDir := filepath.Join(dir, "output")
 
 		uploads := map[string]*RocketChatUpload{
-			"up1": {ID: "up1", Name: "missing.jpg", Store: "GridFS:Uploads", Complete: true},
+			"up1": {ID: "up1", Name: "missing.jpg", Size: 1, Store: "GridFS:Uploads", Complete: true},
 		}
 
 		// Index built from an empty chunks file — up1 has no chunks.
@@ -287,6 +287,45 @@ func TestExtractAttachments(t *testing.T) {
 
 		err = ExtractAttachments(uploads, idx, outDir, "", logger)
 		require.NoError(t, err) // should not error, just warn
+	})
+
+	t.Run("extract zero-byte GridFS upload without chunks file", func(t *testing.T) {
+		dir := t.TempDir()
+		outDir := filepath.Join(dir, "output")
+
+		uploads := map[string]*RocketChatUpload{
+			"up1": {ID: "up1", Name: "empty.txt", Size: 0, Store: "GridFS:Uploads", Complete: true},
+		}
+
+		err := ExtractAttachments(uploads, nil, outDir, "", logger)
+		require.NoError(t, err)
+
+		extractedPath := filepath.Join(outDir, "up1_empty.txt")
+		info, err := os.Stat(extractedPath)
+		require.NoError(t, err)
+		assert.Zero(t, info.Size())
+	})
+
+	t.Run("prefer GridFS chunks over inconsistent zero size metadata", func(t *testing.T) {
+		dir := t.TempDir()
+		outDir := filepath.Join(dir, "output")
+
+		content := []byte("content despite bogus metadata")
+		uploads := map[string]*RocketChatUpload{
+			"up1": {ID: "up1", Name: "preserved.txt", Size: 0, Store: "GridFS:Uploads", Complete: true},
+		}
+		chunksPath := buildBSONChunksFile(t, dir, []GridFSChunk{
+			{FilesID: "up1", N: 0, Data: content},
+		})
+		idx, err := BuildGridFSIndex(chunksPath)
+		require.NoError(t, err)
+
+		err = ExtractAttachments(uploads, idx, outDir, "", logger)
+		require.NoError(t, err)
+
+		extracted, err := os.ReadFile(filepath.Join(outDir, "up1_preserved.txt"))
+		require.NoError(t, err)
+		assert.Equal(t, content, extracted)
 	})
 
 	t.Run("NFC normalization on filename", func(t *testing.T) {
@@ -302,7 +341,7 @@ func TestExtractAttachments(t *testing.T) {
 		filename := "cafe\u0301.txt" // NFD: 'e' + combining acute accent
 		content := []byte("text")
 		uploads := map[string]*RocketChatUpload{
-			"up1": {ID: "up1", Name: filename, Store: "GridFS:Uploads", Complete: true},
+			"up1": {ID: "up1", Name: filename, Size: int64(len(content)), Store: "GridFS:Uploads", Complete: true},
 		}
 		chunksPath := buildBSONChunksFile(t, dir, []GridFSChunk{
 			{FilesID: "up1", N: 0, Data: content},

@@ -67,12 +67,19 @@ func ExtractAttachments(
 		var extractErr error
 		switch {
 		case strings.HasPrefix(upload.Store, "GridFS:"):
-			if gridfsIndex == nil || !gridfsIndex.Has(upload.ID) {
+			switch {
+			case gridfsIndex != nil && gridfsIndex.Has(upload.ID):
+				extractErr = gridfsIndex.reassembleFrom(chunksFile, upload.ID, destPath)
+			case upload.Size == 0:
+				// GridFS deliberately stores zero-byte files without any chunk
+				// documents. The complete upload metadata is sufficient to recreate
+				// an empty attachment even when the chunks file is absent.
+				extractErr = createEmptyFile(destPath)
+			default:
 				logger.Warnf("GridFS chunks not found for upload %s (%s), skipping", upload.ID, upload.Name)
 				skipped++
 				continue
 			}
-			extractErr = gridfsIndex.reassembleFrom(chunksFile, upload.ID, destPath)
 
 		case upload.Store == "FileSystem":
 			if uploadsDir == "" {
@@ -118,6 +125,17 @@ func ExtractAttachments(
 	}
 
 	logger.Infof("Extracted %d attachments, skipped %d", done, skipped)
+	return nil
+}
+
+func createEmptyFile(path string) error {
+	f, err := os.Create(path)
+	if err != nil {
+		return fmt.Errorf("creating empty attachment %s: %w", path, err)
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("closing %s: %w", path, err)
+	}
 	return nil
 }
 

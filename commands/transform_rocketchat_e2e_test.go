@@ -278,6 +278,9 @@ func TestTransformRocketChatE2EBotImport(t *testing.T) {
 		oldBot := th.AssertBotExists(ctx, "oldbot")
 		assert.Equal(t, "Old Bot", oldBot.DisplayName)
 		assert.Equal(t, th.AdminUser.Id, oldBot.OwnerId)
+		// Mattermost's importBot does not currently apply delete_at. The JSONL
+		// assertion above verifies that mmetl exports the inactive state; here we
+		// only verify the properties that the server preserves.
 
 		engineering := th.AssertChannelExists(ctx, teamName, "engineering")
 		posts, err := th.GetChannelPosts(ctx, engineering.Id, 0, 100)
