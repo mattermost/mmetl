@@ -116,6 +116,9 @@ func (t *Transformer) Transform(parsed *ParsedData, skipAttachments bool, skipEm
 	t.transformUsers(parsed.Users, skipEmptyEmails, defaultEmailDomain, guestHandling)
 	t.transformChannels(parsed.Rooms)
 	t.transformSubscriptions(parsed.Subscriptions)
+	// Must run after transformSubscriptions, which is what populates
+	// user.Memberships — the signal that decides whether a guest is channel-less.
+	t.skipChannellessGuests()
 	var uploadsForTransform map[string]*RocketChatUpload
 	if !skipAttachments {
 		uploadsForTransform = parsed.UploadsByID
@@ -276,6 +279,91 @@ func (t *Transformer) markUserSkipped(id, username string) {
 	if username != "" {
 		t.skippedUsernames[strings.ToLower(username)] = true
 	}
+}
+
+// skipChannellessGuests drops guest users (in "guest" mode only) that ended up
+// with zero public/private channel memberships. Such a user cannot be
+// represented as a Mattermost guest — every no-channel guest role shape fails
+// the server's isValidGuestRoles and would abort the whole bulk import — and
+// silently promoting them to a full member would grant public-channel access a
+// guest never had. We drop them instead; operators who want channel-less guests
+// kept as regular members can pass --guest-handling=user.
+//
+// This must run after transformSubscriptions, which populates user.Memberships.
+// Because the direct/group channels were already built (in transformChannels)
+// before these users were marked skipped, their DM member lists are re-filtered
+// here so no exported line references a user with no user line.
+func (t *Transformer) skipChannellessGuests() {
+	if !t.EmitGuestRoles {
+		return
+	}
+
+	skipped := 0
+	for id, user := range t.Intermediate.UsersById {
+		if !user.IsGuest || user.IsBot || len(user.Memberships) > 0 {
+			continue
+		}
+		t.Logger.Warnf("Dropping guest user %s: no channel memberships, so they can't be imported as a guest (use --guest-handling=user to keep channel-less guests as regular members)", user.Username)
+		t.markUserSkipped(id, user.Username)
+		delete(t.Intermediate.UsersById, id)
+		skipped++
+	}
+
+	if skipped == 0 {
+		return
+	}
+	t.Logger.Infof("Skipped %d channel-less guest user(s)", skipped)
+
+	t.rebuildDMsWithoutSkippedMembers()
+}
+
+// rebuildDMsWithoutSkippedMembers re-filters the already-built direct and group
+// channels to remove members that were skipped after the channels were created
+// (i.e. channel-less guests). It mirrors the classification logic in
+// transformChannels' direct-room handling: a channel with no remaining members
+// is dropped (and its room recorded so messages are skipped), a single
+// remaining member becomes a self-DM, three or more members stay a group DM,
+// and two members are a direct channel — so a group that shrinks below three is
+// reclassified accordingly.
+func (t *Transformer) rebuildDMsWithoutSkippedMembers() {
+	var directs, groups []*intermediate.IntermediateChannel
+
+	refilter := func(channels []*intermediate.IntermediateChannel) {
+		for _, ch := range channels {
+			uids, usernames := t.dropSkippedMembers(ch.Members, ch.MembersUsernames)
+
+			if len(uids) == 0 {
+				t.Logger.Warnf("Dropping direct/group channel %s: all members were skipped", ch.Id)
+				t.skippedRoomIDs[ch.Id] = true
+				delete(t.directRoomIDToChannel, ch.Id)
+				continue
+			}
+
+			// RC self-DMs are modelled as a direct channel where the same user
+			// appears twice.
+			if len(uids) == 1 {
+				uids = []string{uids[0], uids[0]}
+				usernames = []string{usernames[0], usernames[0]}
+			}
+
+			ch.Members = uids
+			ch.MembersUsernames = usernames
+			if len(uids) >= 3 {
+				ch.Type = model.ChannelTypeGroup
+				groups = append(groups, ch)
+			} else {
+				ch.Type = model.ChannelTypeDirect
+				directs = append(directs, ch)
+			}
+			t.directRoomIDToChannel[ch.Id] = ch
+		}
+	}
+
+	refilter(t.Intermediate.GroupChannels)
+	refilter(t.Intermediate.DirectChannels)
+
+	t.Intermediate.GroupChannels = groups
+	t.Intermediate.DirectChannels = directs
 }
 
 // splitName splits a full name on the first space.

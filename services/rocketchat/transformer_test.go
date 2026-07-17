@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/mattermost/mattermost/server/public/model"
+	"github.com/mattermost/mattermost/server/v8/channels/app/imports"
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -957,6 +958,171 @@ func TestGuestExportRoleMapping(t *testing.T) {
 	t.Run("mode skip omits the guest user entirely", func(t *testing.T) {
 		_, _, _, exported := exportUserRoles(t, GuestHandlingSkip)
 		assert.False(t, exported)
+	})
+}
+
+// ---------------------------------------------------------------------------
+// Channel-less guest handling tests
+// ---------------------------------------------------------------------------
+
+func TestSkipChannellessGuests(t *testing.T) {
+	t.Run("guest mode drops guests with no memberships, keeps the rest", func(t *testing.T) {
+		tr := NewTransformer("test", newLogger())
+		tr.EmitGuestRoles = true
+		tr.Intermediate.UsersById = map[string]*intermediate.IntermediateUser{
+			"u1": {Id: "u1", Username: "alice", Memberships: []intermediate.IntermediateMembership{{Name: "general"}}},
+			"g1": {Id: "g1", Username: "guesty", IsGuest: true},
+			"g2": {Id: "g2", Username: "keeper", IsGuest: true, Memberships: []intermediate.IntermediateMembership{{Name: "general"}}},
+		}
+
+		tr.skipChannellessGuests()
+
+		assert.Nil(t, tr.Intermediate.UsersById["g1"], "channel-less guest should be dropped")
+		assert.True(t, tr.skippedUserIDs["g1"])
+		assert.True(t, tr.skippedUsernames["guesty"])
+		assert.NotNil(t, tr.Intermediate.UsersById["g2"], "guest with a membership stays a guest")
+		assert.NotNil(t, tr.Intermediate.UsersById["u1"])
+	})
+
+	t.Run("user mode (EmitGuestRoles false) is a no-op", func(t *testing.T) {
+		tr := NewTransformer("test", newLogger())
+		tr.EmitGuestRoles = false
+		tr.Intermediate.UsersById = map[string]*intermediate.IntermediateUser{
+			"g1": {Id: "g1", Username: "guesty", IsGuest: true},
+		}
+
+		tr.skipChannellessGuests()
+
+		assert.NotNil(t, tr.Intermediate.UsersById["g1"], "channel-less guests are only dropped in guest mode")
+		assert.False(t, tr.skippedUserIDs["g1"])
+	})
+
+	t.Run("channel-less guest in a DM collapses it to a self-DM", func(t *testing.T) {
+		tr := NewTransformer("test", newLogger())
+		tr.EmitGuestRoles = true
+		tr.Intermediate.UsersById = map[string]*intermediate.IntermediateUser{
+			"u1": {Id: "u1", Username: "alice", Memberships: []intermediate.IntermediateMembership{{Name: "general"}}},
+			"g1": {Id: "g1", Username: "guesty", IsGuest: true},
+		}
+		dm := &intermediate.IntermediateChannel{
+			Id: "dm1", Type: model.ChannelTypeDirect,
+			Members: []string{"u1", "g1"}, MembersUsernames: []string{"alice", "guesty"},
+		}
+		tr.Intermediate.DirectChannels = []*intermediate.IntermediateChannel{dm}
+		tr.directRoomIDToChannel["dm1"] = dm
+
+		tr.skipChannellessGuests()
+
+		require.Len(t, tr.Intermediate.DirectChannels, 1)
+		assert.Equal(t, []string{"alice", "alice"}, tr.Intermediate.DirectChannels[0].MembersUsernames)
+		assert.NotContains(t, tr.Intermediate.DirectChannels[0].MembersUsernames, "guesty")
+	})
+
+	t.Run("group DM losing a channel-less guest is reclassified to a direct channel", func(t *testing.T) {
+		tr := NewTransformer("test", newLogger())
+		tr.EmitGuestRoles = true
+		tr.Intermediate.UsersById = map[string]*intermediate.IntermediateUser{
+			"u1": {Id: "u1", Username: "alice", Memberships: []intermediate.IntermediateMembership{{Name: "general"}}},
+			"u2": {Id: "u2", Username: "bob", Memberships: []intermediate.IntermediateMembership{{Name: "general"}}},
+			"g1": {Id: "g1", Username: "guesty", IsGuest: true},
+		}
+		gm := &intermediate.IntermediateChannel{
+			Id: "gm1", Type: model.ChannelTypeGroup,
+			Members: []string{"u1", "u2", "g1"}, MembersUsernames: []string{"alice", "bob", "guesty"},
+		}
+		tr.Intermediate.GroupChannels = []*intermediate.IntermediateChannel{gm}
+		tr.directRoomIDToChannel["gm1"] = gm
+
+		tr.skipChannellessGuests()
+
+		assert.Empty(t, tr.Intermediate.GroupChannels)
+		require.Len(t, tr.Intermediate.DirectChannels, 1)
+		assert.Equal(t, []string{"alice", "bob"}, tr.Intermediate.DirectChannels[0].MembersUsernames)
+		assert.Equal(t, model.ChannelTypeDirect, tr.Intermediate.DirectChannels[0].Type)
+	})
+
+	t.Run("DM between only channel-less guests is dropped entirely", func(t *testing.T) {
+		tr := NewTransformer("test", newLogger())
+		tr.EmitGuestRoles = true
+		tr.Intermediate.UsersById = map[string]*intermediate.IntermediateUser{
+			"g1": {Id: "g1", Username: "guesty1", IsGuest: true},
+			"g2": {Id: "g2", Username: "guesty2", IsGuest: true},
+		}
+		dm := &intermediate.IntermediateChannel{
+			Id: "dm1", Type: model.ChannelTypeDirect,
+			Members: []string{"g1", "g2"}, MembersUsernames: []string{"guesty1", "guesty2"},
+		}
+		tr.Intermediate.DirectChannels = []*intermediate.IntermediateChannel{dm}
+		tr.directRoomIDToChannel["dm1"] = dm
+
+		tr.skipChannellessGuests()
+
+		assert.Empty(t, tr.Intermediate.DirectChannels)
+		assert.True(t, tr.skippedRoomIDs["dm1"], "room must be recorded so its messages are skipped")
+		_, stillMapped := tr.directRoomIDToChannel["dm1"]
+		assert.False(t, stillMapped)
+	})
+}
+
+// TestChannellessGuestEndToEnd runs a full transform where a guest exists only
+// in a DM (no channel subscription). In guest mode they must be dropped with no
+// dangling references; in user mode they are kept as a regular member.
+func TestChannellessGuestEndToEnd(t *testing.T) {
+	newDump := func() *ParsedData {
+		now := time.Now().UTC()
+		return &ParsedData{
+			Users: []RocketChatUser{
+				{ID: "u1", Username: "alice", Name: "Alice", Emails: []RCEmail{{Address: "a@a.com"}}, Active: true, Type: "user"},
+				{ID: "k1", Username: "keeper", Name: "Keeper Guest", Emails: []RCEmail{{Address: "k@k.com"}}, Active: true, Roles: []string{"guest"}, Type: "user"},
+				{ID: "g1", Username: "guesty", Name: "Guest User", Emails: []RCEmail{{Address: "g@g.com"}}, Active: true, Roles: []string{"guest"}, Type: "user"},
+			},
+			Rooms: []RocketChatRoom{
+				{ID: "r1", Type: "c", Name: "general"},
+				{ID: "dm1", Type: "d", UIDs: []string{"u1", "g1"}, Usernames: []string{"alice", "guesty"}},
+			},
+			// guesty has no subscription to r1, so ends up channel-less; keeper does.
+			Subscriptions: []RocketChatSubscription{
+				{RoomID: "r1", User: RCMessageUser{ID: "u1", Username: "alice"}},
+				{RoomID: "r1", User: RCMessageUser{ID: "k1", Username: "keeper"}},
+			},
+			Messages: []RocketChatMessage{
+				{ID: "m1", RoomID: "r1", User: RCMessageUser{ID: "u1", Username: "alice"}, Message: "hi", Timestamp: now},
+				{ID: "m2", RoomID: "dm1", User: RCMessageUser{ID: "g1", Username: "guesty"}, Message: "secret", Timestamp: now.Add(time.Second)},
+			},
+		}
+	}
+
+	t.Run("guest mode drops the channel-less guest and their DM post", func(t *testing.T) {
+		tr := NewTransformer("myteam", newLogger())
+		tr.Transform(newDump(), true, false, "", GuestHandlingGuest)
+
+		assert.Nil(t, tr.Intermediate.UsersById["g1"], "channel-less guest dropped")
+		require.NotNil(t, tr.Intermediate.UsersById["k1"], "guest with a channel membership kept")
+		assert.True(t, tr.Intermediate.UsersById["k1"].IsGuest)
+		require.NotNil(t, tr.Intermediate.UsersById["u1"])
+
+		// The DM collapses to alice's self-DM; nothing references guesty.
+		require.Len(t, tr.Intermediate.DirectChannels, 1)
+		for _, name := range tr.Intermediate.DirectChannels[0].MembersUsernames {
+			assert.NotEqual(t, "guesty", name)
+		}
+
+		// guesty's DM post is dropped; only alice's channel post remains.
+		for _, p := range tr.Intermediate.Posts {
+			assert.NotEqual(t, "guesty", p.User)
+		}
+
+		// The exported guest line for keeper must satisfy the server's validator.
+		line := intermediate.GetImportLineFromUser(tr.Intermediate.UsersById["k1"], "myteam", tr.EmitGuestRoles)
+		assert.Equal(t, model.SystemGuestRoleId, *line.User.Roles)
+		require.Nil(t, imports.ValidateUserImportData(line.User))
+	})
+
+	t.Run("user mode keeps the channel-less guest as a regular member", func(t *testing.T) {
+		tr := NewTransformer("myteam", newLogger())
+		tr.Transform(newDump(), true, false, "", GuestHandlingUser)
+
+		require.NotNil(t, tr.Intermediate.UsersById["g1"], "in user mode channel-less guests are kept")
 	})
 }
 

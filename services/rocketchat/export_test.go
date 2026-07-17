@@ -246,6 +246,56 @@ func TestExportUsersIncludeTeamMemberships(t *testing.T) {
 	assert.Contains(t, channelNames, "random")
 }
 
+func TestExportDirectChannelsMarksGuests(t *testing.T) {
+	// alice is a regular member, bob is a guest with a channel membership.
+	newTransformer := func(emitGuestRoles bool) *Transformer {
+		tr := NewTransformer("myteam", newExportLogger())
+		tr.EmitGuestRoles = emitGuestRoles
+		tr.Intermediate.UsersById = map[string]*intermediate.IntermediateUser{
+			"u1": {Id: "u1", Username: "alice", Email: "a@a.com", Memberships: []intermediate.IntermediateMembership{{Name: "general"}}},
+			"g1": {Id: "g1", Username: "bob", Email: "b@b.com", IsGuest: true, Memberships: []intermediate.IntermediateMembership{{Name: "general"}}},
+		}
+		return tr
+	}
+	channels := []*intermediate.IntermediateChannel{
+		{Id: "dm1", Type: model.ChannelTypeDirect, MembersUsernames: []string{"alice", "bob"}, Created: 1704067200},
+	}
+
+	participantsByName := func(t *testing.T, tr *Transformer) map[string]*imports.DirectChannelMemberImportData {
+		t.Helper()
+		var buf bytes.Buffer
+		require.NoError(t, tr.ExportDirectChannels(channels, &buf))
+		var line imports.LineImportData
+		require.NoError(t, json.NewDecoder(&buf).Decode(&line))
+		require.NotNil(t, line.DirectChannel)
+		require.Len(t, line.DirectChannel.Participants, 2)
+		byName := map[string]*imports.DirectChannelMemberImportData{}
+		for _, p := range line.DirectChannel.Participants {
+			byName[*p.Username] = p
+		}
+		return byName
+	}
+
+	t.Run("guest mode marks the guest participant with SchemeGuest", func(t *testing.T) {
+		byName := participantsByName(t, newTransformer(true))
+		require.NotNil(t, byName["alice"])
+		assert.True(t, *byName["alice"].SchemeUser)
+		assert.False(t, *byName["alice"].SchemeGuest)
+		require.NotNil(t, byName["bob"])
+		assert.False(t, *byName["bob"].SchemeUser)
+		assert.True(t, *byName["bob"].SchemeGuest)
+	})
+
+	t.Run("user mode marks everyone as SchemeUser", func(t *testing.T) {
+		byName := participantsByName(t, newTransformer(false))
+		for _, name := range []string{"alice", "bob"} {
+			require.NotNil(t, byName[name])
+			assert.True(t, *byName[name].SchemeUser)
+			assert.False(t, *byName[name].SchemeGuest)
+		}
+	})
+}
+
 func TestExportLinesAreValidJSON(t *testing.T) {
 	tr := NewTransformer("myteam", newExportLogger())
 	tr.Intermediate = &intermediate.Intermediate{

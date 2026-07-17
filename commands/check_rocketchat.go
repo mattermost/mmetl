@@ -33,6 +33,7 @@ func init() {
 	CheckRocketChatCmd.Flags().Bool("debug", false, "Whether to show debug logs or not")
 	CheckRocketChatCmd.Flags().Bool("skip-empty-emails", false, "Ignore empty email addresses from the import file. Note that this results in invalid data.")
 	CheckRocketChatCmd.Flags().String("default-email-domain", "", "If this flag is provided: When a user's email address is empty, the output's email address will be generated from their username and the provided domain.")
+	CheckRocketChatCmd.Flags().String("guest-handling", rocketchat.GuestHandlingGuest, `How guest users would be handled by "transform rocketchat", so their treatment can be previewed here. One of "guest", "user", or "skip" (see "transform rocketchat --help").`)
 
 	CheckCmd.AddCommand(CheckRocketChatCmd)
 }
@@ -42,16 +43,19 @@ func checkRocketChatCmdF(cmd *cobra.Command, args []string) error {
 	debug, _ := cmd.Flags().GetBool("debug")
 	skipEmptyEmails, _ := cmd.Flags().GetBool("skip-empty-emails")
 	defaultEmailDomain, _ := cmd.Flags().GetString("default-email-domain")
+	guestHandling, _ := cmd.Flags().GetString("guest-handling")
 
-	logger := log.New()
-	logFile, err := os.OpenFile("check-rocketchat.log", os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
-	if err != nil {
+	if err := rocketchat.ValidateGuestHandling(guestHandling); err != nil {
 		return err
 	}
-	defer logFile.Close()
-	logger.SetOutput(logFile)
-	logger.SetFormatter(customLogFormatter)
-	logger.SetReportCaller(true)
+
+	// check is a preview/diagnostic command, so log to stdout (with a plain,
+	// human-readable formatter) rather than a file — otherwise the guest
+	// decisions and validation warnings emitted below are invisible to the
+	// operator at check time.
+	logger := log.New()
+	logger.SetOutput(os.Stdout)
+	logger.SetFormatter(&log.TextFormatter{DisableTimestamp: true})
 
 	if debug {
 		logger.Level = log.DebugLevel
@@ -65,7 +69,7 @@ func checkRocketChatCmdF(cmd *cobra.Command, args []string) error {
 
 	transformer := rocketchat.NewTransformer("test", logger)
 
-	transformer.Transform(parsed, false, skipEmptyEmails, defaultEmailDomain, rocketchat.GuestHandlingGuest)
+	transformer.Transform(parsed, false, skipEmptyEmails, defaultEmailDomain, guestHandling)
 
 	transformer.CheckIntermediate()
 

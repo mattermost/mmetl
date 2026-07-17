@@ -207,6 +207,100 @@ func TestTransformRocketChatImportE2E(t *testing.T) {
 	require.NotNil(t, findPostByMessage(dmPosts, "Can we sync on the migration?"))
 }
 
+// TestTransformRocketChatE2EGuestImport verifies guest handling end to end:
+// a guest with a channel membership is imported as a Mattermost guest
+// (system_guest + scheme_guest at team and channel level), while a channel-less
+// guest (present only in a DM) is dropped in guest mode with no dangling
+// references.
+func TestTransformRocketChatE2EGuestImport(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	th := testhelper.SetupHelper(t)
+	ctx := context.Background()
+	dir := t.TempDir()
+	outputPath := filepath.Join(dir, "mattermost_import.jsonl")
+	teamName := uniqueTeamName("rcguest")
+	t.Cleanup(func() { os.Remove("transform-rocketchat.log") })
+
+	users := []any{
+		rcBSONUser{ID: "alice-id", Username: "alice", Name: "Alice Anderson", Emails: []rcMail{{Address: "alice@example.com", Verified: true}}, Active: true, Roles: []string{"user"}, Type: "user"},
+		rcBSONUser{ID: "bob-id", Username: "bob", Name: "Bob Guest", Emails: []rcMail{{Address: "bob@example.com", Verified: true}}, Active: true, Roles: []string{"guest"}, Type: "user"},
+		rcBSONUser{ID: "carol-id", Username: "carol", Name: "Carol Guest", Emails: []rcMail{{Address: "carol@example.com", Verified: true}}, Active: true, Roles: []string{"guest"}, Type: "user"},
+	}
+	rooms := []any{
+		rcRoom{ID: "engineering-id", Type: "c", Name: "engineering", FName: "Engineering"},
+		// carol only appears in a DM (no channel subscription) → channel-less.
+		rcRoom{ID: "alice-carol-dm", Type: "d", Usernames: []string{"alice", "carol"}, UIDs: []string{"alice-id", "carol-id"}},
+	}
+	baseTime := time.Date(2024, 1, 2, 9, 30, 0, 0, time.UTC)
+	messages := []any{
+		rcMessage{ID: "eng-root", RoomID: "engineering-id", User: rcMsgUser{ID: "alice-id", Username: "alice"}, Message: "Welcome!", Timestamp: baseTime},
+		rcMessage{ID: "eng-guest", RoomID: "engineering-id", User: rcMsgUser{ID: "bob-id", Username: "bob"}, Message: "Thanks for having me", Timestamp: baseTime.Add(time.Minute)},
+		rcMessage{ID: "carol-dm", RoomID: "alice-carol-dm", User: rcMsgUser{ID: "carol-id", Username: "carol"}, Message: "should be dropped", Timestamp: baseTime.Add(2 * time.Minute)},
+	}
+	subscriptions := []any{
+		rcSubscription{RoomID: "engineering-id", User: rcMsgUser{ID: "alice-id", Username: "alice"}},
+		rcSubscription{RoomID: "engineering-id", User: rcMsgUser{ID: "bob-id", Username: "bob"}},
+	}
+	writeDumpDir(t, dir, users, rooms, messages, subscriptions)
+
+	team := th.CreateTeam(ctx, teamName, "RocketChat Guest E2E Team")
+	resetRCFlags()
+	commands.RootCmd.SetArgs([]string{
+		"transform", "rocketchat",
+		"--team", teamName,
+		"--dump-dir", dir,
+		"--output", outputPath,
+		"--skip-attachments",
+		"--guest-handling", "guest",
+	})
+	require.NoError(t, commands.RootCmd.Execute())
+
+	th.ValidateImportFileOrFail(ctx, outputPath)
+	require.NoError(t, th.ImportBulkData(ctx, outputPath))
+
+	alice := th.AssertUserExists(ctx, "alice")
+	bob := th.AssertUserExists(ctx, "bob")
+	assert.False(t, alice.IsGuest(), "alice should be a regular user")
+	assert.True(t, bob.IsGuest(), "bob has a channel membership, so should be imported as a guest")
+
+	// carol is channel-less, so must be dropped entirely in guest mode.
+	_, err := th.GetUserByUsername(ctx, "carol")
+	assert.Error(t, err, "channel-less guest carol should not be imported")
+
+	// Team-level scheme flags.
+	teamMembers, err := th.GetTeamMembers(ctx, team.Id)
+	require.NoError(t, err)
+	teamByUserID := map[string]*model.TeamMember{}
+	for _, tm := range teamMembers {
+		teamByUserID[tm.UserId] = tm
+	}
+	require.NotNil(t, teamByUserID[bob.Id])
+	assert.True(t, teamByUserID[bob.Id].SchemeGuest)
+	assert.False(t, teamByUserID[bob.Id].SchemeUser)
+	assert.False(t, teamByUserID[alice.Id].SchemeGuest)
+
+	// Channel-level scheme flags.
+	engineering := th.AssertChannelExists(ctx, teamName, "engineering")
+	channelMembers, err := th.GetChannelMembers(ctx, engineering.Id)
+	require.NoError(t, err)
+	channelByUserID := map[string]*model.ChannelMember{}
+	for i := range channelMembers {
+		channelByUserID[channelMembers[i].UserId] = &channelMembers[i]
+	}
+	require.NotNil(t, channelByUserID[bob.Id])
+	assert.True(t, channelByUserID[bob.Id].SchemeGuest)
+	assert.False(t, channelByUserID[bob.Id].SchemeUser)
+	assert.False(t, channelByUserID[alice.Id].SchemeGuest)
+
+	// carol's DM message must not have been imported.
+	engPosts, err := th.GetChannelPosts(ctx, engineering.Id, 0, 100)
+	require.NoError(t, err)
+	assert.Nil(t, findPostByMessage(engPosts, "should be dropped"))
+}
+
 func TestTransformRocketChatE2EBotImport(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
