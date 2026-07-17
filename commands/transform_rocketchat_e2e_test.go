@@ -209,9 +209,9 @@ func TestTransformRocketChatImportE2E(t *testing.T) {
 
 // TestTransformRocketChatE2EGuestImport verifies guest handling end to end:
 // a guest with a channel membership is imported as a Mattermost guest
-// (system_guest + scheme_guest at team and channel level), while a channel-less
-// guest (present only in a DM) is dropped in guest mode with no dangling
-// references.
+// (system_guest + scheme_guest at team, channel, and DM level), while a
+// channel-less guest (present only in a DM) is dropped in guest mode with no
+// dangling references.
 func TestTransformRocketChatE2EGuestImport(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
@@ -231,6 +231,9 @@ func TestTransformRocketChatE2EGuestImport(t *testing.T) {
 	}
 	rooms := []any{
 		rcRoom{ID: "engineering-id", Type: "c", Name: "engineering", FName: "Engineering"},
+		// bob (an effective guest) shares a DM with alice → exercises the DM guest
+		// scheme fix.
+		rcRoom{ID: "alice-bob-dm", Type: "d", Usernames: []string{"alice", "bob"}, UIDs: []string{"alice-id", "bob-id"}},
 		// carol only appears in a DM (no channel subscription) → channel-less.
 		rcRoom{ID: "alice-carol-dm", Type: "d", Usernames: []string{"alice", "carol"}, UIDs: []string{"alice-id", "carol-id"}},
 	}
@@ -238,7 +241,8 @@ func TestTransformRocketChatE2EGuestImport(t *testing.T) {
 	messages := []any{
 		rcMessage{ID: "eng-root", RoomID: "engineering-id", User: rcMsgUser{ID: "alice-id", Username: "alice"}, Message: "Welcome!", Timestamp: baseTime},
 		rcMessage{ID: "eng-guest", RoomID: "engineering-id", User: rcMsgUser{ID: "bob-id", Username: "bob"}, Message: "Thanks for having me", Timestamp: baseTime.Add(time.Minute)},
-		rcMessage{ID: "carol-dm", RoomID: "alice-carol-dm", User: rcMsgUser{ID: "carol-id", Username: "carol"}, Message: "should be dropped", Timestamp: baseTime.Add(2 * time.Minute)},
+		rcMessage{ID: "bob-dm", RoomID: "alice-bob-dm", User: rcMsgUser{ID: "bob-id", Username: "bob"}, Message: "guest DM hello", Timestamp: baseTime.Add(2 * time.Minute)},
+		rcMessage{ID: "carol-dm", RoomID: "alice-carol-dm", User: rcMsgUser{ID: "carol-id", Username: "carol"}, Message: "should be dropped", Timestamp: baseTime.Add(3 * time.Minute)},
 	}
 	subscriptions := []any{
 		rcSubscription{RoomID: "engineering-id", User: rcMsgUser{ID: "alice-id", Username: "alice"}},
@@ -258,7 +262,11 @@ func TestTransformRocketChatE2EGuestImport(t *testing.T) {
 	})
 	require.NoError(t, commands.RootCmd.Execute())
 
-	th.ValidateImportFileOrFail(ctx, outputPath)
+	// Carol (channel-less guest) and her DM post are dropped, so only alice+bob
+	// and bob's single direct post survive.
+	validation := th.ValidateImportFileOrFail(ctx, outputPath)
+	assert.Equal(t, uint64(2), validation.UserCount, "channel-less guest carol should be dropped")
+	assert.Equal(t, uint64(1), validation.DirectPostCount, "carol's DM post should be dropped, leaving only bob's")
 	require.NoError(t, th.ImportBulkData(ctx, outputPath))
 
 	alice := th.AssertUserExists(ctx, "alice")
@@ -295,10 +303,28 @@ func TestTransformRocketChatE2EGuestImport(t *testing.T) {
 	assert.False(t, channelByUserID[bob.Id].SchemeUser)
 	assert.False(t, channelByUserID[alice.Id].SchemeGuest)
 
-	// carol's DM message must not have been imported.
-	engPosts, err := th.GetChannelPosts(ctx, engineering.Id, 0, 100)
+	// DM-level scheme flags: bob is an effective guest, so he must be scheme_guest
+	// in the DM he shares with alice too (the direct-channel guest fix).
+	aliceBobDM, _, err := th.Client.CreateDirectChannel(ctx, alice.Id, bob.Id)
 	require.NoError(t, err)
-	assert.Nil(t, findPostByMessage(engPosts, "should be dropped"))
+	dmMembers, err := th.GetChannelMembers(ctx, aliceBobDM.Id)
+	require.NoError(t, err)
+	dmByUserID := map[string]*model.ChannelMember{}
+	for i := range dmMembers {
+		dmByUserID[dmMembers[i].UserId] = &dmMembers[i]
+	}
+	require.NotNil(t, dmByUserID[bob.Id])
+	assert.True(t, dmByUserID[bob.Id].SchemeGuest, "guest must be scheme_guest in the DM too")
+	assert.False(t, dmByUserID[bob.Id].SchemeUser)
+	require.NotNil(t, dmByUserID[alice.Id])
+	assert.False(t, dmByUserID[alice.Id].SchemeGuest)
+
+	// bob's DM message imported; carol's DM post was already shown to be dropped
+	// by the DirectPostCount assertion above.
+	dmPosts, err := th.GetChannelPosts(ctx, aliceBobDM.Id, 0, 100)
+	require.NoError(t, err)
+	assert.NotNil(t, findPostByMessage(dmPosts, "guest DM hello"))
+	assert.Nil(t, findPostByMessage(dmPosts, "should be dropped"))
 }
 
 func TestTransformRocketChatE2EBotImport(t *testing.T) {

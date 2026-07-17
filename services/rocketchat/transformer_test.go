@@ -1062,6 +1062,46 @@ func TestSkipChannellessGuests(t *testing.T) {
 		_, stillMapped := tr.directRoomIDToChannel["dm1"]
 		assert.False(t, stillMapped)
 	})
+
+	t.Run("malformed DM with mismatched member arrays is dropped without panicking", func(t *testing.T) {
+		tr := NewTransformer("test", newLogger())
+		tr.EmitGuestRoles = true
+		tr.Intermediate.UsersById = map[string]*intermediate.IntermediateUser{
+			"u1": {Id: "u1", Username: "alice", Memberships: []intermediate.IntermediateMembership{{Name: "general"}}},
+			"g1": {Id: "g1", Username: "guesty", IsGuest: true},
+		}
+		// Two uids but a single username: after the channel-less guest g1/guesty
+		// is filtered out, dropSkippedMembers leaves one uid and zero usernames,
+		// which used to panic on the self-DM duplication.
+		dm := &intermediate.IntermediateChannel{
+			Id: "dm1", Type: model.ChannelTypeDirect,
+			Members: []string{"u1", "g1"}, MembersUsernames: []string{"guesty"},
+		}
+		tr.Intermediate.DirectChannels = []*intermediate.IntermediateChannel{dm}
+		tr.directRoomIDToChannel["dm1"] = dm
+
+		assert.NotPanics(t, func() { tr.skipChannellessGuests() })
+		assert.Empty(t, tr.Intermediate.DirectChannels)
+		assert.True(t, tr.skippedRoomIDs["dm1"])
+	})
+}
+
+func TestTransformChannelsMalformedDirectRoom(t *testing.T) {
+	// A direct room whose uid/username arrays have different lengths is malformed;
+	// once skipped users are filtered out it can collapse to one uid and zero
+	// usernames, which must be dropped rather than panic on the self-DM path.
+	tr := NewTransformer("test", newLogger())
+	tr.markUserSkipped("u2", "")
+	tr.skippedUsernames["ghost"] = true
+
+	rooms := []RocketChatRoom{
+		{ID: "dm1", Type: "d", UIDs: []string{"u1", "u2"}, Usernames: []string{"ghost"}},
+	}
+
+	assert.NotPanics(t, func() { tr.transformChannels(rooms) })
+	assert.Empty(t, tr.Intermediate.DirectChannels)
+	assert.Empty(t, tr.Intermediate.GroupChannels)
+	assert.True(t, tr.skippedRoomIDs["dm1"])
 }
 
 // TestChannellessGuestEndToEnd runs a full transform where a guest exists only

@@ -339,6 +339,17 @@ func (t *Transformer) rebuildDMsWithoutSkippedMembers() {
 				continue
 			}
 
+			// dropSkippedMembers filters uid and username arrays independently
+			// when they are not parallel, so a malformed member list can leave
+			// unequal counts here. We can't reliably pair members in that case
+			// (and duplicating a self-DM below would panic), so drop the room.
+			if len(uids) != len(usernames) {
+				t.Logger.Warnf("Dropping direct/group channel %s: mismatched member counts after filtering (%d uids, %d usernames)", ch.Id, len(uids), len(usernames))
+				t.skippedRoomIDs[ch.Id] = true
+				delete(t.directRoomIDToChannel, ch.Id)
+				continue
+			}
+
 			// RC self-DMs are modelled as a direct channel where the same user
 			// appears twice.
 			if len(uids) == 1 {
@@ -433,6 +444,17 @@ func (t *Transformer) transformChannels(rooms []RocketChatRoom) {
 			// If every member was skipped, there is nothing to migrate.
 			if len(uids) == 0 {
 				t.Logger.Warnf("Skipping direct room %s: all members were skipped users", room.ID)
+				t.skippedRoomIDs[room.ID] = true
+				continue
+			}
+
+			// A member list with unequal uid/username counts is malformed (RC
+			// stores them as parallel arrays, and dropSkippedMembers filters them
+			// independently when they are not). We can't reliably pair members,
+			// so drop the room rather than risk dangling references or an
+			// out-of-range panic in the self-DM duplication below.
+			if len(uids) != len(usernames) {
+				t.Logger.Warnf("Skipping direct room %s: mismatched member counts after filtering (%d uids, %d usernames)", room.ID, len(uids), len(usernames))
 				t.skippedRoomIDs[room.ID] = true
 				continue
 			}
