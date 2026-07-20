@@ -3,8 +3,10 @@ package commands
 import (
 	"archive/zip"
 	"fmt"
+	"io"
 	"os"
 	"path"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -12,10 +14,16 @@ import (
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 
+	"github.com/mattermost/mmetl/services/confluence"
 	"github.com/mattermost/mmetl/services/slack"
 )
 
-const attachmentsInternal = "bulk-export-attachments"
+const (
+	// slackAttachmentsDir is the subdirectory for Slack attachments.
+	slackAttachmentsDir = "bulk-export-attachments"
+	// confluenceAttachmentsDir matches the Mattermost bulk import expected path (model.ExportDataDir).
+	confluenceAttachmentsDir = "data"
+)
 
 var TransformCmd = &cobra.Command{
 	Use:   "transform",
@@ -29,6 +37,15 @@ var TransformSlackCmd = &cobra.Command{
 	Example: "  transform slack --team myteam --file my_export.zip --output mm_export.json",
 	Args:    cobra.NoArgs,
 	RunE:    transformSlackCmdF,
+}
+
+var TransformConfluenceCmd = &cobra.Command{
+	Use:     "confluence",
+	Short:   "Transforms a Confluence export.",
+	Long:    "Transforms a Confluence Cloud CSV space export into a Mattermost Docs (Spaces/Pages) import bundle.",
+	Example: "  transform confluence --team myteam --file confluence-export.zip --bundle import.zip",
+	Args:    cobra.NoArgs,
+	RunE:    transformConfluenceCmdF,
 }
 
 func init() {
@@ -51,8 +68,33 @@ func init() {
 	TransformSlackCmd.Flags().Bool("debug", false, "Whether to show debug logs or not")
 	TransformSlackCmd.Flags().String("bot-owner", "", "Username of the Mattermost user who will own all imported bots. Required if the Slack export contains bot users.")
 
+	// Confluence command flags
+	TransformConfluenceCmd.Flags().StringP("team", "t", "", "advisory destination team recorded in the bundle; the Docs import request selects the actual target team")
+	if err := TransformConfluenceCmd.MarkFlagRequired("team"); err != nil {
+		panic(err)
+	}
+	TransformConfluenceCmd.Flags().StringP("file", "f", "", "the Confluence export file (ZIP) to transform")
+	if err := TransformConfluenceCmd.MarkFlagRequired("file"); err != nil {
+		panic(err)
+	}
+	TransformConfluenceCmd.Flags().StringP("output", "o", "import.jsonl", "the output JSONL file path")
+	TransformConfluenceCmd.Flags().String("bundle", "", "write a single self-contained import archive (zip) at this path instead of loose files")
+	TransformConfluenceCmd.Flags().StringP("attachments-dir", "d", "data", "the path for extracted attachments")
+	TransformConfluenceCmd.Flags().StringP("user-mapping", "u", "", "CSV file mapping Confluence users to Mattermost users")
+	TransformConfluenceCmd.Flags().String("fallback-user", "", "Mattermost username to use for unmapped Confluence users")
+	TransformConfluenceCmd.Flags().Bool("require-user-mapping", false, "fail if any Confluence author is not mapped to a Mattermost user")
+	TransformConfluenceCmd.Flags().BoolP("skip-attachments", "a", false, "skip extracting attachments")
+	TransformConfluenceCmd.Flags().Int("max-depth", 10, "maximum page hierarchy depth (deeper pages are flattened)")
+	TransformConfluenceCmd.Flags().Bool("dry-run", false, "validate without writing output files")
+	TransformConfluenceCmd.Flags().Bool("validate-only", false, "only run pre-flight validation, do not transform")
+	TransformConfluenceCmd.Flags().String("mattermost-url", "", "Mattermost server URL for validation (optional)")
+	TransformConfluenceCmd.Flags().String("mattermost-token", "", "Mattermost auth token for validation (optional)")
+	TransformConfluenceCmd.Flags().Bool("fail-on-restricted", false, "fail if any page has a View restriction (not preserved on import)")
+	TransformConfluenceCmd.Flags().Bool("debug", false, "enable debug logging")
+
 	TransformCmd.AddCommand(
 		TransformSlackCmd,
+		TransformConfluenceCmd,
 	)
 
 	RootCmd.AddCommand(
@@ -85,7 +127,7 @@ func transformSlackCmdF(cmd *cobra.Command, args []string) error {
 	}
 
 	// attachments dir
-	attachmentsFullDir := path.Join(attachmentsDir, attachmentsInternal)
+	attachmentsFullDir := path.Join(attachmentsDir, slackAttachmentsDir)
 
 	if !skipAttachments {
 		if fileInfo, err := os.Stat(attachmentsFullDir); os.IsNotExist(err) {
@@ -162,6 +204,305 @@ func transformSlackCmdF(cmd *cobra.Command, args []string) error {
 	slackTransformer.Logger.Info("Transformation succeeded!")
 
 	return nil
+}
+
+func transformConfluenceCmdF(cmd *cobra.Command, args []string) error {
+	team, _ := cmd.Flags().GetString("team")
+	inputFilePath, _ := cmd.Flags().GetString("file")
+	outputFilePath, _ := cmd.Flags().GetString("output")
+	bundlePath, _ := cmd.Flags().GetString("bundle")
+	attachmentsDir, _ := cmd.Flags().GetString("attachments-dir")
+	userMappingPath, _ := cmd.Flags().GetString("user-mapping")
+	fallbackUser, _ := cmd.Flags().GetString("fallback-user")
+	requireUserMapping, _ := cmd.Flags().GetBool("require-user-mapping")
+	skipAttachments, _ := cmd.Flags().GetBool("skip-attachments")
+	maxDepth, _ := cmd.Flags().GetInt("max-depth")
+	dryRun, _ := cmd.Flags().GetBool("dry-run")
+	validateOnly, _ := cmd.Flags().GetBool("validate-only")
+	mattermostURL, _ := cmd.Flags().GetString("mattermost-url")
+	mattermostToken, _ := cmd.Flags().GetString("mattermost-token")
+	failOnRestricted, _ := cmd.Flags().GetBool("fail-on-restricted")
+	debug, _ := cmd.Flags().GetBool("debug")
+
+	// Normalize the team name to lowercase, as Mattermost expects. This is
+	// advisory metadata recorded in the bundle; the Docs import request selects
+	// the actual target team.
+	team = strings.ToLower(team)
+
+	// When --bundle is set, stage the JSONL, manifest, and data/ into a temp dir
+	// and zip it into one self-contained archive. Otherwise keep loose files.
+	bundling := bundlePath != "" && !dryRun && !validateOnly
+	var stagingDir string
+	if bundling {
+		var mkErr error
+		stagingDir, mkErr = os.MkdirTemp("", "mmetl-confluence-bundle-")
+		if mkErr != nil {
+			return fmt.Errorf("failed to create staging dir: %w", mkErr)
+		}
+		defer os.RemoveAll(stagingDir)
+		outputFilePath = path.Join(stagingDir, "import.jsonl")
+		attachmentsDir = stagingDir
+	}
+
+	// Validate output file
+	if !dryRun {
+		if fileInfo, err := os.Stat(outputFilePath); err != nil && !os.IsNotExist(err) {
+			return err
+		} else if err == nil && fileInfo.IsDir() {
+			return fmt.Errorf("output file \"%s\" is a directory", outputFilePath)
+		}
+	}
+
+	// Prepare attachments directory
+	attachmentsFullDir := path.Join(attachmentsDir, confluenceAttachmentsDir)
+	if !skipAttachments && !dryRun {
+		if fileInfo, err := os.Stat(attachmentsFullDir); os.IsNotExist(err) {
+			if createErr := os.MkdirAll(attachmentsFullDir, 0755); createErr != nil {
+				return createErr
+			}
+		} else if err != nil {
+			return err
+		} else if !fileInfo.IsDir() {
+			return fmt.Errorf("file \"%s\" is not a directory", attachmentsDir)
+		}
+	}
+
+	// Open input file
+	fileReader, err := os.Open(inputFilePath)
+	if err != nil {
+		return fmt.Errorf("failed to open input file: %w", err)
+	}
+	defer fileReader.Close()
+
+	zipFileInfo, err := fileReader.Stat()
+	if err != nil {
+		return err
+	}
+
+	zipReader, err := zip.NewReader(fileReader, zipFileInfo.Size())
+	if err != nil || zipReader.File == nil {
+		return fmt.Errorf("failed to read ZIP file: %w", err)
+	}
+
+	// Set up logger
+	logger := log.New()
+	logFile, err := os.OpenFile("transform-confluence.log", os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0666)
+	if err != nil {
+		return err
+	}
+	defer logFile.Close()
+	logger.SetOutput(logFile)
+	logger.SetFormatter(customLogFormatter)
+	logger.SetReportCaller(true)
+
+	if debug {
+		logger.Level = log.DebugLevel
+		logger.Info("Debug mode enabled")
+	}
+
+	// Create transformer config
+	config := &confluence.TransformConfig{
+		SkipAttachments: skipAttachments,
+		AttachmentsDir:  attachmentsFullDir,
+		MaxDepth:        maxDepth,
+		DryRun:          dryRun,
+	}
+
+	// Create transformer
+	confluenceTransformer := confluence.NewTransformer(team, logger, config)
+	confluenceTransformer.ExportFile = inputFilePath
+
+	// Load user mapping if provided
+	if userMappingPath != "" {
+		userMapper, mapErr := confluence.NewUserMapper(userMappingPath, fallbackUser)
+		if mapErr != nil {
+			return fmt.Errorf("failed to load user mapping: %w", mapErr)
+		}
+		confluenceTransformer.UserMapper = userMapper
+		logger.Infof("Loaded %d user mappings (by account ID), %d email mappings", userMapper.GetMappingCount(), userMapper.GetEmailMappingCount())
+	}
+
+	// Parse export
+	logger.Info("Parsing Confluence export...")
+	export, err := confluenceTransformer.ParseConfluenceExport(zipReader)
+	if err != nil {
+		return fmt.Errorf("failed to parse Confluence export: %w", err)
+	}
+
+	// Run pre-flight validation
+	validator := confluence.NewValidator(team)
+	validator.RequireUserMapping = requireUserMapping
+	validator.FailOnRestricted = failOnRestricted
+	if mattermostURL != "" && mattermostToken != "" {
+		validator.SetServerConfig(mattermostURL, mattermostToken)
+	}
+
+	validationResult := validator.ValidateAll(cmd.Context(), zipReader, export, confluenceTransformer.UserMapper)
+
+	// Print validation results
+	if len(validationResult.Warnings) > 0 {
+		fmt.Println("Validation warnings:")
+		for _, warning := range validationResult.Warnings {
+			fmt.Printf("  ⚠️  %s\n", warning)
+		}
+	}
+	if len(validationResult.Errors) > 0 {
+		fmt.Println("Validation errors:")
+		for _, validationErr := range validationResult.Errors {
+			fmt.Printf("  ❌ %s\n", validationErr)
+		}
+	}
+
+	if !validationResult.Valid {
+		return fmt.Errorf("pre-flight validation failed")
+	}
+
+	if validateOnly {
+		fmt.Println("✅ Pre-flight validation passed")
+		fmt.Printf("  Pages: %d\n", len(export.Pages))
+		fmt.Printf("  Comments: %d\n", len(export.Comments))
+		fmt.Printf("  Users in export: %d\n", len(export.Users))
+		return nil
+	}
+
+	// Extract attachments from ZIP before transform so paths are updated
+	if !skipAttachments && !dryRun {
+		logger.Info("Extracting attachments...")
+		if extractErr := confluenceTransformer.ExtractAttachments(zipReader, export); extractErr != nil {
+			return fmt.Errorf("attachment extraction failed: %w", extractErr)
+		}
+	}
+
+	// Transform
+	logger.Info("Transforming content...")
+	if err = confluenceTransformer.Transform(export); err != nil {
+		return fmt.Errorf("transformation failed: %w", err)
+	}
+
+	spaceCount := 0
+	if confluenceTransformer.Intermediate.Space != nil {
+		spaceCount = 1
+	}
+
+	// Export (unless dry run)
+	if dryRun {
+		logger.Info("Dry run complete - no output written")
+		fmt.Printf("Dry run complete: %d spaces, %d pages, %d comments would be exported\n",
+			spaceCount,
+			len(confluenceTransformer.Intermediate.Pages),
+			len(confluenceTransformer.Intermediate.Comments))
+		return nil
+	}
+
+	logger.Info("Writing JSONL output...")
+	if err = confluenceTransformer.ExportWithManifest(outputFilePath, export); err != nil {
+		return fmt.Errorf("failed to write output: %w", err)
+	}
+
+	manifestPath := strings.TrimSuffix(outputFilePath, ".jsonl") + "-manifest.json"
+
+	// When bundling, zip the staging dir (import.jsonl + import-manifest.json +
+	// data/) into the single archive and report that instead of loose files.
+	if bundling {
+		if zipErr := zipDir(stagingDir, bundlePath); zipErr != nil {
+			return fmt.Errorf("failed to write bundle: %w", zipErr)
+		}
+		logger.Info("Transformation succeeded!")
+		fmt.Printf("Successfully transformed Confluence export to bundle %s\n", bundlePath)
+		fmt.Printf("  Spaces: %d\n", spaceCount)
+		fmt.Printf("  Pages: %d\n", len(confluenceTransformer.Intermediate.Pages))
+		fmt.Printf("  Comments: %d\n", len(confluenceTransformer.Intermediate.Comments))
+		fmt.Printf("  Attachments: %d\n", confluenceTransformer.Stats.AttachmentCount)
+		if confluenceTransformer.Stats.UsersUnmapped > 0 {
+			fmt.Printf("  Warning: %d users could not be mapped\n", confluenceTransformer.Stats.UsersUnmapped)
+		}
+		printImporterNotice()
+		return nil
+	}
+
+	logger.Info("Transformation succeeded!")
+	fmt.Printf("Successfully transformed Confluence export to %s\n", outputFilePath)
+	fmt.Printf("  Spaces: %d\n", spaceCount)
+	fmt.Printf("  Pages: %d\n", len(confluenceTransformer.Intermediate.Pages))
+	fmt.Printf("  Comments: %d\n", len(confluenceTransformer.Intermediate.Comments))
+	fmt.Printf("  Attachments: %d\n", confluenceTransformer.Stats.AttachmentCount)
+	if confluenceTransformer.Stats.AttachmentsExtracted > 0 {
+		fmt.Printf("  Attachments extracted: %d\n", confluenceTransformer.Stats.AttachmentsExtracted)
+	}
+	if confluenceTransformer.Stats.AttachmentsSkipped > 0 {
+		fmt.Printf("  Attachments skipped: %d\n", confluenceTransformer.Stats.AttachmentsSkipped)
+	}
+	fmt.Printf("  Manifest: %s\n", manifestPath)
+	if confluenceTransformer.Stats.UsersUnmapped > 0 {
+		fmt.Printf("  Warning: %d users could not be mapped\n", confluenceTransformer.Stats.UsersUnmapped)
+	}
+	fmt.Printf("\nTip: re-run with --bundle <out.zip> to produce a single self-contained archive\n")
+	fmt.Printf("(import.jsonl at the archive root, plus import-manifest.json and data/).\n")
+	printImporterNotice()
+
+	return nil
+}
+
+// printImporterNotice explains that the emitted bundle uses the Docs v2 import
+// contract, for which no importer yet exists. In particular, Mattermost bulk
+// import (mmctl import) only accepts the v1 format and rejects these line types,
+// so we must not tell users to upload the bundle with it.
+func printImporterNotice() {
+	fmt.Printf("\nImportant: this output uses the Mattermost Docs (Spaces/Pages) v2 import\n")
+	fmt.Printf("contract. The Docs-plugin importer for it is not available yet, and\n")
+	fmt.Printf("Mattermost bulk import (mmctl import) does NOT accept this format. Do not\n")
+	fmt.Printf("upload this output via mmctl import; keep it until the Docs importer lands.\n")
+}
+
+// zipDir writes every file under srcDir into a zip archive at destPath, using
+// paths relative to srcDir so the archive contains import.jsonl,
+// import-manifest.json, and data/ at its root. Each input file is closed as it
+// is written (no per-file defers accumulating across a large walk), and the zip
+// writer's Close — which flushes the central directory — is checked so a
+// finalization failure is not reported as success.
+func zipDir(srcDir, destPath string) (err error) {
+	out, err := os.Create(destPath)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if cerr := out.Close(); cerr != nil && err == nil {
+			err = cerr
+		}
+	}()
+
+	zw := zip.NewWriter(out)
+
+	walkErr := filepath.Walk(srcDir, func(p string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if info.IsDir() {
+			return nil
+		}
+		rel, relErr := filepath.Rel(srcDir, p)
+		if relErr != nil {
+			return relErr
+		}
+		w, createErr := zw.Create(filepath.ToSlash(rel))
+		if createErr != nil {
+			return createErr
+		}
+		f, openErr := os.Open(p)
+		if openErr != nil {
+			return openErr
+		}
+		_, copyErr := io.Copy(w, f)
+		if closeErr := f.Close(); closeErr != nil && copyErr == nil {
+			copyErr = closeErr
+		}
+		return copyErr
+	})
+	if walkErr != nil {
+		_ = zw.Close()
+		return walkErr
+	}
+	return zw.Close()
 }
 
 var customLogFormatter = &log.JSONFormatter{
