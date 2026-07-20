@@ -1,5 +1,15 @@
 # Confluence Cloud CSV-Export Support for mmetl
 
+> **Status:** Implemented by `2ca9cf1` (`feat: Confluence Cloud CSV export
+> support`). This document is retained as the parser implementation record. The
+> emitted Docs contract and import architecture are superseded by
+> [confluence-docs-contract-alignment.md](confluence-docs-contract-alignment.md)
+> and
+> [confluence-jsonl-docs-plugin-integration.md](confluence-jsonl-docs-plugin-integration.md).
+> Mattermost core Space-channel support subsequently landed in
+> [mattermost#37321](https://github.com/mattermost/mattermost/pull/37321); the
+> Docs import job remains the outstanding consumer dependency.
+
 ## Summary
 
 Confluence Cloud's space export format has changed from a single self-describing
@@ -431,7 +441,8 @@ what adding it would take. Two structural facts frame the whole list:
 > are security-relevant, not cosmetic — a view-restricted Confluence page was
 > deliberately hidden from most of the org. Because v1 drops restrictions and has
 > no per-page ACL target, **every restricted page imports fully visible to
-> everyone in the target channel** — an over-exposure of previously-confidential
+> everyone who is a member of the imported Space** — an over-exposure of
+> previously-confidential
 > content. We are accepting this for v1 and will handle it later. The eventual fix
 > has two parts: (1) **detect + warn/exclude** restricted pages so a human decides,
 > and (2) **map restrictions to an ACL** (channel visibility/membership, or a
@@ -461,10 +472,12 @@ anchors, labels (as `import_labels` prop), cross-page links
 
 ## Risks & Open Questions
 
-1. **Server-side Wiki/Pages import must exist** to consume `wiki`/`page`/
-   `page_comment` JSONL — these are not stock Mattermost bulk-import line types.
-   This is the true gating dependency and is *independent* of this parser work.
-   **Confirm the import consumer exists before shipping.**
+1. **A Docs plugin import job must exist** to consume the versioned
+   `space`/`page`/`page_comment` bundle — these are not stock Mattermost
+   bulk-import line types. Core support for the opaque `ChannelTypeSpace`
+   backing channel landed in mattermost#37321, but it does not parse Docs JSONL.
+   The plugin import consumer remains the true gating dependency and is
+   *independent* of this parser work.
 2. **Attachment layout unverified** (sample has none). Item 6 stubs the seam;
    completing it needs an export containing files.
 3. **`links.csv` → downstream shape**: verify what `links.go`/

@@ -81,7 +81,7 @@ func TestExport_V2SchemaAndSourceNamespace(t *testing.T) {
 	spaceProps := space["props"].(map[string]any)
 	assert.Equal(t, "DOCS", spaceProps["import_source_id"])
 
-	// Pages use space_import_source_id and carry update_at.
+	// Pages use space_import_source_id and carry update_at, with no channel field.
 	pages := linesOfType(lines, "page")
 	require.NotEmpty(t, pages)
 	for _, pl := range pages {
@@ -89,7 +89,16 @@ func TestExport_V2SchemaAndSourceNamespace(t *testing.T) {
 		assert.Equal(t, "DOCS", p["space_import_source_id"])
 		_, hasWiki := p["wiki_import_source_id"]
 		assert.False(t, hasWiki, "v1 wiki_import_source_id must be gone")
+		_, hasChannel := p["channel"]
+		assert.False(t, hasChannel, "v2 page line must not carry a channel")
 		assert.Contains(t, p, "update_at", "pages should emit update_at")
+	}
+
+	// Comments carry no channel field either.
+	for _, cl := range linesOfType(lines, "page_comment") {
+		c := cl["page_comment"].(map[string]any)
+		_, hasChannel := c["channel"]
+		assert.False(t, hasChannel, "v2 page_comment line must not carry a channel")
 	}
 
 	// resolve line renamed to resolve_space_placeholders.
@@ -134,7 +143,7 @@ func TestExport_AttachmentsPopulatedAndResolved(t *testing.T) {
 
 	// Parse populates export.Attachments from the ATTACHMENT row.
 	zr := buildFixtureZip(t, files)
-	tr := NewTransformer("team", "channel", quietLogger(), &TransformConfig{MaxDepth: 10, AttachmentsDir: t.TempDir()})
+	tr := NewTransformer("team", quietLogger(), &TransformConfig{MaxDepth: 10, AttachmentsDir: t.TempDir()})
 	export, err := tr.ParseConfluenceExport(zr)
 	require.NoError(t, err)
 	require.Contains(t, export.Attachments, "100")
@@ -175,7 +184,7 @@ func TestExport_RestrictionsDetectedAndReported(t *testing.T) {
 	assert.False(t, export.RestrictedPageIDs["100"], "EDIT-only restriction is not a view widening")
 
 	// Validation surfaces it as a warning by default, an error under --fail.
-	v := NewValidator("team", "")
+	v := NewValidator("team")
 	warnResult := v.ValidateExportContent(export)
 	assert.True(t, warnResult.Valid)
 	require.NotEmpty(t, warnResult.Warnings)
@@ -193,7 +202,7 @@ func TestExport_RestrictionsDetectedAndReported(t *testing.T) {
 	assert.False(t, failResult.Valid, "--fail-on-restricted should fail validation")
 
 	// Manifest records the restricted page with its resolved title.
-	m := NewManifest(export, "team", "", "export.zip")
+	m := NewManifest(export, "team", "export.zip")
 	m.SetRestrictedPages(export)
 	require.Len(t, m.RestrictedPages, 1)
 	assert.Equal(t, "101", m.RestrictedPages[0].ID)
@@ -215,6 +224,78 @@ func TestExport_UpdateAtOmittedWhenZero(t *testing.T) {
 	page := linesOfType(lines, "page")[0]["page"].(map[string]any)
 	_, hasUpdate := page["update_at"]
 	assert.False(t, hasUpdate, "update_at must be omitted when the source has no modification date")
+}
+
+// TestManifest_NoChannelKey proves the marshalled manifest records the advisory
+// target team but carries no channel key — neither nested under target nor at
+// the top level. The Docs plugin owns the Space backing channel; mmetl never
+// names it.
+func TestManifest_NoChannelKey(t *testing.T) {
+	files := cloneFixture(csvFixture)
+	_, export := parseFixture(t, files)
+
+	m := NewManifest(export, "myteam", "export.zip")
+
+	data, err := json.Marshal(m)
+	require.NoError(t, err)
+
+	var decoded map[string]any
+	require.NoError(t, json.Unmarshal(data, &decoded))
+
+	// The advisory team is present under target.
+	target, ok := decoded["target"].(map[string]any)
+	require.True(t, ok, "manifest must carry a target object")
+	assert.Equal(t, "myteam", target["team"], "target.team must record the advisory team")
+
+	// No channel key anywhere it could have leaked.
+	_, hasTargetChannel := target["channel"]
+	assert.False(t, hasTargetChannel, "target must not carry a channel key (not even empty)")
+	_, hasTopChannel := decoded["channel"]
+	assert.False(t, hasTopChannel, "manifest must not carry a top-level channel key")
+}
+
+// TestExport_CommentFidelity proves page_comment records preserve the fields the
+// downstream Docs importer relies on to reconstruct post threads: the owning
+// page, the parent comment for replies, source author metadata, and inline
+// anchor/resolved state.
+func TestExport_CommentFidelity(t *testing.T) {
+	files := cloneFixture(csvFixture)
+	tr, export := parseFixture(t, files)
+	lines := exportLines(t, tr, export)
+
+	comments := linesOfType(lines, "page_comment")
+	require.NotEmpty(t, comments)
+
+	byID := map[string]map[string]any{}
+	for _, cl := range comments {
+		c := cl["page_comment"].(map[string]any)
+		props := c["props"].(map[string]any)
+		byID[props["import_source_id"].(string)] = c
+	}
+
+	// The top-level comment (200) is a root: no parent, carries author metadata,
+	// its owning page, an inline anchor, and resolved state.
+	root, ok := byID["200"]
+	require.True(t, ok, "root comment 200 must be emitted")
+	assert.Equal(t, "101", root["page_import_source_id"], "comment must reference its owning page")
+	_, hasParent := root["parent_comment_import_source_id"]
+	assert.False(t, hasParent, "a top-level comment has no parent")
+	rootProps := root["props"].(map[string]any)
+	assert.Equal(t, "aaid2", rootProps["confluence_author_account_id"], "source author metadata must be preserved")
+	assert.Equal(t, "confluence", rootProps["import_source"])
+	anchor, ok := rootProps["inline_anchor"].(map[string]any)
+	require.True(t, ok, "inline comment must carry an inline_anchor")
+	assert.Equal(t, "uuid-abc", anchor["anchor_id"])
+	assert.Equal(t, "highlighted text", anchor["text"])
+	assert.Equal(t, true, root["is_resolved"], "resolved inline comment must carry is_resolved")
+
+	// The reply (201) reconstructs threading via parent_comment_import_source_id.
+	reply, ok := byID["201"]
+	require.True(t, ok, "reply comment 201 must be emitted")
+	assert.Equal(t, "200", reply["parent_comment_import_source_id"], "reply must point at its parent comment")
+	assert.Equal(t, "101", reply["page_import_source_id"])
+	replyProps := reply["props"].(map[string]any)
+	assert.Equal(t, "aaid1", replyProps["confluence_author_account_id"])
 }
 
 func cloneFixture(src map[string]string) map[string]string {

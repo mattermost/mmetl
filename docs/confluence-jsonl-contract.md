@@ -29,6 +29,22 @@ never globally — so IDs cannot collide across Confluence instances.
 One bundle = one Space. A CSV export always covers a single space; a multi-space
 export is rejected at transform time.
 
+## Target team (advisory)
+
+The `team` values carried by the bundle — `target.team` in the manifest and the
+`team` field on `space`, `page`, and `resolve_space_placeholders` lines — are
+**advisory destination metadata** recorded for audit. They reflect
+producer/operator intent only.
+
+The **import request's target team is authoritative**: the Docs importer selects
+the actual destination team and must never route an import from the bundle
+value. A mismatch between the bundle `team` and the requested team is recorded
+as a warning/audit detail, not an error, and does not redirect the import.
+
+The bundle never carries or selects the Space backing channel. The Docs plugin
+creates and owns the Space's `ChannelTypeSpace` backing channel in the requested
+team at import time; there is no channel field in the JSONL or the manifest.
+
 ## Line types
 
 Lines are newline-delimited JSON objects, each with a `type`. They appear in
@@ -90,6 +106,22 @@ time from the import request.
 ```
 
 `is_resolved` is omitted when false.
+
+`page_comment` records are consumed downstream as **Mattermost posts in the
+Space's `ChannelTypeSpace` backing channel**, not as plugin-owned comment rows:
+
+- A top-level Confluence page comment (no
+  `parent_comment_import_source_id`) becomes a **root post** carrying the local
+  Docs page ID and source metadata in its props.
+- A reply resolves its `parent_comment_import_source_id` through the import
+  job's comment mapping and is created in the corresponding Mattermost thread.
+  This is how replies/threads are reconstructed.
+- `page_import_source_id` ties every comment to its owning page;
+  `confluence_author_account_id` (in props) carries attribution; and the inline
+  anchor/resolved metadata is preserved in props.
+
+mmetl does not create, identify, discover, or validate the Space backing
+channel — the Docs importer owns it.
 
 ### `resolve_space_placeholders`
 

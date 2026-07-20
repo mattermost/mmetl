@@ -7,8 +7,9 @@ import log "github.com/sirupsen/logrus"
 
 // Transformer handles the transformation of Confluence exports to Mattermost import format.
 type Transformer struct {
+	// TeamName is advisory destination metadata recorded in the bundle; the Docs
+	// import request selects the actual target team.
 	TeamName     string
-	ChannelName  string
 	Intermediate *Intermediate
 	UserMapper   *UserMapper
 	Logger       log.FieldLogger
@@ -29,8 +30,10 @@ type TransformConfig struct {
 	DryRun bool
 }
 
-// NewTransformer creates a new Confluence transformer.
-func NewTransformer(teamName, channelName string, logger log.FieldLogger, config *TransformConfig) *Transformer {
+// NewTransformer creates a new Confluence transformer. teamName is advisory
+// destination metadata recorded in the bundle; the Docs import request selects
+// the actual target team.
+func NewTransformer(teamName string, logger log.FieldLogger, config *TransformConfig) *Transformer {
 	if config == nil {
 		config = &TransformConfig{
 			MaxDepth: 10,
@@ -42,7 +45,6 @@ func NewTransformer(teamName, channelName string, logger log.FieldLogger, config
 
 	return &Transformer{
 		TeamName:     teamName,
-		ChannelName:  channelName,
 		Intermediate: &Intermediate{},
 		Logger:       logger,
 		Config:       config,

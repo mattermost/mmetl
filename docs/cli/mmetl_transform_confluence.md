@@ -27,7 +27,6 @@ mmetl transform confluence [flags]
 ```
   -d, --attachments-dir string    the path for extracted attachments (default "data")
       --bundle string             write a single self-contained import archive (zip) at this path instead of loose files
-  -c, --channel string            deprecated and ignored in v2: the Space's backing channel is resolved at import time
       --debug                     enable debug logging
       --dry-run                   validate without writing output files
       --fail-on-restricted        fail if any page has a View restriction (not preserved on import)
@@ -40,7 +39,7 @@ mmetl transform confluence [flags]
   -o, --output string             the output JSONL file path (default "import.jsonl")
       --require-user-mapping      fail if any Confluence author is not mapped to a Mattermost user
   -a, --skip-attachments          skip extracting attachments
-  -t, --team string               the target team in Mattermost
+  -t, --team string               advisory destination team recorded in the bundle; the Docs import request selects the actual target team
   -u, --user-mapping string       CSV file mapping Confluence users to Mattermost users
       --validate-only             only run pre-flight validation, do not transform
 ```

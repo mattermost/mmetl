@@ -58,10 +58,12 @@ type ManifestSource struct {
 	ExportFile     string `json:"export_file"`
 }
 
-// ManifestTarget describes the target of the migration.
+// ManifestTarget describes the target of the migration. Team is advisory
+// destination metadata recorded for audit; the Docs import request selects the
+// actual target team. There is no backing-channel field — the Docs plugin
+// creates and owns the Space's backing channel at import time.
 type ManifestTarget struct {
-	Team    string `json:"team"`
-	Channel string `json:"channel"`
+	Team string `json:"team"`
 }
 
 // ManifestCounts contains entity counts from the migration.
@@ -92,8 +94,10 @@ type MigrationStats struct {
 	AttachmentsSkipped   int
 }
 
-// NewManifest creates a new manifest with basic information.
-func NewManifest(export *ConfluenceExport, teamName, channelName, exportFilePath string) *Manifest {
+// NewManifest creates a new manifest with basic information. teamName is
+// advisory destination metadata recorded for audit; the Docs import request
+// selects the actual target team.
+func NewManifest(export *ConfluenceExport, teamName, exportFilePath string) *Manifest {
 	manifest := &Manifest{
 		Version:          "2",
 		Generator:        "mmetl-confluence",
@@ -105,8 +109,7 @@ func NewManifest(export *ConfluenceExport, teamName, channelName, exportFilePath
 			ExportFile:     filepath.Base(exportFilePath),
 		},
 		Target: ManifestTarget{
-			Team:    teamName,
-			Channel: channelName,
+			Team: teamName,
 		},
 	}
 

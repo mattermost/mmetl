@@ -69,11 +69,10 @@ func init() {
 	TransformSlackCmd.Flags().String("bot-owner", "", "Username of the Mattermost user who will own all imported bots. Required if the Slack export contains bot users.")
 
 	// Confluence command flags
-	TransformConfluenceCmd.Flags().StringP("team", "t", "", "the target team in Mattermost")
+	TransformConfluenceCmd.Flags().StringP("team", "t", "", "advisory destination team recorded in the bundle; the Docs import request selects the actual target team")
 	if err := TransformConfluenceCmd.MarkFlagRequired("team"); err != nil {
 		panic(err)
 	}
-	TransformConfluenceCmd.Flags().StringP("channel", "c", "", "deprecated and ignored in v2: the Space's backing channel is resolved at import time")
 	TransformConfluenceCmd.Flags().StringP("file", "f", "", "the Confluence export file (ZIP) to transform")
 	if err := TransformConfluenceCmd.MarkFlagRequired("file"); err != nil {
 		panic(err)
@@ -209,7 +208,6 @@ func transformSlackCmdF(cmd *cobra.Command, args []string) error {
 
 func transformConfluenceCmdF(cmd *cobra.Command, args []string) error {
 	team, _ := cmd.Flags().GetString("team")
-	channel, _ := cmd.Flags().GetString("channel")
 	inputFilePath, _ := cmd.Flags().GetString("file")
 	outputFilePath, _ := cmd.Flags().GetString("output")
 	bundlePath, _ := cmd.Flags().GetString("bundle")
@@ -226,13 +224,10 @@ func transformConfluenceCmdF(cmd *cobra.Command, args []string) error {
 	failOnRestricted, _ := cmd.Flags().GetBool("fail-on-restricted")
 	debug, _ := cmd.Flags().GetBool("debug")
 
-	// Normalize team and channel names to lowercase, as Mattermost expects.
+	// Normalize the team name to lowercase, as Mattermost expects. This is
+	// advisory metadata recorded in the bundle; the Docs import request selects
+	// the actual target team.
 	team = strings.ToLower(team)
-	channel = strings.ToLower(channel)
-
-	if channel != "" {
-		fmt.Println("Note: --channel is deprecated and ignored in v2; the Space's backing channel is resolved at import time.")
-	}
 
 	// When --bundle is set, stage the JSONL, manifest, and data/ into a temp dir
 	// and zip it into one self-contained archive. Otherwise keep loose files.
@@ -314,7 +309,7 @@ func transformConfluenceCmdF(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create transformer
-	confluenceTransformer := confluence.NewTransformer(team, channel, logger, config)
+	confluenceTransformer := confluence.NewTransformer(team, logger, config)
 	confluenceTransformer.ExportFile = inputFilePath
 
 	// Load user mapping if provided
@@ -335,7 +330,7 @@ func transformConfluenceCmdF(cmd *cobra.Command, args []string) error {
 	}
 
 	// Run pre-flight validation
-	validator := confluence.NewValidator(team, channel)
+	validator := confluence.NewValidator(team)
 	validator.RequireUserMapping = requireUserMapping
 	validator.FailOnRestricted = failOnRestricted
 	if mattermostURL != "" && mattermostToken != "" {

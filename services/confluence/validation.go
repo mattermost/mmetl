@@ -35,22 +35,21 @@ type Validator struct {
 	MattermostURL string
 	// MattermostToken is the authentication token (optional for server validation)
 	MattermostToken string
-	// TeamName is the target team name
+	// TeamName is the advisory destination team recorded in the bundle. Optional
+	// server validation may check that it exists, but it is not a routing
+	// authority — the Docs import request selects the actual target team.
 	TeamName string
-	// ChannelName is the target channel name (deprecated in v2; the backing
-	// channel is resolved at import time). Only used for optional server checks.
-	ChannelName string
 	// RequireUserMapping fails validation when any author is unmapped.
 	RequireUserMapping bool
 	// FailOnRestricted fails validation when any page carries a View restriction.
 	FailOnRestricted bool
 }
 
-// NewValidator creates a new validator.
-func NewValidator(teamName, channelName string) *Validator {
+// NewValidator creates a new validator. teamName is advisory destination
+// metadata; the Docs import request selects the actual target team.
+func NewValidator(teamName string) *Validator {
 	return &Validator{
-		TeamName:    teamName,
-		ChannelName: channelName,
+		TeamName: teamName,
 	}
 }
 
@@ -240,8 +239,10 @@ func (v *Validator) ValidateServer(ctx context.Context) *ValidationResult {
 	client := model.NewAPIv4Client(v.MattermostURL)
 	client.SetToken(v.MattermostToken)
 
-	// Validate team exists
-	team, resp, err := client.GetTeamByName(ctx, v.TeamName, "")
+	// Validate the advisory team exists. This is a courtesy check only: the team
+	// is advisory metadata and the Docs import request selects the actual target.
+	// We never inspect any regular or Space backing channel here.
+	_, resp, err := client.GetTeamByName(ctx, v.TeamName, "")
 	if err != nil {
 		if resp != nil && resp.StatusCode == http.StatusNotFound {
 			result.Valid = false
@@ -251,33 +252,6 @@ func (v *Validator) ValidateServer(ctx context.Context) *ValidationResult {
 			result.Errors = append(result.Errors, fmt.Sprintf("failed to check team: %v", err))
 		}
 		return result
-	}
-
-	// The backing channel is resolved at import time in v2, so a channel is only
-	// checked when one was explicitly supplied.
-	if v.ChannelName == "" {
-		return result
-	}
-
-	// Validate channel exists
-	channel, resp, err := client.GetChannelByName(ctx, v.ChannelName, team.Id, "")
-	if err != nil {
-		if resp != nil && resp.StatusCode == http.StatusNotFound {
-			result.Valid = false
-			result.Errors = append(result.Errors, fmt.Sprintf("channel %q not found in team %q", v.ChannelName, v.TeamName))
-		} else {
-			result.Valid = false
-			result.Errors = append(result.Errors, fmt.Sprintf("failed to check channel: %v", err))
-		}
-		return result
-	}
-
-	// Validate permissions (check if we can get channel membership)
-	_, resp, err = client.GetChannelMember(ctx, channel.Id, "me", "")
-	if err != nil {
-		if resp != nil && resp.StatusCode == http.StatusForbidden {
-			result.Warnings = append(result.Warnings, fmt.Sprintf("may not have access to channel %q", v.ChannelName))
-		}
 	}
 
 	return result

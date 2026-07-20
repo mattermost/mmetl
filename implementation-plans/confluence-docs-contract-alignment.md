@@ -1,5 +1,17 @@
 # Confluence CSV → Docs contract alignment (mmetl)
 
+> **Status:** Implemented by `0430bbd`, `c62beaf`, and the channel-surface
+> cleanup that followed. The v2 contract, single-Space bundle, attachment
+> metadata, restriction detection, validation, and tests are in place. The
+> deprecated channel surface is now fully removed: the `--channel` flag,
+> `Transformer.ChannelName`, `Validator.ChannelName`, `ManifestTarget.Channel`,
+> the channel constructor arguments, and the optional server-side channel
+> lookup/membership validation are all gone. The manifest serializes
+> `target.team` with no `channel` key. The **only** remaining producer blocker
+> is verifying the CSV attachment byte layout against a real attachment-bearing
+> export. The target team carried by the bundle is advisory metadata; the Docs
+> import request is authoritative.
+
 ## Summary
 
 Follow-up to the CSV export work ([confluence-csv-export-support.md](confluence-csv-export-support.md))
@@ -41,30 +53,26 @@ Scope, in priority order:
 
 ## Current State (grounded references)
 
-- Emits v1 lines `version`, `channel`, `wiki`, `page`, `page_comment`,
-  `resolve_wiki_placeholders` ([export.go:24,152-408](../services/confluence/export.go)).
-- **Multi-space scaffolding is dead code**: `ConfluenceExport.Spaces`
-  ([types.go:16](../services/confluence/types.go)), `setupWikisFromSpaces` looping
-  `range export.Spaces` ([intermediate.go:189](../services/confluence/intermediate.go)),
-  and `ExportWikis` emitting one `wiki` per space ([export.go:180](../services/confluence/export.go)).
-  The CSV parser only ever inserts one space ([csv_parser.go:247](../services/confluence/csv_parser.go))
-  and assigns every page `page.SpaceKey = export.SpaceKey` — nothing populates >1.
-- **Attachments unpopulated**: `csv_parser.go` has no `ATTACHMENT` handling, so
-  `export.Attachments` is empty, `ExtractAttachments` matches nothing
-  ([attachments.go:38](../services/confluence/attachments.go)), and
-  `ConvertAttachmentPlaceholdersToFileIDs` is a no-op because its `filenameToID`
-  map is empty ([intermediate.go:247-256](../services/confluence/intermediate.go),
-  [links.go:345](../services/confluence/links.go)) — so `CONF_ATTACHMENT` tokens
-  are never rewritten to `CONF_FILE`.
-- **Channel dictated by producer**: every `wiki`/`page` line carries Team+Channel,
-  and `--create-channel` emits a `channel` line ([export.go:159](../services/confluence/export.go)).
-  `--channel` is currently a **required** flag ([transform.go](../commands/transform.go)).
-- **Identity already preserved** (from the CSV work): `props.confluence_author_account_id`
-  on pages/comments + a manifest `users` list.
-- Body size warned only >10 MiB; Docs caps Body/SearchText at 2 MiB and Props at
-  64 KiB. `update_at` captured (`IntermediatePage.UpdateAt`) but not emitted.
+- Emits v2 `version`, `space`, `page`, `page_comment`, and
+  `resolve_space_placeholders` lines; no channel line or entity channel field
+  ([export.go](../services/confluence/export.go)).
+- Enforces one bundle = one Space on the parse and transform paths.
+- Parses attachment metadata and normalizes `CONF_ATTACHMENT` placeholders to
+  source-ID-based `CONF_FILE` placeholders. Attachment byte extraction still
+  assumes the unverified legacy path layout.
+- **Done:** the `--channel` flag and all Confluence channel plumbing are
+  removed. There is no `Transformer.ChannelName`, `Validator.ChannelName`,
+  `ManifestTarget.Channel`, or channel constructor argument, and the optional
+  server-side channel lookup/membership validation is gone. The manifest
+  serializes `target.team` with no `channel` key.
+- `--team` and emitted `team` values remain producer/operator intent and are
+  advisory to the importer. The import request chooses the actual destination.
+- Preserves identity through `props.confluence_author_account_id` and the
+  manifest `users` list.
+- Applies Docs Body/Props warnings, validates TipTap JSON, emits `update_at`, and
+  detects View-restricted pages with warning/fail behavior.
 
-## Proposed Approach
+## Implemented Approach and Remaining Follow-ups
 
 ### 1. Commit to single-space (remove multi-space scaffolding)
 
@@ -107,17 +115,31 @@ and fields:
 - This is a v2-only contract; there is no shipped consumer of v1, so no
   compatibility shim is required. Document the schema in `docs/`.
 
-### 3. Stop dictating the backing channel
+### 3. Stop dictating the backing channel; make team advisory — **done**
 
-Per the reconciliation, the Docs plugin owns the Space's backing channel; mmetl
-must not decide it.
+The Docs plugin owns the Space's opaque `ChannelTypeSpace` backing channel;
+mmetl must not decide or attempt to discover it. The import request is
+authoritative for the actual target team and access policy.
 
-- Drop the `channel` line and `ExportChannel`/`AutoCreateChannel`/`--create-channel`.
-- Remove `Channel` from the `space`/`page` contract (backing channel is resolved
-  at import time from the import request).
-- Keep `--team` as target-team context. Make `--channel` **optional** and
-  **deprecated** (documented as ignored in v2), or remove it; do not keep it as a
-  required backing-channel input.
+Completed:
+
+- **Done:** dropped the `channel` line and `ExportChannel`/`AutoCreateChannel`/`--create-channel`.
+- **Done:** removed `Channel` from the `space`/`page` contract (the backing channel
+  is created and resolved by the Docs importer).
+- **Done:** removed the `target.channel` manifest field (the manifest serializes
+  `target.team` with no `channel` key) and the optional server-side channel
+  lookup/membership validation. A Space backing channel is hidden from generic
+  channel lookup, and there is no channel field in v2.
+- **Done:** removed the `--channel` flag entirely, along with
+  `Transformer.ChannelName`, `Validator.ChannelName`, and the `channelName`
+  arguments to `NewTransformer`/`NewValidator`/`NewManifest`. mmetl no longer
+  creates, identifies, discovers, or validates the Space backing channel.
+- **Done:** `--team` remains required and its emitted `team` values are
+  **advisory operator metadata**; its CLI description now says so explicitly.
+  Optional server validation may still confirm the advisory team exists, but it
+  never inspects any regular or Space channel. The importer records the team for
+  audit and may warn when it differs from the requested team, but must never
+  route an import from the bundle value.
 
 ### 4. Attachments
 
@@ -186,7 +208,8 @@ page widens access. Add **detection** (not enforcement):
 - Extend `csv_parser_test.go` / add `export_test.go`:
   - v2 schema: assert exact emitted keys per line (`space`,
     `space_import_source_id`, `resolve_space_placeholders`, `version: 2`, source
-    namespace).
+    namespace); assert no channel line, no entity `channel`, and no manifest
+    `target.channel`.
   - single-space guardrail: a synthetic two-space export errors.
   - attachments: `ATTACHMENT` rows populate `export.Attachments`; a
     `CONF_ATTACHMENT` body token becomes `CONF_FILE`; page `attachments` array
@@ -206,10 +229,10 @@ page widens access. Add **detection** (not enforcement):
 | `services/confluence/intermediate.go` | `setupSpace` (single); `IntermediateSpace`; multi-space guardrail; TipTap `json.Valid` check |
 | `services/confluence/csv_parser.go` | Parse `ATTACHMENT` content rows → `export.Attachments`; parse `content_perm*` for restriction detection |
 | `services/confluence/attachments.go` | Verify/adjust CSV attachment path layout (pending real fixture) |
-| `services/confluence/validation.go` | 2 MiB / 64 KiB caps; restricted-page reporting |
-| `services/confluence/manifest.go` | `source` namespace; `restricted_pages` |
+| `services/confluence/validation.go` | 2 MiB / 64 KiB caps; restricted-page reporting; remove legacy target-channel validation |
+| `services/confluence/manifest.go` | `source` namespace; `restricted_pages`; keep target team as advisory metadata and remove `target.channel` |
 | `services/confluence/types.go` | Rename `IntermediateWiki`→`IntermediateSpace` (transform side) |
-| `commands/transform.go` | `--bundle`; deprecate/relax `--channel`; drop `--create-channel`; fix recipe; summary wording |
+| `commands/transform.go` | `--bundle`; deprecate then remove `--channel`; document `--team` as advisory metadata; drop `--create-channel`; fix recipe; summary wording |
 | `docs/cli/` | `make docs` |
 
 ## Risks & Open Questions
@@ -218,19 +241,25 @@ page widens access. Add **detection** (not enforcement):
    closing the attachments item needs a real CSV export containing files to
    confirm the on-disk path. This is the one item that can't be fully finished
    from the current sample.
-2. **No shipped consumer** — the v2 contract is being defined ahead of the Docs
-   import API. Names/fields here should be agreed with the plugin team so both
-   sides land together (see the integration plan's rollout).
+2. **No shipped consumer** — the v2 producer contract exists ahead of the Docs
+   import API. Freeze any remaining field changes with the plugin team before
+   the first consumer lands (see the integration plan's rollout).
 3. **`update_at` is advisory** — even when emitted, the plugin's interactive
    `CreatePage` overwrites timestamps; preserving them needs the plugin's
    import-specific methods. mmetl emitting it is necessary but not sufficient.
-4. Dropping `channel`/`--create-channel` is a behavior change; acceptable now
-   because nothing consumes it, but coordinate before anyone builds on v1.
+4. Dropping `channel`/`--create-channel` is intentional: mattermost#37321 makes
+   Space backing channels opaque and plugin-managed. The `target.channel`
+   manifest field and the `--channel` flag are now **removed** — no channel
+   surface remains on the producer.
 
 ## Rollout
 
-1. §1 single-space + §2 naming/version (contract-shaping, do first, together).
-2. §3 channel removal + §5 bundle (producer surface).
-3. §4 attachments metadata + §6 validation + §7 restrictions.
-4. §8 tests throughout; close the attachments item once a real
-   attachment-bearing CSV export is available.
+1. **Done:** single-Space v2 contract, channel line removal, bundle output,
+   attachment metadata, validation, restriction detection, and producer tests.
+2. **Done:** removed manifest `target.channel`, the legacy channel validation,
+   and the `--channel` flag (plus all channel plumbing). No channel surface
+   remains on the producer.
+3. Close attachment extraction once a real attachment-bearing CSV export proves
+   the on-disk layout. **This is the remaining producer blocker.**
+4. Freeze the resulting producer schema with the Docs import consumer and run
+   the cross-repository E2E suite.

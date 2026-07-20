@@ -87,7 +87,7 @@ func buildFixtureZip(t *testing.T, files map[string]string) *zip.Reader {
 func newTestTransformer() *Transformer {
 	logger := log.New()
 	logger.SetLevel(log.PanicLevel)
-	return NewTransformer("team", "channel", logger, &TransformConfig{SkipAttachments: true, MaxDepth: 10})
+	return NewTransformer("team", logger, &TransformConfig{SkipAttachments: true, MaxDepth: 10})
 }
 
 func parseFixture(t *testing.T, files map[string]string) (*Transformer, *ConfluenceExport) {

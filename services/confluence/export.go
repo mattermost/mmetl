@@ -449,7 +449,7 @@ func (t *Transformer) ExportWithManifest(outputFilePath string, export *Confluen
 	}
 
 	// Generate manifest
-	manifest := NewManifest(export, t.TeamName, t.ChannelName, t.ExportFile)
+	manifest := NewManifest(export, t.TeamName, t.ExportFile)
 	spaces := 0
 	if t.Intermediate.Space != nil {
 		spaces = 1
