@@ -18,6 +18,7 @@ mmetl check slack [flags]
       --debug                         Whether to show debug logs or not (default true)
       --default-email-domain string   If this flag is provided: When a user's email address is empty, the output's email address will be generated from their username and the provided domain.
   -f, --file string                   the Slack export file to transform
+      --guest-handling string         How to migrate Slack guest users when checking the export. One of "guest", "user", or "skip". Use the same value you plan to pass to "transform slack" so the check reflects that mode. (default "guest")
   -h, --help                          help for slack
       --skip-empty-emails             Ignore empty email addresses from the import file. Note that this results in invalid data.
 ```
