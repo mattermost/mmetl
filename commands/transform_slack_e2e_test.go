@@ -1602,12 +1602,20 @@ func TestTransformSlackE2EGuestUserMode(t *testing.T) {
 	// Team-level roles: former guests are scheme_user, never scheme_guest.
 	teamMembers, err := th.GetTeamMembers(ctx, team.Id)
 	require.NoError(t, err)
+	var foundMultiGuest, foundSingleGuest bool
 	for _, tm := range teamMembers {
 		if tm.UserId == multiGuest.Id || tm.UserId == singleGuest.Id {
+			if tm.UserId == multiGuest.Id {
+				foundMultiGuest = true
+			} else {
+				foundSingleGuest = true
+			}
 			assert.True(t, tm.SchemeUser, "former guest should be scheme_user in user mode")
 			assert.False(t, tm.SchemeGuest, "former guest should not be scheme_guest in user mode")
 		}
 	}
+	assert.True(t, foundMultiGuest, "multi.guest should be a team member in user mode")
+	assert.True(t, foundSingleGuest, "single.guest should be a team member in user mode")
 
 	// All posts are imported, including former-guest content and the full thread.
 	generalChannel := th.AssertChannelExists(ctx, teamName, "general")
