@@ -20,6 +20,56 @@ type Exporter struct {
 	TeamName     string
 	Intermediate *Intermediate
 	Logger       log.FieldLogger
+
+	// EmitGuestRoles controls whether users flagged with IsGuest are exported
+	// with Mattermost guest roles (system_guest / team_guest / channel_guest).
+	// It is true only when guest handling is set to "guest"; in "user" mode
+	// guests are exported with regular user roles, and in "skip" mode they are
+	// not present at all.
+	EmitGuestRoles bool
+
+	// guestUsernames memoizes the set of effective-guest usernames (see
+	// isEffectiveGuest) so it is computed once and reused across the group- and
+	// direct-channel export passes rather than rebuilt on each call.
+	guestUsernames map[string]bool
+}
+
+// isEffectiveGuest reports whether user should be exported with Mattermost
+// guest roles/scheme flags: emitGuestRoles is enabled, the user is flagged as
+// a guest, and they have at least one regular (public/private) channel
+// membership. The membership requirement exists because Mattermost's importer
+// rejects a user that is a guest in only some of system/team/channel scope
+// (see isValidGuestRoles in mattermost/server's import_validators.go), so a
+// guest with no channel memberships is exported as a regular member instead of
+// producing an invalid line that would abort the whole bulk import. Using the
+// same rule everywhere a user's guest status is exported (their "user" line and
+// any direct/group channel they participate in) keeps a single user's guest
+// status consistent across every line that references them.
+//
+// Note: for RocketChat, channel-less guests are dropped upstream in the
+// transformer (guest mode), so this fallback is a last-resort safety net rather
+// than the primary path.
+func isEffectiveGuest(user *IntermediateUser, emitGuestRoles bool) bool {
+	return emitGuestRoles && user.IsGuest && len(user.Memberships) > 0
+}
+
+// effectiveGuestUsernames returns (memoized) the set of usernames that should
+// be marked as guests wherever they appear. Empty when guest roles are not
+// being emitted.
+func (e *Exporter) effectiveGuestUsernames() map[string]bool {
+	if e.guestUsernames != nil {
+		return e.guestUsernames
+	}
+	set := make(map[string]bool)
+	if e.EmitGuestRoles {
+		for _, user := range e.Intermediate.UsersById {
+			if isEffectiveGuest(user, e.EmitGuestRoles) {
+				set[user.Username] = true
+			}
+		}
+	}
+	e.guestUsernames = set
+	return set
 }
 
 func GetImportLineFromChannel(team string, channel *IntermediateChannel) *imports.LineImportData {
@@ -42,17 +92,23 @@ func GetImportLineFromChannel(team string, channel *IntermediateChannel) *import
 	}
 }
 
-func GetImportLineFromDirectChannel(team string, channel *IntermediateChannel) *imports.LineImportData {
+// GetImportLineFromDirectChannel builds the bulk-import "direct_channel" line.
+// guestUsernames is the set of usernames (from isEffectiveGuest) that should be
+// marked as guests in this channel's participant list, so a guest's status is
+// consistent with their "user" line.
+func GetImportLineFromDirectChannel(team string, channel *IntermediateChannel, guestUsernames map[string]bool) *imports.LineImportData {
 	var participants []*imports.DirectChannelMemberImportData
 	lastViewedAt := channel.LastPostAt
 	if lastViewedAt == 0 {
 		lastViewedAt = channel.CreatedMillis()
 	}
 	for _, username := range channel.MembersUsernames {
+		isGuest := guestUsernames[username]
 		p := &imports.DirectChannelMemberImportData{
 			Username:     model.NewPointer(username),
 			LastViewedAt: model.NewPointer(lastViewedAt),
-			SchemeUser:   model.NewPointer(true),
+			SchemeUser:   model.NewPointer(!isGuest),
+			SchemeGuest:  model.NewPointer(isGuest),
 		}
 		if channel.MsgCount > 0 {
 			p.MsgCount = model.NewPointer(channel.MsgCount)
@@ -71,12 +127,27 @@ func GetImportLineFromDirectChannel(team string, channel *IntermediateChannel) *
 	}
 }
 
-func GetImportLineFromUser(user *IntermediateUser, team string) *imports.LineImportData {
+// GetImportLineFromUser builds a user import line. When emitGuestRoles is true
+// and the user is flagged as a guest, the user, team, and channel roles are set
+// to Mattermost's guest roles; otherwise the regular user roles are used. Bots
+// are never guests, so the caller should pass a non-guest user here.
+func GetImportLineFromUser(user *IntermediateUser, team string, emitGuestRoles bool) *imports.LineImportData {
+	isGuest := isEffectiveGuest(user, emitGuestRoles)
+
+	systemRole := model.SystemUserRoleId
+	teamRole := model.TeamUserRoleId
+	channelRole := model.ChannelUserRoleId
+	if isGuest {
+		systemRole = model.SystemGuestRoleId
+		teamRole = model.TeamGuestRoleId
+		channelRole = model.ChannelGuestRoleId
+	}
+
 	channelMemberships := []imports.UserChannelImportData{}
 	for _, membership := range user.Memberships {
 		ch := imports.UserChannelImportData{
 			Name:  model.NewPointer(membership.Name),
-			Roles: model.NewPointer(model.ChannelUserRoleId),
+			Roles: model.NewPointer(channelRole),
 		}
 		if membership.LastViewedAt > 0 {
 			ch.LastViewedAt = model.NewPointer(membership.LastViewedAt)
@@ -107,13 +178,13 @@ func GetImportLineFromUser(user *IntermediateUser, team string) *imports.LineImp
 			FirstName: model.NewPointer(user.FirstName),
 			LastName:  model.NewPointer(user.LastName),
 			Position:  model.NewPointer(user.Position),
-			Roles:     model.NewPointer(model.SystemUserRoleId),
+			Roles:     model.NewPointer(systemRole),
 			DeleteAt:  deleteAt,
 			Teams: &[]imports.UserTeamImportData{
 				{
 					Name:     model.NewPointer(team),
 					Channels: channelsPtr,
-					Roles:    model.NewPointer(model.TeamUserRoleId),
+					Roles:    model.NewPointer(teamRole),
 				},
 			},
 		},
@@ -304,11 +375,12 @@ func (e *Exporter) ExportChannels(channels []*IntermediateChannel, writer io.Wri
 
 // ExportDirectChannels is valid for group or direct channels, as they export with members.
 func (e *Exporter) ExportDirectChannels(channels []*IntermediateChannel, writer io.Writer) error {
+	guestUsernames := e.effectiveGuestUsernames()
 	for _, channel := range channels {
 		if channel.LastPostAt == 0 && channel.Created <= 0 {
 			e.Logger.Warnf("Direct/group channel %s has no valid creation timestamp; using current time for LastViewedAt", channel.Name)
 		}
-		line := GetImportLineFromDirectChannel(e.TeamName, channel)
+		line := GetImportLineFromDirectChannel(e.TeamName, channel, guestUsernames)
 		if err := ExportWriteLine(writer, line); err != nil {
 			return err
 		}
@@ -339,7 +411,14 @@ func (e *Exporter) ExportUsers(writer io.Writer, botOwner string) error {
 
 	// Write regular users first (bot owner must exist before bots)
 	for _, user := range users {
-		line := GetImportLineFromUser(user, e.TeamName)
+		// A guest with no channel memberships can't be a valid Mattermost guest
+		// (see isEffectiveGuest); it falls back to a regular member here. For
+		// RocketChat these are dropped upstream in the transformer, so this only
+		// fires as a safety net for any that slip through.
+		if e.EmitGuestRoles && user.IsGuest && len(user.Memberships) == 0 {
+			e.Logger.Warnf("Guest user %s has no channel memberships; importing as a regular member instead, since Mattermost requires guests to have at least one channel", user.Username)
+		}
+		line := GetImportLineFromUser(user, e.TeamName, e.EmitGuestRoles)
 		if err := ExportWriteLine(writer, line); err != nil {
 			return err
 		}

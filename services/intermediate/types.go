@@ -1,6 +1,6 @@
 // Package intermediate holds the source-agnostic representation of a workspace
 // migration (channels, users, posts) together with the exporter that writes the
-// Mattermost bulk-import JSONL. Source-specific services (Slack, Rocket.Chat,
+// Mattermost bulk-import JSONL. Source-specific services (Slack, RocketChat,
 // ...) transform their exports into these types and embed the Exporter to
 // produce the final import file.
 package intermediate
@@ -192,6 +192,7 @@ type IntermediateUser struct {
 	Memberships []IntermediateMembership `json:"memberships"`
 	DeleteAt    int64                    `json:"delete_at"`
 	IsBot       bool                     `json:"is_bot"`
+	IsGuest     bool                     `json:"is_guest"`
 	DisplayName string                   `json:"display_name"`
 }
 
