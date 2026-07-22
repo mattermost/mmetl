@@ -19,10 +19,19 @@ type Transformer struct {
 	// and posts referencing them, leaving no dangling references in the export.
 	skippedUserIDs map[string]bool
 
-	// droppedPostRefs / droppedMembershipRefs count references removed because
-	// they pointed at a skipped user, for the end-of-transform summary log.
+	// droppedPostRefs / droppedReactionRefs / droppedMembershipRefs count
+	// references removed because they pointed at a skipped user, for the
+	// end-of-transform summary log. Reactions are tracked separately from
+	// posts so the summary doesn't overstate the number of dropped posts.
 	droppedPostRefs       int
+	droppedReactionRefs   int
 	droppedMembershipRefs int
+
+	// warnedDroppedThreads records channel+thread keys already warned about when
+	// a thread was dropped because its root was never imported (e.g. a skipped
+	// guest started it), so a thread with many replies emits one WARN, not one
+	// per reply. droppedPostRefs still counts every dropped reply.
+	warnedDroppedThreads map[string]bool
 }
 
 // Guest handling modes for the --guest-handling flag.

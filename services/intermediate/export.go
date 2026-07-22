@@ -26,6 +26,29 @@ type Exporter struct {
 	// Source-specific transformers set this from their own guest-handling
 	// option; when false, guests are exported with regular user roles.
 	EmitGuestRoles bool
+
+	// guestUsernames caches the set of usernames that should be marked as
+	// guests in direct/group channel participant lists. Built lazily by
+	// guestUsernameSet, since ExportDirectChannels is called twice (once for
+	// group channels, once for direct channels).
+	guestUsernames map[string]bool
+}
+
+// guestUsernameSet returns the set of usernames that should be exported with
+// guest roles in direct/group channel participant lists, computing it once and
+// caching the result on the Exporter.
+func (e *Exporter) guestUsernameSet() map[string]bool {
+	if e.guestUsernames != nil {
+		return e.guestUsernames
+	}
+	guestUsernames := make(map[string]bool)
+	for _, user := range e.Intermediate.UsersById {
+		if isEffectiveGuest(user, e.EmitGuestRoles) {
+			guestUsernames[user.Username] = true
+		}
+	}
+	e.guestUsernames = guestUsernames
+	return guestUsernames
 }
 
 func GetImportLineFromChannel(team string, channel *IntermediateChannel) *imports.LineImportData {
@@ -348,12 +371,7 @@ func (e *Exporter) ExportChannels(channels []*IntermediateChannel, writer io.Wri
 
 // ExportDirectChannels is valid for group or direct channels, as they export with members.
 func (e *Exporter) ExportDirectChannels(channels []*IntermediateChannel, writer io.Writer) error {
-	guestUsernames := make(map[string]bool)
-	for _, user := range e.Intermediate.UsersById {
-		if isEffectiveGuest(user, e.EmitGuestRoles) {
-			guestUsernames[user.Username] = true
-		}
-	}
+	guestUsernames := e.guestUsernameSet()
 
 	for _, channel := range channels {
 		if channel.LastPostAt == 0 && channel.Created <= 0 {
@@ -390,9 +408,6 @@ func (e *Exporter) ExportUsers(writer io.Writer, botOwner string) error {
 
 	// Write regular users first (bot owner must exist before bots)
 	for _, user := range users {
-		if e.EmitGuestRoles && user.IsGuest && len(user.Memberships) == 0 {
-			e.Logger.Warnf("Guest user %s has no channel memberships; importing as a regular member instead, since Mattermost requires guests to have at least one channel", user.Username)
-		}
 		line := GetImportLineFromUser(user, e.TeamName, e.EmitGuestRoles)
 		if err := ExportWriteLine(writer, line); err != nil {
 			return err

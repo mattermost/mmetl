@@ -49,7 +49,7 @@ func init() {
 	TransformSlackCmd.Flags().String("guest-handling", slack.GuestHandlingGuest, `How to migrate Slack guest users (single- and multi-channel guests). One of:
   "guest" - migrate them as Mattermost guests (system_guest/team_guest/channel_guest). Highest fidelity, but the destination server must have Guest Accounts licensed (Professional/Enterprise) and enabled (GuestAccountsSettings.Enable); otherwise the accounts won't behave correctly.
   "user"  - migrate them as regular Mattermost users. Works everywhere, but grants guests full user permissions.
-  "skip"  - drop guest users entirely, along with their memberships and authored posts.`)
+  "skip"  - drop guest users entirely, along with their memberships and authored posts/reactions.`)
 	TransformSlackCmd.Flags().BoolP("allow-download", "l", false, "Allows downloading the attachments for the import file")
 	TransformSlackCmd.Flags().BoolP("discard-invalid-props", "p", false, "Skips converting posts with invalid props instead discarding the props themselves")
 	TransformSlackCmd.Flags().Bool("debug", false, "Whether to show debug logs or not")
