@@ -796,7 +796,7 @@ func TestTransformUsers(t *testing.T) {
 
 	defaultEmailDomain := ""
 	skipEmptyEmails := false
-	slackTransformer.TransformUsers(users, skipEmptyEmails, defaultEmailDomain)
+	slackTransformer.TransformUsers(users, skipEmptyEmails, defaultEmailDomain, GuestHandlingGuest)
 	require.Len(t, slackTransformer.Intermediate.UsersById, len(users))
 
 	for i, id := range []string{id1, id2, id3} {
@@ -808,6 +808,225 @@ func TestTransformUsers(t *testing.T) {
 		assert.Equal(t, fmt.Sprintf("email%d@example.com", i+1), slackTransformer.Intermediate.UsersById[id].Email)
 		assert.Zero(t, slackTransformer.Intermediate.UsersById[id].DeleteAt)
 	}
+}
+
+func TestTransformUsersGuests(t *testing.T) {
+	multiChannelGuestId := "guest-multi"
+	singleChannelGuestId := "guest-single"
+	regularId := "regular"
+	botId := "bot"
+
+	guestUsers := func() []SlackUser {
+		return []SlackUser{
+			{
+				Id:           multiChannelGuestId,
+				Username:     "multi.guest",
+				IsRestricted: true,
+				Profile: SlackProfile{
+					RealName: "Multi Guest",
+					Email:    "multi.guest@example.com",
+				},
+			},
+			{
+				Id:                singleChannelGuestId,
+				Username:          "single.guest",
+				IsRestricted:      true,
+				IsUltraRestricted: true,
+				Profile: SlackProfile{
+					RealName: "Single Guest",
+					Email:    "single.guest@example.com",
+				},
+			},
+			{
+				Id:       regularId,
+				Username: "regular.user",
+				Profile: SlackProfile{
+					RealName: "Regular User",
+					Email:    "regular.user@example.com",
+				},
+			},
+			{
+				Id:           botId,
+				Username:     "guestbot",
+				IsBot:        true,
+				IsRestricted: true, // Slack never sets this on bots, but guard against it anyway.
+				Profile: SlackProfile{
+					BotID:    "B001",
+					RealName: "Guest Bot",
+				},
+			},
+		}
+	}
+
+	t.Run("guest-handling=guest flags guests but does not drop them", func(t *testing.T) {
+		slackTransformer := NewTransformer("test", log.New())
+		slackTransformer.TransformUsers(guestUsers(), false, "", GuestHandlingGuest)
+
+		require.Len(t, slackTransformer.Intermediate.UsersById, 4)
+		assert.True(t, slackTransformer.Intermediate.UsersById[multiChannelGuestId].IsGuest)
+		assert.True(t, slackTransformer.Intermediate.UsersById[singleChannelGuestId].IsGuest)
+		assert.False(t, slackTransformer.Intermediate.UsersById[regularId].IsGuest)
+		assert.False(t, slackTransformer.Intermediate.UsersById["B001"].IsGuest)
+	})
+
+	t.Run("guest-handling=user flags guests but does not drop them", func(t *testing.T) {
+		slackTransformer := NewTransformer("test", log.New())
+		slackTransformer.TransformUsers(guestUsers(), false, "", GuestHandlingUser)
+
+		require.Len(t, slackTransformer.Intermediate.UsersById, 4)
+		// IsGuest reflects detection regardless of mode; the export mode
+		// (Exporter.EmitGuestRoles) decides whether guest roles are emitted.
+		assert.True(t, slackTransformer.Intermediate.UsersById[multiChannelGuestId].IsGuest)
+		assert.True(t, slackTransformer.Intermediate.UsersById[singleChannelGuestId].IsGuest)
+	})
+
+	t.Run("guest-handling=skip drops guests entirely", func(t *testing.T) {
+		slackTransformer := NewTransformer("test", log.New())
+		slackTransformer.TransformUsers(guestUsers(), false, "", GuestHandlingSkip)
+
+		require.Len(t, slackTransformer.Intermediate.UsersById, 2)
+		assert.Nil(t, slackTransformer.Intermediate.UsersById[multiChannelGuestId])
+		assert.Nil(t, slackTransformer.Intermediate.UsersById[singleChannelGuestId])
+		assert.NotNil(t, slackTransformer.Intermediate.UsersById[regularId])
+		assert.NotNil(t, slackTransformer.Intermediate.UsersById["B001"])
+		assert.True(t, slackTransformer.skippedUserIDs[multiChannelGuestId])
+		assert.True(t, slackTransformer.skippedUserIDs[singleChannelGuestId])
+	})
+}
+
+// TestDropChannellessGuests covers guest-handling=guest for guests that end up
+// with no public/private channel membership: Mattermost can't scope a guest's
+// access without one, so instead of silently promoting them to a full member,
+// they must be skipped entirely, cascading to their DM/group memberships and
+// authored posts.
+func TestDropChannellessGuests(t *testing.T) {
+	t.Run("a DM that collapses to a single member after dropping the guest is not imported", func(t *testing.T) {
+		slackTransformer := NewTransformer("test", log.New())
+		slackExport := &SlackExport{
+			Users: []SlackUser{
+				{Id: "U001", Username: "regular", Profile: SlackProfile{Email: "regular@example.com"}},
+				{Id: "U002", Username: "channelless.guest", IsRestricted: true, Profile: SlackProfile{Email: "guest@example.com"}},
+			},
+			DirectChannels: []SlackChannel{
+				{
+					Id:      "D001",
+					Members: []string{"U001", "U002"},
+					Type:    model.ChannelTypeDirect,
+				},
+			},
+		}
+
+		err := slackTransformer.Transform(slackExport, "", true, false, false, false, "", GuestHandlingGuest)
+		require.NoError(t, err)
+
+		assert.Nil(t, slackTransformer.Intermediate.UsersById["U002"], "channelless guest must be dropped")
+		assert.NotNil(t, slackTransformer.Intermediate.UsersById["U001"], "regular user must be kept")
+		assert.True(t, slackTransformer.skippedUserIDs["U002"])
+		assert.Empty(t, slackTransformer.Intermediate.DirectChannels, "DM must be dropped once it collapses to a single member")
+	})
+
+	t.Run("a group channel survives without the guest, and the guest's post is dropped", func(t *testing.T) {
+		slackTransformer := NewTransformer("test", log.New())
+		slackExport := &SlackExport{
+			Users: []SlackUser{
+				{Id: "U001", Username: "regular1", Profile: SlackProfile{Email: "regular1@example.com"}},
+				{Id: "U002", Username: "regular2", Profile: SlackProfile{Email: "regular2@example.com"}},
+				{Id: "U003", Username: "channelless.guest", IsRestricted: true, Profile: SlackProfile{Email: "guest@example.com"}},
+			},
+			GroupChannels: []SlackChannel{
+				{
+					Id:      "G001",
+					Name:    "mpim-test",
+					Members: []string{"U001", "U002", "U003"},
+					Type:    model.ChannelTypeGroup,
+				},
+			},
+			Posts: map[string][]SlackPost{
+				"mpim-test": {
+					{User: "U001", Text: "hi from regular", TimeStamp: "1704067200.000100", Type: "message"},
+					{User: "U003", Text: "hi from guest", TimeStamp: "1704067260.000200", Type: "message"},
+				},
+			},
+		}
+
+		err := slackTransformer.Transform(slackExport, "", true, false, false, false, "", GuestHandlingGuest)
+		require.NoError(t, err)
+
+		assert.Nil(t, slackTransformer.Intermediate.UsersById["U003"], "channelless guest must be dropped")
+		require.Len(t, slackTransformer.Intermediate.GroupChannels, 1, "group channel must survive with 2 members left")
+		assert.ElementsMatch(t, []string{"regular1", "regular2"}, slackTransformer.Intermediate.GroupChannels[0].MembersUsernames)
+
+		require.Len(t, slackTransformer.Intermediate.Posts, 1, "the guest's post must be dropped")
+		assert.Equal(t, "hi from regular", slackTransformer.Intermediate.Posts[0].Message)
+	})
+
+	t.Run("a channelless guest's thread root and its non-guest reply are dropped; a standalone non-guest post survives and a warn is logged", func(t *testing.T) {
+		logger := log.New()
+		buf := &bytes.Buffer{}
+		logger.SetOutput(buf)
+		slackTransformer := NewTransformer("test", logger)
+
+		slackExport := &SlackExport{
+			Users: []SlackUser{
+				{Id: "U001", Username: "regular1", Profile: SlackProfile{Email: "regular1@example.com"}},
+				{Id: "U002", Username: "regular2", Profile: SlackProfile{Email: "regular2@example.com"}},
+				{Id: "U003", Username: "channelless.guest", IsRestricted: true, Profile: SlackProfile{Email: "guest@example.com"}},
+			},
+			GroupChannels: []SlackChannel{
+				{Id: "G001", Name: "mpim-test", Members: []string{"U001", "U002", "U003"}, Type: model.ChannelTypeGroup},
+			},
+			Posts: map[string][]SlackPost{
+				"mpim-test": {
+					{User: "U001", Text: "regular standalone", TimeStamp: "1704067200.000100", Type: "message"},
+					{User: "U003", Text: "guest thread root", TimeStamp: "1704067260.000200", ThreadTS: "1704067260.000200", Type: "message"},
+					{User: "U002", Text: "regular reply in guest thread", TimeStamp: "1704067320.000300", ThreadTS: "1704067260.000200", Type: "message"},
+				},
+			},
+		}
+
+		err := slackTransformer.Transform(slackExport, "", true, false, false, false, "", GuestHandlingGuest)
+		require.NoError(t, err)
+
+		assert.Nil(t, slackTransformer.Intermediate.UsersById["U003"], "channelless guest must be dropped")
+		assert.True(t, slackTransformer.skippedUserIDs["U003"])
+
+		require.Len(t, slackTransformer.Intermediate.GroupChannels, 1, "the MPIM must survive with its two regular members")
+		assert.ElementsMatch(t, []string{"regular1", "regular2"}, slackTransformer.Intermediate.GroupChannels[0].MembersUsernames)
+
+		require.Len(t, slackTransformer.Intermediate.Posts, 1, "only the standalone non-guest post survives")
+		assert.Equal(t, "regular standalone", slackTransformer.Intermediate.Posts[0].Message)
+		assert.Empty(t, slackTransformer.Intermediate.Posts[0].Replies, "the dropped reply must not attach to the surviving post")
+
+		// Guest root dropped at the skipped-user gate + non-guest reply dropped
+		// because its root was never imported.
+		assert.Equal(t, 2, slackTransformer.droppedPostRefs)
+
+		assert.Contains(t, buf.String(), "1704067260.000200", "warn should name the dropped thread")
+		assert.Contains(t, buf.String(), "root post was not imported", "warn should explain why the thread was dropped")
+	})
+
+	t.Run("guest-handling=user does not drop channelless guests", func(t *testing.T) {
+		slackTransformer := NewTransformer("test", log.New())
+		slackExport := &SlackExport{
+			Users: []SlackUser{
+				{Id: "U001", Username: "regular", Profile: SlackProfile{Email: "regular@example.com"}},
+				{Id: "U002", Username: "channelless.guest", IsRestricted: true, Profile: SlackProfile{Email: "guest@example.com"}},
+			},
+			DirectChannels: []SlackChannel{
+				{
+					Id:      "D001",
+					Members: []string{"U001", "U002"},
+					Type:    model.ChannelTypeDirect,
+				},
+			},
+		}
+
+		err := slackTransformer.Transform(slackExport, "", true, false, false, false, "", GuestHandlingUser)
+		require.NoError(t, err)
+
+		assert.NotNil(t, slackTransformer.Intermediate.UsersById["U002"], "guest-handling=user always imports guests as regular members")
+		require.Len(t, slackTransformer.Intermediate.DirectChannels, 1)
+	})
 }
 
 func TestDeleteAt(t *testing.T) {
@@ -866,7 +1085,7 @@ func TestDeleteAt(t *testing.T) {
 
 	defaultEmailDomain := ""
 	skipEmptyEmails := false
-	slackTransformer.TransformUsers(users, skipEmptyEmails, defaultEmailDomain)
+	slackTransformer.TransformUsers(users, skipEmptyEmails, defaultEmailDomain, GuestHandlingGuest)
 	require.Zero(t, slackTransformer.Intermediate.UsersById[activeUsers[0].Id].DeleteAt)
 	require.Zero(t, slackTransformer.Intermediate.UsersById[activeUsers[1].Id].DeleteAt)
 	require.NotZero(t, slackTransformer.Intermediate.UsersById[inactiveUsers[0].Id].DeleteAt)
@@ -995,6 +1214,46 @@ func TestAddPostToThreads(t *testing.T) {
 				require.EqualValues(t, tc.ExpectedTimestamps, tc.Timestamps)
 			})
 		}
+	})
+
+	t.Run("reply to a missing root is dropped so the whole thread is skipped", func(t *testing.T) {
+		channel := &IntermediateChannel{Type: model.ChannelTypeOpen}
+		threads := map[string]*IntermediatePost{}
+		timestamps := map[int64]bool{}
+
+		// The thread root (TimeStamp == ThreadTS "root-ts") was never added to
+		// threads — e.g. its author was a skipped guest, so the root was
+		// dropped. A reply to it is dropped too (returning false so the caller
+		// can count it) rather than being resurfaced as an orphan.
+		reply := &IntermediatePost{Message: "reply to skipped root", CreateAt: 100}
+		placed := AddPostToThreads(
+			SlackPost{TimeStamp: "reply-1-ts", ThreadTS: "root-ts"},
+			reply, threads, channel, timestamps,
+		)
+
+		require.False(t, placed, "reply to a missing root should not be placed")
+		require.Empty(t, threads, "no thread should be created for a dropped reply")
+	})
+
+	t.Run("root and reply are placed together", func(t *testing.T) {
+		channel := &IntermediateChannel{Type: model.ChannelTypeOpen}
+		threads := map[string]*IntermediatePost{}
+		timestamps := map[int64]bool{}
+
+		root := &IntermediatePost{Message: "root", CreateAt: 100}
+		require.True(t, AddPostToThreads(
+			SlackPost{TimeStamp: "root-ts", ThreadTS: "root-ts"},
+			root, threads, channel, timestamps,
+		))
+
+		reply := &IntermediatePost{Message: "reply", CreateAt: 200}
+		require.True(t, AddPostToThreads(
+			SlackPost{TimeStamp: "reply-ts", ThreadTS: "root-ts"},
+			reply, threads, channel, timestamps,
+		))
+
+		require.Same(t, root, threads["root-ts"])
+		require.Equal(t, []*IntermediatePost{reply}, threads["root-ts"].Replies)
 	})
 }
 
@@ -1630,7 +1889,7 @@ func TestTransformBotUsers(t *testing.T) {
 			},
 		}
 
-		slackTransformer.TransformUsers(users, false, "")
+		slackTransformer.TransformUsers(users, false, "", GuestHandlingGuest)
 
 		// Regular user
 		regularUser := slackTransformer.Intermediate.UsersById["U001"]
@@ -1665,7 +1924,7 @@ func TestTransformBotUsers(t *testing.T) {
 
 		// This should NOT panic or exit even though the bot has no email
 		// and no --default-email-domain or --skip-empty-emails is set
-		slackTransformer.TransformUsers(users, false, "")
+		slackTransformer.TransformUsers(users, false, "", GuestHandlingGuest)
 
 		botUser := slackTransformer.Intermediate.UsersById["B001"]
 		require.NotNil(t, botUser)
@@ -1688,7 +1947,7 @@ func TestTransformBotUsers(t *testing.T) {
 			},
 		}
 
-		slackTransformer.TransformUsers(users, false, "")
+		slackTransformer.TransformUsers(users, false, "", GuestHandlingGuest)
 
 		botUser := slackTransformer.Intermediate.UsersById["B002"]
 		require.NotNil(t, botUser)
@@ -1710,7 +1969,7 @@ func TestTransformBotUsers(t *testing.T) {
 			},
 		}
 
-		slackTransformer.TransformUsers(users, false, "")
+		slackTransformer.TransformUsers(users, false, "", GuestHandlingGuest)
 
 		// Should be stored under user ID, not empty string
 		botUser := slackTransformer.Intermediate.UsersById["U003"]

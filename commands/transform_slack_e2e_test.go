@@ -1334,6 +1334,391 @@ func TestTransformSlackE2EMpimsNotMergedWhenMembersDiffer(t *testing.T) {
 		"the {alice,bob,dave} GM must NOT contain posts from the {alice,bob,charlie} GM")
 }
 
+// TestTransformSlackE2EGuestImport verifies that Slack guests (is_restricted
+// and is_ultra_restricted) are imported as Mattermost guests, with the guest
+// role applied consistently at the system, team, and channel level, while
+// regular Slack users keep full member roles.
+func TestTransformSlackE2EGuestImport(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	th := testhelper.SetupHelper(t)
+	defer th.TearDown()
+	t.Cleanup(func() { os.Remove(transformLogFile) })
+
+	ctx := context.Background()
+	tempDir := t.TempDir()
+	slackExportPath := filepath.Join(tempDir, "slack_export.zip")
+	mmExportPath := filepath.Join(tempDir, "mattermost_import.jsonl")
+	teamName := uniqueTeamName("guests")
+
+	err := testhelper.ExportWithGuests().Build(slackExportPath)
+	require.NoError(t, err, "failed to create Slack export fixture")
+
+	team := th.CreateTeam(ctx, teamName, "Guests E2E Team")
+	require.NotNil(t, team)
+
+	args := []string{
+		"transform", "slack",
+		"--team", teamName,
+		"--file", slackExportPath,
+		"--output", mmExportPath,
+		"--skip-attachments",
+	}
+
+	c := commands.RootCmd
+	resetCobraFlags(c)
+	c.SetArgs(args)
+	err = c.Execute()
+	require.NoError(t, err, "transform command should succeed")
+
+	err = th.ImportBulkData(ctx, mmExportPath)
+	require.NoError(t, err, "import should succeed")
+
+	regularUser := th.AssertUserExists(ctx, "regular.user")
+	multiGuest := th.AssertUserExists(ctx, "multi.guest")
+	singleGuest := th.AssertUserExists(ctx, "single.guest")
+
+	assert.False(t, regularUser.IsGuest(), "regular.user should not be a guest")
+	assert.True(t, multiGuest.IsGuest(), "multi.guest (is_restricted) should be imported as a guest")
+	assert.True(t, singleGuest.IsGuest(), "single.guest (is_ultra_restricted) should be imported as a guest")
+
+	// Team-level roles must match the guest status of each user.
+	teamMembers, err := th.GetTeamMembers(ctx, team.Id)
+	require.NoError(t, err)
+	teamMembersByUserID := map[string]*model.TeamMember{}
+	for _, tm := range teamMembers {
+		teamMembersByUserID[tm.UserId] = tm
+	}
+	require.NotNil(t, teamMembersByUserID[regularUser.Id])
+	require.NotNil(t, teamMembersByUserID[multiGuest.Id])
+	require.NotNil(t, teamMembersByUserID[singleGuest.Id])
+	assert.True(t, teamMembersByUserID[regularUser.Id].SchemeUser)
+	assert.False(t, teamMembersByUserID[regularUser.Id].SchemeGuest)
+	assert.True(t, teamMembersByUserID[multiGuest.Id].SchemeGuest)
+	assert.False(t, teamMembersByUserID[multiGuest.Id].SchemeUser)
+	assert.True(t, teamMembersByUserID[singleGuest.Id].SchemeGuest)
+	assert.False(t, teamMembersByUserID[singleGuest.Id].SchemeUser)
+
+	// Channel-level roles: the multi-channel guest should be a guest in both
+	// "general" and "random"; the single-channel guest only in "general".
+	generalChannel := th.AssertChannelExists(ctx, teamName, "general")
+	randomChannel := th.AssertChannelExists(ctx, teamName, "random")
+
+	generalMembers, err := th.GetChannelMembers(ctx, generalChannel.Id)
+	require.NoError(t, err)
+	generalByUserID := map[string]*model.ChannelMember{}
+	for i := range generalMembers {
+		generalByUserID[generalMembers[i].UserId] = &generalMembers[i]
+	}
+	require.NotNil(t, generalByUserID[regularUser.Id])
+	require.NotNil(t, generalByUserID[multiGuest.Id])
+	require.NotNil(t, generalByUserID[singleGuest.Id])
+	assert.False(t, generalByUserID[regularUser.Id].SchemeGuest)
+	assert.True(t, generalByUserID[multiGuest.Id].SchemeGuest)
+	assert.True(t, generalByUserID[singleGuest.Id].SchemeGuest)
+
+	randomMembers, err := th.GetChannelMembers(ctx, randomChannel.Id)
+	require.NoError(t, err)
+	randomByUserID := map[string]*model.ChannelMember{}
+	for i := range randomMembers {
+		randomByUserID[randomMembers[i].UserId] = &randomMembers[i]
+	}
+	require.NotNil(t, randomByUserID[regularUser.Id])
+	require.NotNil(t, randomByUserID[multiGuest.Id])
+	_, singleGuestInRandom := randomByUserID[singleGuest.Id]
+	assert.False(t, singleGuestInRandom, "single.guest should not be a member of random, matching its Slack access scope")
+	assert.False(t, randomByUserID[regularUser.Id].SchemeGuest)
+	assert.True(t, randomByUserID[multiGuest.Id].SchemeGuest)
+
+	// DM channels are a separate import path (direct_channel/DirectChannelMemberImportData)
+	// from regular channels, so a guest's scheme flags there must be checked
+	// independently: a guest appearing only in a DM/MPIM should still be
+	// scheme_guest in that channel, not scheme_user.
+	regularUserChannels, _, err := th.Client.GetChannelsForUserWithLastDeleteAt(ctx, regularUser.Id, 0)
+	require.NoError(t, err)
+
+	expectedDMMembers := map[string]bool{regularUser.Id: true, multiGuest.Id: true}
+	var dmChannel *model.Channel
+	for _, ch := range regularUserChannels {
+		if ch.Type != model.ChannelTypeDirect {
+			continue
+		}
+		members, mErr := th.GetChannelMembers(ctx, ch.Id)
+		require.NoError(t, mErr)
+		if len(members) != len(expectedDMMembers) {
+			continue
+		}
+		match := true
+		for _, m := range members {
+			if !expectedDMMembers[m.UserId] {
+				match = false
+				break
+			}
+		}
+		if match {
+			dmChannel = ch
+			break
+		}
+	}
+	require.NotNil(t, dmChannel, "DM between regular.user and multi.guest should exist in Mattermost")
+
+	dmMembers, err := th.GetChannelMembers(ctx, dmChannel.Id)
+	require.NoError(t, err)
+	dmByUserID := map[string]*model.ChannelMember{}
+	for i := range dmMembers {
+		dmByUserID[dmMembers[i].UserId] = &dmMembers[i]
+	}
+	require.NotNil(t, dmByUserID[regularUser.Id])
+	require.NotNil(t, dmByUserID[multiGuest.Id])
+	assert.True(t, dmByUserID[regularUser.Id].SchemeUser)
+	assert.False(t, dmByUserID[regularUser.Id].SchemeGuest)
+	assert.False(t, dmByUserID[multiGuest.Id].SchemeUser, "guest DM participant must not be scheme_user")
+	assert.True(t, dmByUserID[multiGuest.Id].SchemeGuest, "guest DM participant must be scheme_guest")
+}
+
+// TestTransformSlackE2EGuestSkip verifies that --guest-handling=skip drops
+// guest users entirely, and that a thread whose root is authored by a skipped
+// guest is skipped in full — including a reply from a non-guest — while a
+// standalone post by a non-guest survives.
+func TestTransformSlackE2EGuestSkip(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	th := testhelper.SetupHelper(t)
+	defer th.TearDown()
+	t.Cleanup(func() { os.Remove(transformLogFile) })
+
+	ctx := context.Background()
+	tempDir := t.TempDir()
+	slackExportPath := filepath.Join(tempDir, "slack_export.zip")
+	mmExportPath := filepath.Join(tempDir, "mattermost_import.jsonl")
+	teamName := uniqueTeamName("guestskip")
+
+	err := testhelper.ExportWithGuestPosts().Build(slackExportPath)
+	require.NoError(t, err, "failed to create Slack export fixture")
+
+	team := th.CreateTeam(ctx, teamName, "Guest Skip E2E Team")
+	require.NotNil(t, team)
+
+	args := []string{
+		"transform", "slack",
+		"--team", teamName,
+		"--file", slackExportPath,
+		"--output", mmExportPath,
+		"--skip-attachments",
+		"--guest-handling", "skip",
+	}
+	c := commands.RootCmd
+	resetCobraFlags(c)
+	c.SetArgs(args)
+	require.NoError(t, c.Execute(), "transform command should succeed")
+
+	err = th.ImportBulkData(ctx, mmExportPath)
+	require.NoError(t, err, "import should succeed")
+
+	// The regular user is imported; both guests are dropped entirely.
+	regularUser := th.AssertUserExists(ctx, "regular.user")
+	_, err = th.GetUserByUsername(ctx, "multi.guest")
+	require.Error(t, err, "multi.guest should be skipped and not imported")
+	_, err = th.GetUserByUsername(ctx, "single.guest")
+	require.Error(t, err, "single.guest should be skipped and not imported")
+
+	// The regular user remains a member of general; guests do not.
+	generalChannel := th.AssertChannelExists(ctx, teamName, "general")
+	members, err := th.GetChannelMembers(ctx, generalChannel.Id)
+	require.NoError(t, err)
+	memberIDs := map[string]bool{}
+	for _, m := range members {
+		memberIDs[m.UserId] = true
+	}
+	assert.True(t, memberIDs[regularUser.Id], "regular.user should remain a member of general")
+	assert.Len(t, memberIDs, 1, "only the non-guest member should remain in general")
+
+	// The regular user's standalone post survives; every guest-authored post,
+	// and the whole guest-rooted thread (including the non-guest reply), is gone.
+	posts, err := th.GetChannelPosts(ctx, generalChannel.Id, 0, 100)
+	require.NoError(t, err)
+	assert.True(t, anyPostContains(posts, "Regular user standalone post"),
+		"regular user's standalone post should be imported")
+	assert.False(t, anyPostContains(posts, "Guest standalone post"),
+		"guest's standalone post should be dropped in skip mode")
+	assert.False(t, anyPostContains(posts, "Guest-rooted thread root"),
+		"guest-authored thread root should be dropped in skip mode")
+	assert.False(t, anyPostContains(posts, "Regular user reply in guest thread"),
+		"non-guest reply to a skipped guest's thread root should be dropped with the whole thread")
+}
+
+// TestTransformSlackE2EGuestUserMode verifies that --guest-handling=user
+// imports guests as regular Mattermost users (not scheme_guest) and keeps all
+// of their content, including a guest-rooted thread and its reply.
+func TestTransformSlackE2EGuestUserMode(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	th := testhelper.SetupHelper(t)
+	defer th.TearDown()
+	t.Cleanup(func() { os.Remove(transformLogFile) })
+
+	ctx := context.Background()
+	tempDir := t.TempDir()
+	slackExportPath := filepath.Join(tempDir, "slack_export.zip")
+	mmExportPath := filepath.Join(tempDir, "mattermost_import.jsonl")
+	teamName := uniqueTeamName("guestuser")
+
+	err := testhelper.ExportWithGuestPosts().Build(slackExportPath)
+	require.NoError(t, err, "failed to create Slack export fixture")
+
+	team := th.CreateTeam(ctx, teamName, "Guest User Mode E2E Team")
+	require.NotNil(t, team)
+
+	args := []string{
+		"transform", "slack",
+		"--team", teamName,
+		"--file", slackExportPath,
+		"--output", mmExportPath,
+		"--skip-attachments",
+		"--guest-handling", "user",
+	}
+	c := commands.RootCmd
+	resetCobraFlags(c)
+	c.SetArgs(args)
+	require.NoError(t, c.Execute(), "transform command should succeed")
+
+	err = th.ImportBulkData(ctx, mmExportPath)
+	require.NoError(t, err, "import should succeed")
+
+	// In user mode the guests are imported, but as regular users.
+	regularUser := th.AssertUserExists(ctx, "regular.user")
+	multiGuest := th.AssertUserExists(ctx, "multi.guest")
+	singleGuest := th.AssertUserExists(ctx, "single.guest")
+	assert.False(t, regularUser.IsGuest())
+	assert.False(t, multiGuest.IsGuest(), "multi.guest should be a regular user in user mode")
+	assert.False(t, singleGuest.IsGuest(), "single.guest should be a regular user in user mode")
+
+	// Team-level roles: former guests are scheme_user, never scheme_guest.
+	teamMembers, err := th.GetTeamMembers(ctx, team.Id)
+	require.NoError(t, err)
+	var foundMultiGuest, foundSingleGuest bool
+	for _, tm := range teamMembers {
+		if tm.UserId == multiGuest.Id || tm.UserId == singleGuest.Id {
+			if tm.UserId == multiGuest.Id {
+				foundMultiGuest = true
+			} else {
+				foundSingleGuest = true
+			}
+			assert.True(t, tm.SchemeUser, "former guest should be scheme_user in user mode")
+			assert.False(t, tm.SchemeGuest, "former guest should not be scheme_guest in user mode")
+		}
+	}
+	assert.True(t, foundMultiGuest, "multi.guest should be a team member in user mode")
+	assert.True(t, foundSingleGuest, "single.guest should be a team member in user mode")
+
+	// All posts are imported, including former-guest content and the full thread.
+	generalChannel := th.AssertChannelExists(ctx, teamName, "general")
+	posts, err := th.GetChannelPosts(ctx, generalChannel.Id, 0, 100)
+	require.NoError(t, err)
+	assert.True(t, anyPostContains(posts, "Regular user standalone post"))
+	assert.True(t, anyPostContains(posts, "Guest standalone post"))
+	assert.True(t, anyPostContains(posts, "Guest-rooted thread root"))
+	assert.True(t, anyPostContains(posts, "Regular user reply in guest thread"))
+}
+
+// TestTransformSlackE2EChannellessGuestMpimThread verifies that in default guest
+// mode a channel-less guest (a guest who belongs only to a group DM, with no
+// public/private channel) is dropped by dropChannellessGuests, and that a thread
+// they started in that MPIM is skipped in full — the guest's root and a
+// non-guest reply both gone — while the MPIM survives with its regular members
+// and a regular user's standalone post is kept.
+func TestTransformSlackE2EChannellessGuestMpimThread(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	th := testhelper.SetupHelper(t)
+	defer th.TearDown()
+	t.Cleanup(func() { os.Remove(transformLogFile) })
+
+	ctx := context.Background()
+	tempDir := t.TempDir()
+	slackExportPath := filepath.Join(tempDir, "slack_export.zip")
+	mmExportPath := filepath.Join(tempDir, "mattermost_import.jsonl")
+	teamName := uniqueTeamName("clguestmpim")
+
+	err := testhelper.ExportWithChannellessGuestMpim().Build(slackExportPath)
+	require.NoError(t, err, "failed to create Slack export fixture")
+
+	team := th.CreateTeam(ctx, teamName, "Channelless Guest MPIM E2E Team")
+	require.NotNil(t, team)
+
+	// Default guest mode — no --guest-handling flag, so dropChannellessGuests runs.
+	args := []string{
+		"transform", "slack",
+		"--team", teamName,
+		"--file", slackExportPath,
+		"--output", mmExportPath,
+		"--skip-attachments",
+	}
+	c := commands.RootCmd
+	resetCobraFlags(c)
+	c.SetArgs(args)
+	require.NoError(t, c.Execute(), "transform command should succeed")
+
+	err = th.ImportBulkData(ctx, mmExportPath)
+	require.NoError(t, err, "import should succeed")
+
+	// The regular users are imported; the channel-less guest is dropped.
+	regular1 := th.AssertUserExists(ctx, "regular1")
+	regular2 := th.AssertUserExists(ctx, "regular2")
+	regular3 := th.AssertUserExists(ctx, "regular3")
+	_, err = th.GetUserByUsername(ctx, "channelless.guest")
+	require.Error(t, err, "channel-less guest should be dropped and not imported")
+
+	// The MPIM survives with exactly the three regular users (still a group
+	// channel, not collapsed to a DM).
+	regular1Channels, _, err := th.Client.GetChannelsForUserWithLastDeleteAt(ctx, regular1.Id, 0)
+	require.NoError(t, err)
+
+	expectedMembers := map[string]bool{regular1.Id: true, regular2.Id: true, regular3.Id: true}
+	var gmChannel *model.Channel
+	for _, ch := range regular1Channels {
+		if ch.Type != model.ChannelTypeGroup {
+			continue
+		}
+		members, mErr := th.GetChannelMembers(ctx, ch.Id)
+		require.NoError(t, mErr)
+		if len(members) != len(expectedMembers) {
+			continue
+		}
+		match := true
+		for _, m := range members {
+			if !expectedMembers[m.UserId] {
+				match = false
+				break
+			}
+		}
+		if match {
+			gmChannel = ch
+			break
+		}
+	}
+	require.NotNil(t, gmChannel, "the MPIM should survive with exactly {regular1, regular2, regular3}")
+
+	// The regular user's standalone post survives; the guest's thread root and
+	// the non-guest reply to it are both dropped with the whole thread.
+	posts, err := th.GetChannelPosts(ctx, gmChannel.Id, 0, 100)
+	require.NoError(t, err)
+	assert.True(t, anyPostContains(posts, "Regular standalone in mpim"),
+		"the regular user's standalone MPIM post should be imported")
+	assert.False(t, anyPostContains(posts, "Guest thread root in mpim"),
+		"the channel-less guest's thread root should be dropped")
+	assert.False(t, anyPostContains(posts, "Regular reply in guest mpim thread"),
+		"the non-guest reply should be dropped along with the skipped guest's thread")
+}
+
 // joinSorted returns a deterministic comma-joined key from the given strings.
 func joinSorted(s ...string) string {
 	cp := append([]string{}, s...)

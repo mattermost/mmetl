@@ -300,6 +300,104 @@ func (b *SlackExportBuilder) createZipFile(outputPath, sourceDir string) error {
 	})
 }
 
+// ExportWithGuests creates an export with a regular user, a multi-channel
+// guest (is_restricted) with access to two channels, and a single-channel
+// guest (is_ultra_restricted) with access to only one.
+func ExportWithGuests() *SlackExportBuilder {
+	return NewSlackExportBuilder().
+		AddUser(slack.SlackUser{
+			Id:       "U001",
+			Username: "regular.user",
+			Profile: slack.SlackProfile{
+				RealName: "Regular User",
+				Email:    "regular.user@example.com",
+			},
+		}).
+		AddUser(slack.SlackUser{
+			Id:           "U002",
+			Username:     "multi.guest",
+			IsRestricted: true,
+			Profile: slack.SlackProfile{
+				RealName: "Multi Guest",
+				Email:    "multi.guest@example.com",
+			},
+		}).
+		AddUser(slack.SlackUser{
+			Id:                "U003",
+			Username:          "single.guest",
+			IsRestricted:      true,
+			IsUltraRestricted: true,
+			Profile: slack.SlackProfile{
+				RealName: "Single Guest",
+				Email:    "single.guest@example.com",
+			},
+		}).
+		AddChannel(slack.SlackChannel{
+			Id:      "C001",
+			Name:    "general",
+			Creator: "U001",
+			Created: 1704067200,
+			Members: []string{"U001", "U002", "U003"},
+			Purpose: slack.SlackChannelSub{Value: "General discussion"},
+		}).
+		AddChannel(slack.SlackChannel{
+			Id:      "C002",
+			Name:    "random",
+			Creator: "U001",
+			Created: 1704070800,
+			Members: []string{"U001", "U002"},
+			Purpose: slack.SlackChannelSub{Value: "Non-work banter"},
+		}).
+		// DM between the regular user and the multi-channel guest, to verify
+		// guests are marked scheme_guest (not scheme_user) in direct channels too.
+		AddDirectChannel(slack.SlackChannel{
+			Id:      "D001",
+			Created: 1704067200,
+			Members: []string{"U001", "U002"},
+		})
+}
+
+// ExportWithGuestPosts extends ExportWithGuests with posts that exercise the
+// guest-handling modes end-to-end:
+//   - a standalone post by the regular user (survives every mode),
+//   - a standalone post by a guest,
+//   - a thread whose root is authored by a guest, with a reply from the
+//     regular user.
+//
+// In "skip" mode the guest's standalone post and the entire guest-rooted
+// thread — including the non-guest reply, since its root is gone — are dropped,
+// while the regular user's standalone post survives. In "guest"/"user" mode all
+// posts are imported.
+func ExportWithGuestPosts() *SlackExportBuilder {
+	return ExportWithGuests().
+		AddPost("general", slack.SlackPost{
+			User:      "U001",
+			Text:      "Regular user standalone post",
+			TimeStamp: "1704067200.000100",
+			Type:      "message",
+		}).
+		AddPost("general", slack.SlackPost{
+			User:      "U003",
+			Text:      "Guest standalone post",
+			TimeStamp: "1704067260.000200",
+			Type:      "message",
+		}).
+		AddPost("general", slack.SlackPost{
+			User:      "U002",
+			Text:      "Guest-rooted thread root",
+			TimeStamp: "1704067320.000300",
+			ThreadTS:  "1704067320.000300",
+			Type:      "message",
+		}).
+		AddPost("general", slack.SlackPost{
+			User:      "U001",
+			Text:      "Regular user reply in guest thread",
+			TimeStamp: "1704067380.000400",
+			ThreadTS:  "1704067320.000300",
+			Type:      "message",
+		})
+}
+
 // === Convenience builders for common test scenarios ===
 
 // SlackBasicExport creates a simple export with users and channels (no posts)
@@ -770,6 +868,67 @@ func ExportWithOverlappingMpims() *SlackExportBuilder {
 			User:      "U002",
 			Text:      "Hi dave group",
 			TimeStamp: "1704070900.000100",
+			Type:      "message",
+		})
+}
+
+// ExportWithChannellessGuestMpim builds an export where a guest (is_restricted)
+// belongs ONLY to a group DM (mpim) alongside three regular users, and to NO
+// public/private channel. In default "guest" mode, dropChannellessGuests removes
+// the guest (group/DM membership does not count as guest-scopable channel
+// access); the MPIM survives with the three regulars (staying a group channel
+// rather than collapsing to a DM). The guest starts a thread in the MPIM and a
+// regular user replies — both the guest's root and the non-guest reply are
+// dropped (the whole thread is skipped), while a regular user's standalone post
+// in the same MPIM survives.
+func ExportWithChannellessGuestMpim() *SlackExportBuilder {
+	return NewSlackExportBuilder().
+		AddUser(slack.SlackUser{
+			Id:       "U001",
+			Username: "regular1",
+			Profile:  slack.SlackProfile{RealName: "Regular One", Email: "regular1@example.com"},
+		}).
+		AddUser(slack.SlackUser{
+			Id:       "U002",
+			Username: "regular2",
+			Profile:  slack.SlackProfile{RealName: "Regular Two", Email: "regular2@example.com"},
+		}).
+		AddUser(slack.SlackUser{
+			Id:       "U003",
+			Username: "regular3",
+			Profile:  slack.SlackProfile{RealName: "Regular Three", Email: "regular3@example.com"},
+		}).
+		AddUser(slack.SlackUser{
+			Id:           "U004",
+			Username:     "channelless.guest",
+			IsRestricted: true,
+			Profile:      slack.SlackProfile{RealName: "Channelless Guest", Email: "channelless.guest@example.com"},
+		}).
+		AddGroupChannel(slack.SlackChannel{
+			Id:      "G001",
+			Name:    "mpdm-regular1--regular2--regular3--channelless.guest-1",
+			Creator: "U001",
+			Created: 1704067200,
+			Members: []string{"U001", "U002", "U003", "U004"},
+		}).
+		AddPost("mpdm-regular1--regular2--regular3--channelless.guest-1", slack.SlackPost{
+			User:      "U001",
+			Text:      "Regular standalone in mpim",
+			TimeStamp: "1704067200.000100",
+			Type:      "message",
+		}).
+		AddPost("mpdm-regular1--regular2--regular3--channelless.guest-1", slack.SlackPost{
+			User:      "U004",
+			Text:      "Guest thread root in mpim",
+			TimeStamp: "1704067260.000200",
+			ThreadTS:  "1704067260.000200",
+			Type:      "message",
+		}).
+		AddPost("mpdm-regular1--regular2--regular3--channelless.guest-1", slack.SlackPost{
+			User:      "U002",
+			Text:      "Regular reply in guest mpim thread",
+			TimeStamp: "1704067320.000300",
+			ThreadTS:  "1704067260.000200",
 			Type:      "message",
 		})
 }

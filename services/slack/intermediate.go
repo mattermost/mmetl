@@ -111,13 +111,31 @@ func (t *Transformer) ComputeChannelPostStats() {
 	}
 }
 
-func (t *Transformer) TransformUsers(users []SlackUser, skipEmptyEmails bool, defaultEmailDomain string) {
+// TransformUsers converts SlackUser records into IntermediateUser records. A
+// Slack guest (is_restricted or is_ultra_restricted) is always flagged via
+// IsGuest, regardless of guestHandling; guestHandling only decides whether the
+// guest is dropped entirely here ("skip") or kept for later export ("guest"/
+// "user" — the actual role emitted for a kept guest is decided by
+// Exporter.EmitGuestRoles, set from guestHandling by the caller).
+func (t *Transformer) TransformUsers(users []SlackUser, skipEmptyEmails bool, defaultEmailDomain string, guestHandling string) {
 	t.Logger.Info("Transforming users")
 
 	t.Logger.Debugf("TransformUsers: Input SlackUser structs: %+v", users)
 
 	resultUsers := map[string]*IntermediateUser{}
+	guestCount := 0
+	guestsSkipped := 0
 	for _, user := range users {
+		isGuest := !user.IsBot && user.IsGuest()
+		if isGuest {
+			guestCount++
+			if guestHandling == GuestHandlingSkip {
+				guestsSkipped++
+				t.markUserSkipped(user.Id)
+				continue
+			}
+		}
+
 		var deleteAt int64 = 0
 		if user.Deleted {
 			deleteAt = model.GetMillis()
@@ -144,6 +162,7 @@ func (t *Transformer) TransformUsers(users []SlackUser, skipEmptyEmails bool, de
 			Email:       user.Profile.Email,
 			Password:    model.NewId(),
 			DeleteAt:    deleteAt,
+			IsGuest:     isGuest,
 		}
 
 		t.Logger.Debugf("TransformUsers: newUser IntermediateUser struct: %+v", newUser)
@@ -165,11 +184,24 @@ func (t *Transformer) TransformUsers(users []SlackUser, skipEmptyEmails bool, de
 	}
 
 	t.Intermediate.UsersById = resultUsers
+
+	switch guestHandling {
+	case GuestHandlingGuest:
+		t.Logger.Infof("Detected %d guest users; mode=guest (migrating as MM guests)", guestCount)
+	case GuestHandlingUser:
+		t.Logger.Infof("Detected %d guest users; mode=user (migrating as regular users)", guestCount)
+	case GuestHandlingSkip:
+		t.Logger.Infof("Detected %d guest users; mode=skip (skipping %d guest users)", guestCount, guestsSkipped)
+	}
 }
 
 func (t *Transformer) filterValidMembers(members []string, users map[string]*IntermediateUser) []string {
 	validMembers := []string{}
 	for _, member := range members {
+		if t.skippedUserIDs[member] {
+			t.droppedMembershipRefs++
+			continue
+		}
 		if _, ok := users[member]; ok {
 			validMembers = append(validMembers, member)
 		} else {
@@ -455,7 +487,89 @@ func (t *Transformer) TransformAllChannels(slackExport *SlackExport) error {
 	return nil
 }
 
-func AddPostToThreads(original SlackPost, post *IntermediatePost, threads map[string]*IntermediatePost, channel *IntermediateChannel, timestamps map[int64]bool) {
+// dropChannellessGuests removes guests that ended up with no public/private
+// channel membership. Mattermost's bulk-import format can only express a
+// guest's channel access through public/private channel membership
+// (UserTeamImportData.Channels) — a guest present only in a DM/MPIM has no
+// such scope and cannot be validly imported as a guest. Silently promoting
+// them to a full member instead would defeat the point of this feature, so
+// they — and any memberships/posts referencing them — are dropped instead,
+// same as --guest-handling=skip but for this user only. Only runs in "guest"
+// mode: "user" mode always imports guests as full members regardless of
+// channel access, and "skip" mode has already dropped them in TransformUsers.
+//
+// Must run after TransformAllChannels (so PublicChannels/PrivateChannels
+// membership is known) and before PopulateChannelMemberships/TransformPosts
+// (so the drop cascades to DM/group membership and authored content).
+func (t *Transformer) dropChannellessGuests(guestHandling string) {
+	if guestHandling != GuestHandlingGuest {
+		return
+	}
+
+	hasChannelAccess := map[string]bool{}
+	for _, channel := range t.Intermediate.PublicChannels {
+		for _, memberId := range channel.Members {
+			hasChannelAccess[memberId] = true
+		}
+	}
+	for _, channel := range t.Intermediate.PrivateChannels {
+		for _, memberId := range channel.Members {
+			hasChannelAccess[memberId] = true
+		}
+	}
+
+	skipped := 0
+	for id, user := range t.Intermediate.UsersById {
+		if !user.IsGuest || hasChannelAccess[id] {
+			continue
+		}
+		t.Logger.Warnf("Guest user %s has no public or private channel membership in the Slack export; Mattermost cannot scope a guest's access without one, so this user (and their memberships/posts) is being skipped. Use --guest-handling=user to import them as a regular member instead.", user.Username)
+		t.markUserSkipped(id)
+		delete(t.Intermediate.UsersById, id)
+		skipped++
+	}
+
+	if skipped == 0 {
+		return
+	}
+	t.Logger.Infof("Skipped %d guest user(s) with no channel to scope their guest access to", skipped)
+
+	t.Intermediate.GroupChannels = t.dropSkippedFromDirectOrGroupChannels(t.Intermediate.GroupChannels)
+	t.Intermediate.DirectChannels = t.dropSkippedFromDirectOrGroupChannels(t.Intermediate.DirectChannels)
+}
+
+// dropSkippedFromDirectOrGroupChannels removes now-skipped members from each
+// channel's Members list, dropping the whole channel if fewer than 2 members
+// remain, mirroring the single-member check in TransformChannels.
+func (t *Transformer) dropSkippedFromDirectOrGroupChannels(channels []*IntermediateChannel) []*IntermediateChannel {
+	result := make([]*IntermediateChannel, 0, len(channels))
+	for _, channel := range channels {
+		remaining := []string{}
+		for _, memberId := range channel.Members {
+			if t.skippedUserIDs[memberId] {
+				t.droppedMembershipRefs++
+				continue
+			}
+			remaining = append(remaining, memberId)
+		}
+		channel.Members = remaining
+
+		if len(remaining) <= 1 {
+			t.Logger.Warnf("Bulk export for direct channels containing a single member is not supported. Not importing channel %s", channel.Name)
+			continue
+		}
+		result = append(result, channel)
+	}
+	return result
+}
+
+// AddPostToThreads places post into its thread within threads. It returns false
+// (placing nothing) when the post is a reply whose thread root was never
+// imported — e.g. a skipped guest authored the root, so the root was dropped.
+// In that case the whole thread is skipped consistently and the caller counts
+// the dropped reply. It returns true when the post is placed (as a thread root
+// or as a reply under an existing root).
+func AddPostToThreads(original SlackPost, post *IntermediatePost, threads map[string]*IntermediatePost, channel *IntermediateChannel, timestamps map[int64]bool) bool {
 	// direct and group posts need the channel members in the import line
 	if channel.Type == model.ChannelTypeDirect || channel.Type == model.ChannelTypeGroup {
 		post.IsDirect = true
@@ -478,11 +592,14 @@ func AddPostToThreads(original SlackPost, post *IntermediatePost, threads map[st
 	if original.ThreadTS != "" && original.ThreadTS != original.TimeStamp {
 		rootPost, ok := threads[original.ThreadTS]
 		if !ok {
-			log.Printf("ERROR processing post in thread, couldn't find rootPost: %+v\n", original)
-			return
+			// The thread root was never imported — e.g. its author was a
+			// skipped guest, so the root post was dropped. Drop this reply too
+			// so the whole thread is skipped consistently. The caller (via
+			// addPostToThreads) records and surfaces the drop.
+			return false
 		}
 		rootPost.Replies = append(rootPost.Replies, post)
-		return
+		return true
 	}
 
 	// if post is the root of a thread
@@ -491,7 +608,7 @@ func AddPostToThreads(original SlackPost, post *IntermediatePost, threads map[st
 			log.Println("WARNING: overwriting root post for thread " + original.ThreadTS)
 		}
 		threads[original.ThreadTS] = post
-		return
+		return true
 	}
 
 	if threads[original.TimeStamp] != nil {
@@ -499,6 +616,29 @@ func AddPostToThreads(original SlackPost, post *IntermediatePost, threads map[st
 	}
 
 	threads[original.TimeStamp] = post
+	return true
+}
+
+// addPostToThreads wraps AddPostToThreads, recording and surfacing the drop when
+// a reply's thread root was never imported (e.g. the root's author was a skipped
+// guest). AddPostToThreads only returns false in that case, so a false return
+// here always means "reply dropped along with its thread". Every dropped reply
+// is counted in droppedPostRefs, but the WARN is emitted once per thread so a
+// large thread doesn't produce one log line per reply.
+func (t *Transformer) addPostToThreads(original SlackPost, post *IntermediatePost, threads map[string]*IntermediatePost, channel *IntermediateChannel, timestamps map[int64]bool) {
+	if AddPostToThreads(original, post, threads, channel, timestamps) {
+		return
+	}
+	t.droppedPostRefs++
+	if t.warnedDroppedThreads == nil {
+		t.warnedDroppedThreads = map[string]bool{}
+	}
+	key := channel.Name + "\x00" + original.ThreadTS
+	if t.warnedDroppedThreads[key] {
+		return // already warned once for this thread; keep counting silently
+	}
+	t.warnedDroppedThreads[key] = true
+	t.Logger.Warnf("Dropping thread %s in channel %q: its root post was not imported (e.g. its author was a skipped guest); replies from other users are being dropped with it", original.ThreadTS, channel.Name)
 }
 
 func buildChannelsByOriginalNameMap(intermediate *Intermediate) map[string]*IntermediateChannel {
@@ -632,6 +772,11 @@ func (t *Transformer) CreateIntermediateBotUser(userID string) {
 }
 
 func (t *Transformer) CreateAndAddPostToThreads(post SlackPost, threads map[string]*IntermediatePost, timestamps map[int64]bool, channel *IntermediateChannel) {
+	if t.isSkippedUser(post.User) {
+		t.droppedPostRefs++
+		return
+	}
+
 	author := t.Intermediate.UsersById[post.User]
 	if author == nil {
 		t.CreateIntermediateUser(post.User)
@@ -646,7 +791,7 @@ func (t *Transformer) CreateAndAddPostToThreads(post SlackPost, threads map[stri
 		CreateAt:  SlackConvertTimeStamp(post.TimeStamp),
 	}
 
-	AddPostToThreads(post, newPost, threads, channel, timestamps)
+	t.addPostToThreads(post, newPost, threads, channel, timestamps)
 }
 
 func (t *Transformer) AddFilesToPost(post *SlackPost, skipAttachments bool, slackExport *SlackExport, attachmentsDir string, newPost *IntermediatePost, allowDownload bool) {
@@ -719,6 +864,10 @@ func (t *Transformer) getReactionsFromPost(post SlackPost) []*IntermediateReacti
 	reactions := []*IntermediateReaction{}
 	for _, reaction := range post.Reactions {
 		for _, reactionUser := range reaction.Users {
+			if t.isSkippedUser(reactionUser) {
+				t.droppedReactionRefs++
+				continue
+			}
 			reactionAuthor := t.Intermediate.UsersById[reactionUser]
 			if reactionAuthor == nil {
 				t.CreateIntermediateUser(reactionUser)
@@ -812,12 +961,16 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 					}
 				}
 
-				AddPostToThreads(post, newPost, threads, channel, timestamps)
+				t.addPostToThreads(post, newPost, threads, channel, timestamps)
 
 			// plain message that can have files attached
 			case post.IsPlainMessage():
 				if post.User == "" {
 					t.Logger.Warn("Unable to import the message as the user field is missing.")
+					continue
+				}
+				if t.isSkippedUser(post.User) {
+					t.droppedPostRefs++
 					continue
 				}
 				author := t.Intermediate.UsersById[post.User]
@@ -848,7 +1001,7 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 					}
 				}
 
-				AddPostToThreads(post, newPost, threads, channel, timestamps)
+				t.addPostToThreads(post, newPost, threads, channel, timestamps)
 
 			// file comment
 			case post.IsFileComment():
@@ -858,6 +1011,10 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 				}
 				if post.Comment.User == "" {
 					t.Logger.Warn("Unable to import the message as the user field is missing.")
+					continue
+				}
+				if t.isSkippedUser(post.Comment.User) {
+					t.droppedPostRefs++
 					continue
 				}
 				author := t.Intermediate.UsersById[post.Comment.User]
@@ -873,7 +1030,7 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 					CreateAt:  SlackConvertTimeStamp(post.TimeStamp),
 				}
 
-				AddPostToThreads(post, newPost, threads, channel, timestamps)
+				t.addPostToThreads(post, newPost, threads, channel, timestamps)
 
 			// channel join/leave messages
 			case post.IsJoinLeaveMessage():
@@ -931,6 +1088,11 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 					poster = post.Room.CreatedBy
 				}
 
+				if t.isSkippedUser(poster) {
+					t.droppedPostRefs++
+					continue
+				}
+
 				author := t.Intermediate.UsersById[poster]
 				if author == nil {
 					t.CreateIntermediateUser(poster)
@@ -949,7 +1111,7 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 					Type:      "custom_calls",
 				}
 
-				AddPostToThreads(post, newPost, threads, channel, timestamps)
+				t.addPostToThreads(post, newPost, threads, channel, timestamps)
 			default:
 				t.Logger.Warnf("Unable to import the message as its type is not supported. post_type=%s, post_subtype=%s", post.Type, post.SubType)
 			}
@@ -1028,12 +1190,17 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 	return nil
 }
 
-func (t *Transformer) Transform(slackExport *SlackExport, attachmentsDir string, skipAttachments, discardInvalidProps, allowDownload, skipEmptyEmails bool, defaultEmailDomain string) error {
-	t.TransformUsers(slackExport.Users, skipEmptyEmails, defaultEmailDomain)
+func (t *Transformer) Transform(slackExport *SlackExport, attachmentsDir string, skipAttachments, discardInvalidProps, allowDownload, skipEmptyEmails bool, defaultEmailDomain string, guestHandling string) error {
+	// Guests are exported with Mattermost guest roles only in "guest" mode.
+	t.EmitGuestRoles = guestHandling == GuestHandlingGuest
+
+	t.TransformUsers(slackExport.Users, skipEmptyEmails, defaultEmailDomain, guestHandling)
 
 	if err := t.TransformAllChannels(slackExport); err != nil {
 		return err
 	}
+
+	t.dropChannellessGuests(guestHandling)
 
 	t.PopulateUserMemberships()
 	t.PopulateChannelMemberships()
@@ -1045,6 +1212,11 @@ func (t *Transformer) Transform(slackExport *SlackExport, attachmentsDir string,
 
 	t.ComputeChannelPostStats()
 	t.applyChannelStatsToMemberships()
+
+	if t.droppedPostRefs > 0 || t.droppedReactionRefs > 0 || t.droppedMembershipRefs > 0 {
+		t.Logger.Infof("Dropped %d posts, %d reactions, and %d channel/DM memberships referencing skipped users",
+			t.droppedPostRefs, t.droppedReactionRefs, t.droppedMembershipRefs)
+	}
 
 	return nil
 }

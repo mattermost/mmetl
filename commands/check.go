@@ -2,6 +2,7 @@ package commands
 
 import (
 	"archive/zip"
+	"io"
 	"os"
 
 	"github.com/mattermost/mmetl/services/slack"
@@ -27,6 +28,7 @@ func init() {
 	CheckSlackCmd.Flags().Bool("debug", true, "Whether to show debug logs or not")
 	CheckSlackCmd.Flags().Bool("skip-empty-emails", false, "Ignore empty email addresses from the import file. Note that this results in invalid data.")
 	CheckSlackCmd.Flags().String("default-email-domain", "", "If this flag is provided: When a user's email address is empty, the output's email address will be generated from their username and the provided domain.")
+	CheckSlackCmd.Flags().String("guest-handling", slack.GuestHandlingGuest, `How to migrate Slack guest users when checking the export. One of "guest", "user", or "skip". Use the same value you plan to pass to "transform slack" so the check reflects that mode.`)
 
 	if err := CheckSlackCmd.MarkFlagRequired("file"); err != nil {
 		panic(err)
@@ -46,6 +48,11 @@ func checkSlackCmdF(cmd *cobra.Command, args []string) error {
 	debug, _ := cmd.Flags().GetBool("debug")
 	skipEmptyEmails, _ := cmd.Flags().GetBool("skip-empty-emails")
 	defaultEmailDomain, _ := cmd.Flags().GetString("default-email-domain")
+	guestHandling, _ := cmd.Flags().GetString("guest-handling")
+
+	if err := slack.ValidateGuestHandling(guestHandling); err != nil {
+		return err
+	}
 
 	// input file
 	fileReader, err := os.Open(inputFilePath)
@@ -70,7 +77,10 @@ func checkSlackCmdF(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	defer logFile.Close()
-	logger.SetOutput(logFile)
+	// Write to both stdout and the log file so operators see the check output
+	// (including guest-handling decisions) directly, while it's still persisted
+	// to check-slack.log.
+	logger.SetOutput(io.MultiWriter(os.Stdout, logFile))
 	logger.SetFormatter(customLogFormatter)
 	logger.SetReportCaller(true)
 
@@ -90,7 +100,7 @@ func checkSlackCmdF(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	err = slackTransformer.Transform(slackExport, "", true, true, false, skipEmptyEmails, defaultEmailDomain)
+	err = slackTransformer.Transform(slackExport, "", true, true, false, skipEmptyEmails, defaultEmailDomain, guestHandling)
 	if err != nil {
 		return err
 	}

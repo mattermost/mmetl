@@ -677,6 +677,113 @@ func TestGetImportLineFromUser(t *testing.T) {
 		team := (*line.User.Teams)[0]
 		assert.Nil(t, team.Channels)
 	})
+
+	t.Run("multi-channel guest (is_restricted) gets guest roles everywhere when emitGuestRoles is true", func(t *testing.T) {
+		user := &IntermediateUser{
+			Username: "restricted-guest",
+			Email:    "restricted-guest@example.com",
+			IsGuest:  true,
+			Memberships: []IntermediateMembership{
+				{Name: "general"},
+				{Name: "random"},
+			},
+		}
+
+		line := intermediate.GetImportLineFromUser(user, "myteam", true)
+
+		assert.Equal(t, model.SystemGuestRoleId, *line.User.Roles)
+		team := (*line.User.Teams)[0]
+		assert.Equal(t, model.TeamGuestRoleId, *team.Roles)
+		channels := *team.Channels
+		require.Len(t, channels, 2)
+		for _, ch := range channels {
+			assert.Equal(t, model.ChannelGuestRoleId, *ch.Roles)
+		}
+
+		require.Nil(t, imports.ValidateUserImportData(line.User))
+	})
+
+	t.Run("single-channel guest (is_ultra_restricted) gets guest roles everywhere when emitGuestRoles is true", func(t *testing.T) {
+		user := &IntermediateUser{
+			Username: "ultra-restricted-guest",
+			Email:    "ultra-restricted-guest@example.com",
+			IsGuest:  true,
+			Memberships: []IntermediateMembership{
+				{Name: "general"},
+			},
+		}
+
+		line := intermediate.GetImportLineFromUser(user, "myteam", true)
+
+		assert.Equal(t, model.SystemGuestRoleId, *line.User.Roles)
+		team := (*line.User.Teams)[0]
+		assert.Equal(t, model.TeamGuestRoleId, *team.Roles)
+		channels := *team.Channels
+		require.Len(t, channels, 1)
+		assert.Equal(t, model.ChannelGuestRoleId, *channels[0].Roles)
+
+		require.Nil(t, imports.ValidateUserImportData(line.User))
+	})
+
+	t.Run("non-guest user keeps regular roles and passes validation", func(t *testing.T) {
+		user := &IntermediateUser{
+			Username: "regular",
+			Email:    "regular@example.com",
+			Memberships: []IntermediateMembership{
+				{Name: "general"},
+			},
+		}
+
+		line := intermediate.GetImportLineFromUser(user, "myteam", true)
+
+		assert.Equal(t, model.SystemUserRoleId, *line.User.Roles)
+		team := (*line.User.Teams)[0]
+		assert.Equal(t, model.TeamUserRoleId, *team.Roles)
+		channels := *team.Channels
+		require.Len(t, channels, 1)
+		assert.Equal(t, model.ChannelUserRoleId, *channels[0].Roles)
+
+		require.Nil(t, imports.ValidateUserImportData(line.User))
+	})
+
+	t.Run("guest with no channel memberships falls back to a regular member to avoid an invalid import line", func(t *testing.T) {
+		user := &IntermediateUser{
+			Username: "guest-without-channels",
+			Email:    "guest-without-channels@example.com",
+			IsGuest:  true,
+		}
+
+		line := intermediate.GetImportLineFromUser(user, "myteam", true)
+
+		assert.Equal(t, model.SystemUserRoleId, *line.User.Roles)
+		team := (*line.User.Teams)[0]
+		assert.Equal(t, model.TeamUserRoleId, *team.Roles)
+		assert.Nil(t, team.Channels)
+
+		require.Nil(t, imports.ValidateUserImportData(line.User))
+	})
+
+	t.Run("guest keeps regular roles when emitGuestRoles is false (guest-handling=user)", func(t *testing.T) {
+		user := &IntermediateUser{
+			Username: "guest-as-user",
+			Email:    "guest-as-user@example.com",
+			IsGuest:  true,
+			Memberships: []IntermediateMembership{
+				{Name: "general"},
+			},
+		}
+
+		line := intermediate.GetImportLineFromUser(user, "myteam", false)
+
+		assert.Equal(t, model.SystemUserRoleId, *line.User.Roles)
+		team := (*line.User.Teams)[0]
+		assert.Equal(t, model.TeamUserRoleId, *team.Roles)
+		channels := *team.Channels
+		require.Len(t, channels, 1)
+		assert.Equal(t, model.ChannelUserRoleId, *channels[0].Roles)
+
+		require.Nil(t, imports.ValidateUserImportData(line.User))
+	})
 }
 
 func TestGetImportLineFromDirectChannel(t *testing.T) {
@@ -705,7 +812,36 @@ func TestGetImportLineFromDirectChannel(t *testing.T) {
 			assert.Equal(t, int64(5), *p.MsgCountRoot)
 			require.NotNil(t, p.SchemeUser, "SchemeUser must be populated so the server import does not default it to false (MM-68915)")
 			assert.True(t, *p.SchemeUser)
+			require.NotNil(t, p.SchemeGuest)
+			assert.False(t, *p.SchemeGuest)
 		}
+	})
+
+	t.Run("marks guest participants with SchemeGuest instead of SchemeUser", func(t *testing.T) {
+		channel := &IntermediateChannel{
+			Name:             "dm-channel",
+			Topic:            "DM topic",
+			MembersUsernames: []string{"alice", "bob"},
+			Created:          1704067200,
+		}
+
+		line := intermediate.GetImportLineFromDirectChannel("myteam", channel, map[string]bool{"bob": true})
+
+		require.Len(t, line.DirectChannel.Participants, 2)
+		alice := line.DirectChannel.Participants[0]
+		bob := line.DirectChannel.Participants[1]
+
+		assert.Equal(t, "alice", *alice.Username)
+		require.NotNil(t, alice.SchemeUser)
+		assert.True(t, *alice.SchemeUser)
+		require.NotNil(t, alice.SchemeGuest)
+		assert.False(t, *alice.SchemeGuest)
+
+		assert.Equal(t, "bob", *bob.Username)
+		require.NotNil(t, bob.SchemeUser)
+		assert.False(t, *bob.SchemeUser)
+		require.NotNil(t, bob.SchemeGuest)
+		assert.True(t, *bob.SchemeGuest)
 	})
 
 	t.Run("falls back to CreatedMillis when no posts", func(t *testing.T) {

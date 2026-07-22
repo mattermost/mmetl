@@ -46,6 +46,10 @@ func init() {
 	TransformSlackCmd.Flags().BoolP("skip-attachments", "a", false, "Skips copying the attachments from the import file")
 	TransformSlackCmd.Flags().Bool("skip-empty-emails", false, "Ignore empty email addresses from the import file. Note that this results in invalid data.")
 	TransformSlackCmd.Flags().String("default-email-domain", "", "If this flag is provided: When a user's email address is empty, the output's email address will be generated from their username and the provided domain.")
+	TransformSlackCmd.Flags().String("guest-handling", slack.GuestHandlingGuest, `How to migrate Slack guest users (single- and multi-channel guests). One of:
+  "guest" - migrate them as Mattermost guests (system_guest/team_guest/channel_guest). Highest fidelity, but the destination server must have Guest Accounts licensed (Professional/Enterprise) and enabled (GuestAccountsSettings.Enable); otherwise the accounts won't behave correctly.
+  "user"  - migrate them as regular Mattermost users. Works everywhere, but grants guests full user permissions.
+  "skip"  - drop guest users entirely, along with their memberships and authored posts/reactions.`)
 	TransformSlackCmd.Flags().BoolP("allow-download", "l", false, "Allows downloading the attachments for the import file")
 	TransformSlackCmd.Flags().BoolP("discard-invalid-props", "p", false, "Skips converting posts with invalid props instead discarding the props themselves")
 	TransformSlackCmd.Flags().Bool("debug", false, "Whether to show debug logs or not")
@@ -73,6 +77,11 @@ func transformSlackCmdF(cmd *cobra.Command, args []string) error {
 	discardInvalidProps, _ := cmd.Flags().GetBool("discard-invalid-props")
 	debug, _ := cmd.Flags().GetBool("debug")
 	botOwner, _ := cmd.Flags().GetString("bot-owner")
+	guestHandling, _ := cmd.Flags().GetString("guest-handling")
+
+	if err := slack.ValidateGuestHandling(guestHandling); err != nil {
+		return err
+	}
 
 	// convert team name to lowercase since Mattermost expects all team names to be lowercase
 	team = strings.ToLower(team)
@@ -137,7 +146,7 @@ func transformSlackCmdF(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	err = slackTransformer.Transform(slackExport, attachmentsDir, skipAttachments, discardInvalidProps, allowDownload, skipEmptyEmails, defaultEmailDomain)
+	err = slackTransformer.Transform(slackExport, attachmentsDir, skipAttachments, discardInvalidProps, allowDownload, skipEmptyEmails, defaultEmailDomain, guestHandling)
 	if err != nil {
 		return err
 	}

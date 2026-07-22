@@ -43,6 +43,16 @@ type SlackUser struct {
 	IsBot    bool         `json:"is_bot"`
 	Profile  SlackProfile `json:"profile"`
 	Deleted  bool         `json:"deleted"`
+	// IsRestricted marks a Slack multi-channel guest.
+	IsRestricted bool `json:"is_restricted"`
+	// IsUltraRestricted marks a Slack single-channel guest. Slack sets both
+	// is_restricted and is_ultra_restricted for these accounts.
+	IsUltraRestricted bool `json:"is_ultra_restricted"`
+}
+
+// IsGuest returns true if the Slack user is a multi-channel or single-channel guest.
+func (u *SlackUser) IsGuest() bool {
+	return u.IsRestricted || u.IsUltraRestricted
 }
 
 // SlackFile represents an uploaded file in Slack

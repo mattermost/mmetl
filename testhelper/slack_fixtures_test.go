@@ -861,7 +861,7 @@ func TestTransformerHandlesInconsistentExports(t *testing.T) {
 		require.NoError(t, err)
 
 		// Transform the export
-		err = transformer.Transform(export, "", true, false, false, false, "")
+		err = transformer.Transform(export, "", true, false, false, false, "", slack.GuestHandlingGuest)
 		require.NoError(t, err)
 
 		// Verify the missing user was created as a placeholder
@@ -906,7 +906,7 @@ func TestTransformerHandlesInconsistentExports(t *testing.T) {
 		require.NoError(t, err)
 
 		// Transform the export
-		err = transformer.Transform(export, "", true, false, false, false, "")
+		err = transformer.Transform(export, "", true, false, false, false, "", slack.GuestHandlingGuest)
 		require.NoError(t, err)
 
 		// Verify the missing member was created as a placeholder
@@ -962,7 +962,7 @@ func TestTransformerHandlesInconsistentExports(t *testing.T) {
 		export, err := transformer.ParseSlackExportFile(reader, true)
 		require.NoError(t, err)
 
-		err = transformer.Transform(export, "", true, false, false, false, "")
+		err = transformer.Transform(export, "", true, false, false, false, "", slack.GuestHandlingGuest)
 		require.NoError(t, err)
 
 		// Verify all missing users were created
