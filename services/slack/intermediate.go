@@ -42,7 +42,7 @@ func normalizeSlackCreated(created int64) int64 {
 }
 
 // The intermediate representation now lives in the shared services/intermediate
-// package so it can be reused across import sources (Slack, Rocket.Chat, ...).
+// package so it can be reused across import sources (Slack, RocketChat, ...).
 // These aliases keep the Slack transform code below unchanged. Methods such as
 // CreatedMillis and Sanitise are defined on the canonical types in that package.
 type (

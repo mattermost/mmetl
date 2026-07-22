@@ -47,7 +47,7 @@ func gridTransformCmdF(cmd *cobra.Command, args []string) error {
 	logger := log.New()
 	logFile, err := os.OpenFile("grid-transform-slack.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
 	if err != nil {
-		logger.Error("error creating zip reader: %w", err)
+		logger.WithError(err).Error("error creating log file")
 		return err
 	}
 	defer logFile.Close()
@@ -63,20 +63,20 @@ func gridTransformCmdF(cmd *cobra.Command, args []string) error {
 	// input file
 	fileReader, err := os.Open(inputFilePath)
 	if err != nil {
-		logger.Error("error opening input file: %w", err)
+		logger.WithError(err).Error("error opening input file")
 		return err
 	}
 	defer fileReader.Close()
 
 	zipFileInfo, err := fileReader.Stat()
 	if err != nil {
-		logger.Error("error getting file info: %w", err)
+		logger.WithError(err).Error("error getting file info")
 		return err
 	}
 
 	zipReader, err := zip.NewReader(fileReader, zipFileInfo.Size())
 	if err != nil || zipReader.File == nil {
-		logger.Error("error reading zip file %w", err)
+		logger.WithError(err).Error("error reading zip file")
 		return err
 	}
 
@@ -84,7 +84,7 @@ func gridTransformCmdF(cmd *cobra.Command, args []string) error {
 	slackTransformer := slack_grid.NewGridTransformer(logger)
 	teamMapFile, err := os.Open(teamMap)
 	if err != nil {
-		logger.Error("error parsing teams.json: %w", err)
+		logger.WithError(err).Error("error opening teams.json")
 		return err
 	}
 	defer teamMapFile.Close()
@@ -92,7 +92,7 @@ func gridTransformCmdF(cmd *cobra.Command, args []string) error {
 	teamMapDecoder := json.NewDecoder(teamMapFile)
 	err = teamMapDecoder.Decode(&slackTransformer.Teams)
 	if err != nil {
-		logger.Error("error parsing teams.json: %w", err)
+		logger.WithError(err).Error("error parsing teams.json")
 		return err
 	}
 
@@ -103,13 +103,13 @@ func gridTransformCmdF(cmd *cobra.Command, args []string) error {
 
 	err = slackTransformer.ExtractDirectory(zipReader)
 	if err != nil {
-		logger.Error("error extracting zip file. error:", err)
-		return nil
+		logger.WithError(err).Error("error extracting zip file")
+		return err
 	}
 
 	slackExport, err := slackTransformer.ParseGridSlackExportFile(zipReader)
 	if err != nil {
-		logger.Error("error parsing slack export: %w", err)
+		logger.WithError(err).Error("error parsing slack export")
 		return err
 	}
 
@@ -126,14 +126,14 @@ func gridTransformCmdF(cmd *cobra.Command, args []string) error {
 	for _, ct := range channelTypes {
 		err = slackTransformer.HandleMovingChannels(ct.channels, ct.fileType)
 		if err != nil {
-			logger.Errorf("Error moving %v channels: %v", ct.fileType, err)
+			logger.WithError(err).WithField("channel_type", ct.fileType).Error("error moving channels")
 			return err
 		}
 	}
 
 	err = slackTransformer.ZipTeamDirectories()
 	if err != nil {
-		logger.Error("error zipping team directories", err)
+		logger.WithError(err).Error("error zipping team directories")
 		return err
 	}
 

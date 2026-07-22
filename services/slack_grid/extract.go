@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/pkg/errors"
+	log "github.com/sirupsen/logrus"
 )
 
 const DefaultDirPath = "tmp/slack_grid"
@@ -57,7 +58,7 @@ func (t *GridTransformer) ExtractDirectory(zipReader *zip.Reader) error {
 	}
 	t.pwd = pwd
 	t.dirPath = filepath.Join(pwd, DefaultDirPath)
-	t.Logger.Infof("Extracting to %s", t.dirPath)
+	t.Logger.WithField("path", t.dirPath).Info("Extracting to directory")
 
 	yes, err := t.dirHasContent(t.dirPath)
 	if err != nil {
@@ -65,7 +66,7 @@ func (t *GridTransformer) ExtractDirectory(zipReader *zip.Reader) error {
 	}
 
 	if yes {
-		t.Logger.Infof("content exists in the directory %s. Skipping extraction.", t.dirPath)
+		t.Logger.WithField("path", t.dirPath).Info("content already exists in the directory. Skipping extraction.")
 		return nil
 	}
 
@@ -108,7 +109,10 @@ func (t *GridTransformer) ExtractDirectory(zipReader *zip.Reader) error {
 		outFile.Close()
 		rc.Close()
 		if i%1000 == 0 || i == totalFiles-1 {
-			t.Logger.Infof("Extracting file %d of %d", i, totalFiles)
+			t.Logger.WithFields(log.Fields{
+				"file":  i,
+				"total": totalFiles,
+			}).Info("Extracting file")
 		}
 		if err != nil {
 			return errors.Wrap(err, "error copying files")
@@ -121,10 +125,16 @@ func (t *GridTransformer) ExtractDirectory(zipReader *zip.Reader) error {
 
 func (t *GridTransformer) ZipTeamDirectories() error {
 	// zip the directories under /teams
+	teamsDir := filepath.Join(t.dirPath, "teams")
 
-	teams, err := t.readDir(filepath.Join(t.dirPath, "teams"))
+	if _, err := os.Stat(teamsDir); os.IsNotExist(err) {
+		t.Logger.Warn("no teams directory found. No channels were moved to a team.")
+		return nil
+	}
 
-	t.Logger.Infof("Zipping %v team directories...", len(teams))
+	teams, err := t.readDir(teamsDir)
+
+	t.Logger.WithField("count", len(teams)).Info("Zipping team directories")
 
 	if err != nil {
 		return errors.Wrap(err, "error reading teams directory")
@@ -135,7 +145,10 @@ func (t *GridTransformer) ZipTeamDirectories() error {
 		teamPath := filepath.Join(t.dirPath, "teams", team.Name())
 		teamZipPath := filepath.Join(t.pwd, team.Name()+".zip")
 
-		t.Logger.Infof("Zipping %s to %s", teamPath, teamZipPath)
+		t.Logger.WithFields(log.Fields{
+			"source": teamPath,
+			"target": teamZipPath,
+		}).Info("Zipping team directory")
 
 		err := ZipDir(teamPath, teamZipPath)
 		if err != nil {
