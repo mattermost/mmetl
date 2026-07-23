@@ -48,7 +48,7 @@ jobs:
           path: build
       - name: publish-release
         run: |
-          gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" *.tar.gz
+          gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes *.tar.gz
         working-directory: build
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
