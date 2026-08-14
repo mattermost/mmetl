@@ -208,7 +208,7 @@ func (t *GridTransformer) getChannelsToMove(slackChannels []slack.SlackChannel, 
 func (t *GridTransformer) findTeamIDForChannel(channel slack.SlackChannel, itemsInDir []fs.DirEntry, channelType ChannelFiles) (string, error) {
 	channelDirName := getChannelDirName(channel, channelType)
 	for _, item := range itemsInDir {
-		if strings.HasPrefix(item.Name(), channelDirName) && item.Type().IsDir() {
+		if item.Name() == channelDirName && item.Type().IsDir() {
 			return t.findTeamIdFromChannelDir(item.Name())
 		}
 	}

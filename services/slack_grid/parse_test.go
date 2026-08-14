@@ -221,6 +221,35 @@ func TestFindTeamIdFromChannelDir(t *testing.T) {
 	})
 }
 
+// TestFindTeamIDForChannel_ExactMatchOnly reproduces a bug where a channel
+// named "dev" would match a directory named "dev-ops" because the lookup
+// used strings.HasPrefix instead of an exact name comparison. The channel
+// directory name must match exactly, otherwise the channel silently
+// inherits the team ID of an unrelated channel that merely shares a prefix.
+func TestFindTeamIDForChannel_ExactMatchOnly(t *testing.T) {
+	bt := setupGridTransformer(t)
+
+	// "dev-ops" sorts before "dev" alphabetically, so if prefix matching were
+	// used it would be the first (and only, in this case) match found.
+	writeToFileInTestDir(filepath.Join(bt.dirPath, "dev-ops"), "posts.json",
+		marshalJSON([]Post{{Team: "team-devops"}}, t),
+		t,
+	)
+	writeToFileInTestDir(filepath.Join(bt.dirPath, "dev"), "posts.json",
+		marshalJSON([]Post{{Team: "team-dev"}}, t),
+		t,
+	)
+
+	itemsInDir, err := os.ReadDir(bt.dirPath)
+	assert.NoError(t, err)
+
+	channel := slack.SlackChannel{Id: "c1", Name: "dev"}
+	teamID, err := bt.findTeamIDForChannel(channel, itemsInDir, ChannelFilePublic)
+
+	assert.NoError(t, err)
+	assert.Equal(t, "team-dev", teamID)
+}
+
 func TestAppendChannelToChannelsToMove(t *testing.T) {
 	bt := setupGridTransformer(t)
 
