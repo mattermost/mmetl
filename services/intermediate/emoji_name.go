@@ -3,6 +3,7 @@ package intermediate
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"strconv"
 	"strings"
 	"unicode"
 
@@ -86,9 +87,10 @@ func (s *EmojiNameSanitizer) resolveCollision(original, candidate string) string
 func (s *EmojiNameSanitizer) uniqueFallback(original string) string {
 	sum := sha256.Sum256([]byte(original))
 	hexStr := hex.EncodeToString(sum[:])
+	const prefix = "emoji_"
 	// Prefer 8-byte (16 hex) prefix; extend on the rare hash collision.
 	for n := 8; n <= len(sum); n++ {
-		name := "emoji_" + hexStr[:n*2]
+		name := prefix + hexStr[:n*2]
 		if len(name) > model.EmojiNameMaxLength {
 			name = name[:model.EmojiNameMaxLength]
 		}
@@ -96,7 +98,27 @@ func (s *EmojiNameSanitizer) uniqueFallback(original string) string {
 			return name
 		}
 	}
-	return "emoji_" + hexStr[:model.EmojiNameMaxLength-len("emoji_")]
+	// Pathological: every hash prefix is taken. Keep generating deterministic
+	// counter suffixes until a free name is found (always stays within charset).
+	base := prefix + hexStr[:16]
+	for i := 0; ; i++ {
+		suffix := strconv.FormatInt(int64(i), 10)
+		name := base + "_" + suffix
+		if len(name) > model.EmojiNameMaxLength {
+			// Keep the counter; trim the hash middle so names stay unique.
+			keep := model.EmojiNameMaxLength - len(prefix) - 1 - len(suffix)
+			if keep < 1 {
+				keep = 1
+			}
+			name = prefix + hexStr[:keep] + "_" + suffix
+			if len(name) > model.EmojiNameMaxLength {
+				name = name[:model.EmojiNameMaxLength]
+			}
+		}
+		if owner, taken := s.usedBy[name]; !taken || owner == original {
+			return name
+		}
+	}
 }
 
 func isValidEmojiName(name string) bool {

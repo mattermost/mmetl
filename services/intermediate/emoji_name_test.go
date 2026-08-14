@@ -96,6 +96,30 @@ func TestEmojiNameSanitizer(t *testing.T) {
 			NewEmojiNameSanitizer(log.New()).Sanitize("リハテスト"),
 		)
 	})
+
+	t.Run("uniqueFallback never returns an occupied name", func(t *testing.T) {
+		s := NewEmojiNameSanitizer(log.New())
+		original := "リハテスト"
+		sum := sha256.Sum256([]byte(original))
+		hexStr := hex.EncodeToString(sum[:])
+
+		// Preclaim every hash-prefix candidate uniqueFallback tries first,
+		// plus the truncated full-hash form the old code returned unchecked.
+		for n := 8; n <= len(sum); n++ {
+			name := "emoji_" + hexStr[:n*2]
+			if len(name) > model.EmojiNameMaxLength {
+				name = name[:model.EmojiNameMaxLength]
+			}
+			s.usedBy[name] = "other"
+		}
+		s.usedBy["emoji_"+hexStr[:model.EmojiNameMaxLength-len("emoji_")]] = "other"
+
+		got := s.Sanitize(original)
+		require.True(t, isValidEmojiName(got))
+		assert.NotEqual(t, "other", s.usedBy[got], "sanitized name must not already be owned")
+		assert.Equal(t, original, s.usedBy[got])
+		assert.True(t, strings.HasPrefix(got, "emoji_"))
+	})
 }
 
 func TestExporter_SanitizeEmojiName(t *testing.T) {

@@ -946,7 +946,16 @@ func (t *Transformer) convertReactions(m *RocketChatMessage) []*intermediate.Int
 	baseTs := m.Timestamp.UnixMilli()
 	counter := int64(0)
 
-	for emojiCode, info := range m.Reactions {
+	// Sort keys so SanitizeEmojiName collision ownership is deterministic
+	// across runs (Go map iteration order is randomized).
+	codes := make([]string, 0, len(m.Reactions))
+	for code := range m.Reactions {
+		codes = append(codes, code)
+	}
+	sort.Strings(codes)
+
+	for _, emojiCode := range codes {
+		info := m.Reactions[emojiCode]
 		// Strip surrounding colons: ":smile:" → "smile"
 		emojiName := strings.Trim(emojiCode, ":")
 
