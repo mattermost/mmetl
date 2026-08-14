@@ -56,6 +56,9 @@ type Channel struct {
 
 type GridTransformer struct {
 	slack.Transformer
+	// Teams maps a Slack workspace ID (the "team" field on posts) to the
+	// teams/<name>/ folder already present in the Grid export. Values are
+	// Slack folder names, not Mattermost team names.
 	Teams map[string]string
 
 	// the root path to export slack to for parsing.
@@ -127,7 +130,7 @@ func (t *GridTransformer) ParseGridSlackExportFile(zipReader *zip.Reader) (*Grid
 
 // The primary function here that is responsible for transforming the data. It accepts a Slack channel, which can
 // be of GM / DM / Private / Public. It then finds the team ID for that channel and moves it to the correct team directory.
-// Any channels that do not have a valid mapping in the teams.json file or no team ID found are skipped.
+// Channels with no team ID, or whose ID is missing from the team mapping, are skipped.
 
 func (t *GridTransformer) HandleMovingChannels(slackChannels []slack.SlackChannel, channelType ChannelFiles) error {
 	t.Logger.WithField("path", t.dirPath).Info("Unzipped slack export path being used")
