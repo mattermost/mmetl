@@ -50,6 +50,25 @@ func TestEmojiNameSanitizer(t *testing.T) {
 		assert.NotEqual(t, "cafe", collided)
 	})
 
+	t.Run("valid name after readable rename does not merge", func(t *testing.T) {
+		s := NewEmojiNameSanitizer(log.New())
+		assert.Equal(t, "cafe", s.Sanitize("café"))
+		// "cafe" is already claimed by "café"; the valid original must not
+		// silently reuse that name.
+		got := s.Sanitize("cafe")
+		assert.Equal(t, fallbackEmojiName("cafe"), got)
+		assert.NotEqual(t, "cafe", got)
+		assert.Equal(t, "cafe", s.Sanitize("café"))
+	})
+
+	t.Run("valid name first wins over later readable collision", func(t *testing.T) {
+		s := NewEmojiNameSanitizer(log.New())
+		assert.Equal(t, "cafe", s.Sanitize("cafe"))
+		got := s.Sanitize("café")
+		assert.Equal(t, fallbackEmojiName("café"), got)
+		assert.NotEqual(t, "cafe", got)
+	})
+
 	t.Run("identical originals reuse mapping", func(t *testing.T) {
 		s := NewEmojiNameSanitizer(log.New())
 		a := s.Sanitize("リハテスト")

@@ -955,6 +955,8 @@ func (t *Transformer) convertReactions(m *RocketChatMessage) []*intermediate.Int
 			emojiName = emojiName[:idx]
 		}
 
+		emojiName = t.SanitizeEmojiName(emojiName)
+
 		for _, username := range info.Usernames {
 			lower := strings.ToLower(username)
 			// Skip reactions by skipped users so they don't reference a

@@ -64,18 +64,39 @@ func (s *EmojiNameSanitizer) Sanitize(original string) string {
 }
 
 func (s *EmojiNameSanitizer) chooseName(original string) string {
-	if isValidEmojiName(original) {
-		return original
+	candidate := original
+	if !isValidEmojiName(original) {
+		candidate = readableEmojiName(original)
+		if candidate == "" {
+			candidate = fallbackEmojiName(original)
+		}
 	}
+	return s.resolveCollision(original, candidate)
+}
 
-	candidate := readableEmojiName(original)
-	if candidate == "" {
-		return fallbackEmojiName(original)
+// resolveCollision returns candidate when free (or already owned by original);
+// otherwise a deterministic hash fallback that is also free in usedBy.
+func (s *EmojiNameSanitizer) resolveCollision(original, candidate string) string {
+	if owner, taken := s.usedBy[candidate]; !taken || owner == original {
+		return candidate
 	}
-	if owner, taken := s.usedBy[candidate]; taken && owner != original {
-		return fallbackEmojiName(original)
+	return s.uniqueFallback(original)
+}
+
+func (s *EmojiNameSanitizer) uniqueFallback(original string) string {
+	sum := sha256.Sum256([]byte(original))
+	hexStr := hex.EncodeToString(sum[:])
+	// Prefer 8-byte (16 hex) prefix; extend on the rare hash collision.
+	for n := 8; n <= len(sum); n++ {
+		name := "emoji_" + hexStr[:n*2]
+		if len(name) > model.EmojiNameMaxLength {
+			name = name[:model.EmojiNameMaxLength]
+		}
+		if owner, taken := s.usedBy[name]; !taken || owner == original {
+			return name
+		}
 	}
-	return candidate
+	return "emoji_" + hexStr[:model.EmojiNameMaxLength-len("emoji_")]
 }
 
 func isValidEmojiName(name string) bool {
