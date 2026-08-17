@@ -121,7 +121,17 @@ func (t *GridTransformer) usersFromFile(file *zip.File) ([]slack.SlackUser, erro
 	return users, nil
 }
 
+// maxPostFileSize caps how large a single post file we'll decompress while
+// inferring team IDs. Files used for this are small in practice; this just
+// guards against a corrupt or maliciously crafted (e.g. zip-bomb) entry
+// exhausting memory before discovery can fail gracefully.
+const maxPostFileSize = 50 * 1024 * 1024 // 50MB
+
 func (t *GridTransformer) teamIDFromPostFile(file *zip.File) (string, error) {
+	if file.UncompressedSize64 > maxPostFileSize {
+		return "", errors.Errorf("post file %s is %d bytes, exceeding the %d byte limit for team ID inference", file.Name, file.UncompressedSize64, maxPostFileSize)
+	}
+
 	rc, err := file.Open()
 	if err != nil {
 		return "", errors.Wrap(err, "error opening post file")

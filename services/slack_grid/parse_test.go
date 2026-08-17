@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -229,8 +230,6 @@ func TestFindTeamIdFromChannelDir(t *testing.T) {
 func TestFindTeamIDForChannel_ExactMatchOnly(t *testing.T) {
 	bt := setupGridTransformer(t)
 
-	// "dev-ops" sorts before "dev" alphabetically, so if prefix matching were
-	// used it would be the first (and only, in this case) match found.
 	writeToFileInTestDir(filepath.Join(bt.dirPath, "dev-ops"), "posts.json",
 		marshalJSON([]Post{{Team: "team-devops"}}, t),
 		t,
@@ -240,8 +239,21 @@ func TestFindTeamIDForChannel_ExactMatchOnly(t *testing.T) {
 		t,
 	)
 
-	itemsInDir, err := os.ReadDir(bt.dirPath)
+	allItems, err := os.ReadDir(bt.dirPath)
 	assert.NoError(t, err)
+
+	byName := make(map[string]fs.DirEntry, len(allItems))
+	for _, item := range allItems {
+		byName[item.Name()] = item
+	}
+
+	// os.ReadDir returns entries sorted by filename, and "dev" always sorts
+	// before "dev-ops" since it's a prefix of it. That would let a prefix
+	// lookup find "dev" first and pass by coincidence, masking the bug this
+	// test guards against. Force "dev-ops" first so a prefix-matching lookup
+	// is provably wrong (it would return "team-devops"), while the
+	// exact-match lookup still finds "dev" and returns "team-dev".
+	itemsInDir := []fs.DirEntry{byName["dev-ops"], byName["dev"]}
 
 	channel := slack.SlackChannel{Id: "c1", Name: "dev"}
 	teamID, err := bt.findTeamIDForChannel(channel, itemsInDir, ChannelFilePublic)

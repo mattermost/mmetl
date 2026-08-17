@@ -68,7 +68,9 @@ func teamFolderNames(zipReader *zip.Reader) map[string]bool {
 	existingTeamFolders := make(map[string]bool)
 	for _, file := range zipReader.File {
 		if rest, ok := strings.CutPrefix(file.Name, "teams/"); ok {
-			if idx := strings.Index(rest, "/"); idx >= 0 {
+			// idx > 0 (not >= 0) rejects entries like "teams//users.json",
+			// which would otherwise register an empty team folder name.
+			if idx := strings.Index(rest, "/"); idx > 0 {
 				existingTeamFolders[rest[:idx]] = true
 			}
 		}

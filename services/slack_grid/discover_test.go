@@ -100,6 +100,40 @@ func TestDiscoverTeamMap_CannotInfer(t *testing.T) {
 	assert.Contains(t, err.Error(), "could not infer team mapping from the export; provide --team-map-path")
 }
 
+// TestTeamIDFromPostFile_RejectsOversizedFile guards against a corrupt or
+// zip-bomb post file being fully decompressed into memory: a file whose
+// declared uncompressed size exceeds maxPostFileSize must be rejected before
+// it is ever opened/read.
+func TestTeamIDFromPostFile_RejectsOversizedFile(t *testing.T) {
+	gt := NewGridTransformer(logrus.New())
+
+	zipData := new(bytes.Buffer)
+	zipWriter := zip.NewWriter(zipData)
+
+	fileWriter, err := zipWriter.CreateHeader(&zip.FileHeader{
+		Name:   "teams/acme/general/2024-01-01.json",
+		Method: zip.Deflate,
+	})
+	require.NoError(t, err)
+
+	// Highly compressible payload so writing/compressing it stays fast, while
+	// still declaring an UncompressedSize64 above the limit.
+	oversized := bytes.Repeat([]byte{'0'}, maxPostFileSize+1)
+	_, err = fileWriter.Write(oversized)
+	require.NoError(t, err)
+
+	require.NoError(t, zipWriter.Close())
+
+	zipReader, err := zip.NewReader(bytes.NewReader(zipData.Bytes()), int64(zipData.Len()))
+	require.NoError(t, err)
+	require.Len(t, zipReader.File, 1)
+
+	teamID, err := gt.teamIDFromPostFile(zipReader.File[0])
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "exceeding the")
+	assert.Equal(t, "", teamID)
+}
+
 func TestMajorityNativeTeamID_IgnoresGuests(t *testing.T) {
 	users := []slack.SlackUser{
 		{Id: "U1", TeamID: "T0001"},
