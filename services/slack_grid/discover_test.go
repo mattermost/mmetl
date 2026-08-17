@@ -107,28 +107,15 @@ func TestDiscoverTeamMap_CannotInfer(t *testing.T) {
 func TestTeamIDFromPostFile_RejectsOversizedFile(t *testing.T) {
 	gt := NewGridTransformer(logrus.New())
 
-	zipData := new(bytes.Buffer)
-	zipWriter := zip.NewWriter(zipData)
+	// The size check must happen before file.Open(), so a synthetic *zip.File
+	// declaring an oversized UncompressedSize64 is enough to exercise it -
+	// no need to actually allocate/compress a file that large.
+	file := &zip.File{FileHeader: zip.FileHeader{
+		Name:               "teams/acme/general/2024-01-01.json",
+		UncompressedSize64: maxPostFileSize + 1,
+	}}
 
-	fileWriter, err := zipWriter.CreateHeader(&zip.FileHeader{
-		Name:   "teams/acme/general/2024-01-01.json",
-		Method: zip.Deflate,
-	})
-	require.NoError(t, err)
-
-	// Highly compressible payload so writing/compressing it stays fast, while
-	// still declaring an UncompressedSize64 above the limit.
-	oversized := bytes.Repeat([]byte{'0'}, maxPostFileSize+1)
-	_, err = fileWriter.Write(oversized)
-	require.NoError(t, err)
-
-	require.NoError(t, zipWriter.Close())
-
-	zipReader, err := zip.NewReader(bytes.NewReader(zipData.Bytes()), int64(zipData.Len()))
-	require.NoError(t, err)
-	require.Len(t, zipReader.File, 1)
-
-	teamID, err := gt.teamIDFromPostFile(zipReader.File[0])
+	teamID, err := gt.teamIDFromPostFile(file)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "exceeding the")
 	assert.Equal(t, "", teamID)
