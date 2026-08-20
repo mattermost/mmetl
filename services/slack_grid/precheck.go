@@ -24,7 +24,7 @@ func (t *GridTransformer) GridPreCheck(zipReader *zip.Reader) bool {
 	}
 
 	if len(t.Teams) == 0 {
-		t.Logger.Error("no teams found in teams.json")
+		t.Logger.Error("no team mapping found")
 		valid = false
 	}
 
@@ -39,7 +39,7 @@ func (t *GridTransformer) GridPreCheck(zipReader *zip.Reader) bool {
 	return valid
 }
 
-// checkForDuplicateTeamNames ensures every team ID in teams.json maps to a
+// checkForDuplicateTeamNames ensures every team ID in the mapping maps to a
 // distinct name. Without this, channels for teams sharing the same name
 // would be silently merged into the same "teams/<name>/" output directory
 // and zip file.
@@ -56,7 +56,7 @@ func (t *GridTransformer) checkForDuplicateTeamNames() bool {
 			t.Logger.WithFields(log.Fields{
 				"team_name": teamName,
 				"team_ids":  teamIDs,
-			}).Error("team name in teams.json is used for multiple team IDs")
+			}).Error("team name is used for multiple team IDs")
 			valid = false
 		}
 	}
@@ -64,19 +64,25 @@ func (t *GridTransformer) checkForDuplicateTeamNames() bool {
 	return valid
 }
 
-// checkTeamFoldersExist ensures every team name in teams.json has a
-// corresponding "teams/<name>/" folder in the export archive. teams.json
-// names must match the folders Slack already put in the export, not
-// arbitrary display names.
-func (t *GridTransformer) checkTeamFoldersExist(zipReader *zip.Reader) bool {
+func teamFolderNames(zipReader *zip.Reader) map[string]bool {
 	existingTeamFolders := make(map[string]bool)
 	for _, file := range zipReader.File {
 		if rest, ok := strings.CutPrefix(file.Name, "teams/"); ok {
-			if idx := strings.Index(rest, "/"); idx >= 0 {
+			// idx > 0 (not >= 0) rejects entries like "teams//users.json",
+			// which would otherwise register an empty team folder name.
+			if idx := strings.Index(rest, "/"); idx > 0 {
 				existingTeamFolders[rest[:idx]] = true
 			}
 		}
 	}
+	return existingTeamFolders
+}
+
+// checkTeamFoldersExist ensures every mapped team name has a corresponding
+// "teams/<name>/" folder in the export archive. Names must match the folders
+// Slack already put in the export, not arbitrary display names.
+func (t *GridTransformer) checkTeamFoldersExist(zipReader *zip.Reader) bool {
+	existingTeamFolders := teamFolderNames(zipReader)
 
 	valid := true
 	for teamID, teamName := range t.Teams {

@@ -70,3 +70,51 @@ func TestGridPreCheck_MissingTeamFolder(t *testing.T) {
 
 	assert.False(t, gt.GridPreCheck(zipReader))
 }
+
+// TestTeamFolderNames_RejectsEmptyName guards against a "teams//users.json"
+// style entry (an empty folder name between the two slashes) registering ""
+// as a valid team folder. Left unchecked, that would let a team mapped to an
+// empty display name pass checkTeamFoldersExist and later resolve to the
+// broken "teams//" output path.
+func TestTeamFolderNames_RejectsEmptyName(t *testing.T) {
+	zipData := new(bytes.Buffer)
+	zipWriter := zip.NewWriter(zipData)
+
+	_, err := zipWriter.Create("teams//users.json")
+	assert.NoError(t, err)
+
+	assert.NoError(t, zipWriter.Close())
+
+	zipReader, err := zip.NewReader(bytes.NewReader(zipData.Bytes()), int64(zipData.Len()))
+	assert.NoError(t, err)
+
+	folders := teamFolderNames(zipReader)
+	assert.NotContains(t, folders, "")
+	assert.Empty(t, folders)
+}
+
+func TestGridPreCheck_EmptyTeamFolderName(t *testing.T) {
+	gt := NewGridTransformer(logrus.New())
+	gt.Teams = map[string]string{
+		"team1": "",
+	}
+
+	zipData := new(bytes.Buffer)
+	zipWriter := zip.NewWriter(zipData)
+
+	marshalAndWriteToZipFile(zipWriter, "channels.json", []slack.SlackChannel{}, t)
+	marshalAndWriteToZipFile(zipWriter, "groups.json", []slack.SlackChannel{}, t)
+	marshalAndWriteToZipFile(zipWriter, "dms.json", []slack.SlackChannel{}, t)
+	marshalAndWriteToZipFile(zipWriter, "mpims.json", []slack.SlackChannel{}, t)
+
+	_, err := zipWriter.Create("teams//users.json")
+	assert.NoError(t, err)
+
+	assert.NoError(t, zipWriter.Close())
+
+	zipReader, err := zip.NewReader(bytes.NewReader(zipData.Bytes()), int64(zipData.Len()))
+	assert.NoError(t, err)
+
+	// an empty team name must never be accepted as a valid folder match.
+	assert.False(t, gt.GridPreCheck(zipReader))
+}

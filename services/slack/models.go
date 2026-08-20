@@ -43,6 +43,9 @@ type SlackUser struct {
 	IsBot    bool         `json:"is_bot"`
 	Profile  SlackProfile `json:"profile"`
 	Deleted  bool         `json:"deleted"`
+	// TeamID is the Slack workspace ID (T...) this user belongs to. Present in
+	// workspace and Enterprise Grid exports; used to infer grid-transform mappings.
+	TeamID string `json:"team_id"`
 	// IsRestricted marks a Slack multi-channel guest.
 	IsRestricted bool `json:"is_restricted"`
 	// IsUltraRestricted marks a Slack single-channel guest. Slack sets both
