@@ -3,6 +3,7 @@ package commands
 import (
 	"archive/zip"
 	"encoding/json"
+	"fmt"
 	"os"
 
 	"github.com/mattermost/mmetl/services/slack"
@@ -98,7 +99,7 @@ func gridTransformCmdF(cmd *cobra.Command, args []string) error {
 
 	valid := slackTransformer.GridPreCheck(zipReader)
 	if !valid {
-		return nil
+		return fmt.Errorf("grid pre-check failed, see %s for details", logFile.Name())
 	}
 
 	err = slackTransformer.ExtractDirectory(zipReader)
