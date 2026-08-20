@@ -32,6 +32,9 @@ type Exporter struct {
 	// isEffectiveGuest) so it is computed once and reused across the group- and
 	// direct-channel export passes rather than rebuilt on each call.
 	guestUsernames map[string]bool
+
+	// emojiNames is lazy-initialized on first SanitizeEmojiName call.
+	emojiNames *EmojiNameSanitizer
 }
 
 // isEffectiveGuest reports whether user should be exported with Mattermost

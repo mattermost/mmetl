@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -622,6 +623,83 @@ func TestTransformMessages(t *testing.T) {
 		}
 		assert.True(t, emojiNames["smile"])
 		assert.True(t, emojiNames["thumbsup"])
+	})
+
+	t.Run("reaction conversion - invalid emoji names sanitized", func(t *testing.T) {
+		tr := NewTransformer("test", newLogger())
+		tr.Intermediate.UsersById = map[string]*intermediate.IntermediateUser{
+			"u1": {Id: "u1", Username: "alice"},
+		}
+		tr.roomIDToType["r1"] = "c"
+		tr.roomIDToChannelName["r1"] = "general"
+
+		messages := []RocketChatMessage{{
+			ID: "m1", RoomID: "r1",
+			User: RCMessageUser{ID: "u1", Username: "alice"}, Message: "hi",
+			Timestamp: now,
+			Reactions: map[string]RCReactionInfo{
+				":リハテスト:":           {Usernames: []string{"alice"}},
+				":+1::skin-tone-3:": {Usernames: []string{"alice"}},
+			},
+		}}
+		tr.transformMessages(messages, nil)
+		require.Len(t, tr.Intermediate.Posts, 1)
+		require.Len(t, tr.Intermediate.Posts[0].Reactions, 2)
+
+		names := make(map[string]bool, 2)
+		for _, r := range tr.Intermediate.Posts[0].Reactions {
+			require.LessOrEqual(t, len(r.EmojiName), model.EmojiNameMaxLength)
+			require.True(t, model.IsValidAlphaNumHyphenUnderscorePlus(r.EmojiName))
+			names[r.EmojiName] = true
+		}
+		assert.True(t, names["+1"], "skin-tone suffix should be stripped before sanitize")
+		delete(names, "+1")
+		require.Len(t, names, 1)
+		for n := range names {
+			require.True(t, strings.HasPrefix(n, "emoji_"))
+		}
+	})
+
+	t.Run("reaction conversion - colliding names are stable across runs", func(t *testing.T) {
+		msg := RocketChatMessage{
+			ID: "m1", RoomID: "r1",
+			User: RCMessageUser{ID: "u1", Username: "alice"}, Message: "hi",
+			Timestamp: now,
+			// Both sanitize toward "cafe"; sorted key order must decide ownership.
+			Reactions: map[string]RCReactionInfo{
+				":cafe!:": {Usernames: []string{"alice"}},
+				":cafe:":  {Usernames: []string{"bob"}},
+			},
+		}
+
+		collect := func() map[string]string {
+			tr := NewTransformer("test", newLogger())
+			tr.Intermediate.UsersById = map[string]*intermediate.IntermediateUser{
+				"u1": {Id: "u1", Username: "alice"},
+				"u2": {Id: "u2", Username: "bob"},
+			}
+			tr.roomIDToType["r1"] = "c"
+			tr.roomIDToChannelName["r1"] = "general"
+			tr.transformMessages([]RocketChatMessage{msg}, nil)
+			require.Len(t, tr.Intermediate.Posts, 1)
+			byUser := make(map[string]string, 2)
+			for _, r := range tr.Intermediate.Posts[0].Reactions {
+				byUser[r.User] = r.EmojiName
+			}
+			require.Len(t, byUser, 2)
+			assert.NotEqual(t, byUser["alice"], byUser["bob"])
+			return byUser
+		}
+
+		first := collect()
+		for range 5 {
+			assert.Equal(t, first, collect())
+		}
+		// Sorted keys: ":cafe!:" before ":cafe:", so "cafe!" claims readable
+		// "cafe" and the valid "cafe" reaction gets the hash fallback.
+		assert.Equal(t, "cafe", first["alice"])
+		assert.NotEqual(t, "cafe", first["bob"])
+		assert.True(t, strings.HasPrefix(first["bob"], "emoji_"))
 	})
 
 	t.Run("system message mapping - uj → system_join_channel", func(t *testing.T) {

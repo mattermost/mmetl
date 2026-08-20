@@ -879,7 +879,7 @@ func (t *Transformer) getReactionsFromPost(post SlackPost) []*IntermediateReacti
 			}
 			newReaction := &IntermediateReaction{
 				User:      reactionAuthor.Username,
-				EmojiName: cleanedReactionName,
+				EmojiName: t.SanitizeEmojiName(cleanedReactionName),
 				CreateAt:  SlackConvertTimeStamp(post.TimeStamp) + 1,
 				// we don't have the real createAt available, so we pretend that reactions were created shortly after the post,
 				// to avoid validation errors at import time:
