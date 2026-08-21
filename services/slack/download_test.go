@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -14,6 +13,12 @@ import (
 )
 
 var mockData []byte
+
+func downloadTestFile(t *testing.T) string {
+	t.Helper()
+	t.Chdir(t.TempDir())
+	return "download-test"
+}
 
 func TestDownload(t *testing.T) {
 	// set up the test
@@ -26,8 +31,7 @@ func TestDownload(t *testing.T) {
 
 	// run the idividual tests
 	t.Run("successful download", func(t *testing.T) {
-		fileName := filepath.Join(os.TempDir(), "download-test")
-		defer os.Remove(fileName)
+		fileName := downloadTestFile(t)
 
 		require.NoError(t, downloadInto(fileName, srv.URL+"/no_resume", int64(len(mockData))))
 		tempFile, _ := os.ReadFile(fileName)
@@ -35,8 +39,7 @@ func TestDownload(t *testing.T) {
 	})
 
 	t.Run("successful resume, empty file", func(t *testing.T) {
-		fileName := filepath.Join(os.TempDir(), "download-test")
-		defer os.Remove(fileName)
+		fileName := downloadTestFile(t)
 		require.NoError(t, os.WriteFile(fileName, []byte{}, 0660))
 
 		require.NoError(t, downloadInto(fileName, srv.URL+"/resume", int64(len(mockData))))
@@ -45,8 +48,7 @@ func TestDownload(t *testing.T) {
 	})
 
 	t.Run("successful resume, tiny file", func(t *testing.T) {
-		fileName := filepath.Join(os.TempDir(), "download-test")
-		defer os.Remove(fileName)
+		fileName := downloadTestFile(t)
 		require.NoError(t, os.WriteFile(fileName, mockData[:8], 0660))
 
 		require.NoError(t, downloadInto(fileName, srv.URL+"/resume", int64(len(mockData))))
@@ -55,8 +57,7 @@ func TestDownload(t *testing.T) {
 	})
 
 	t.Run("successful resume, half file", func(t *testing.T) {
-		fileName := filepath.Join(os.TempDir(), "download-test")
-		defer os.Remove(fileName)
+		fileName := downloadTestFile(t)
 		require.NoError(t, os.WriteFile(fileName, mockData[:1024*512], 0660))
 
 		require.NoError(t, downloadInto(fileName, srv.URL+"/resume", int64(len(mockData))))
@@ -65,8 +66,7 @@ func TestDownload(t *testing.T) {
 	})
 
 	t.Run("successful resume, full file", func(t *testing.T) {
-		fileName := filepath.Join(os.TempDir(), "download-test")
-		defer os.Remove(fileName)
+		fileName := downloadTestFile(t)
 		require.NoError(t, os.WriteFile(fileName, mockData, 0660))
 
 		require.NoError(t, downloadInto(fileName, srv.URL+"/resume", int64(len(mockData))))
@@ -75,8 +75,7 @@ func TestDownload(t *testing.T) {
 	})
 
 	t.Run("successful re-download, empty file", func(t *testing.T) {
-		fileName := filepath.Join(os.TempDir(), "download-test")
-		defer os.Remove(fileName)
+		fileName := downloadTestFile(t)
 		require.NoError(t, os.WriteFile(fileName, []byte{}, 0660))
 
 		require.NoError(t, downloadInto(fileName, srv.URL+"/no_resume", int64(len(mockData))))
@@ -85,8 +84,7 @@ func TestDownload(t *testing.T) {
 	})
 
 	t.Run("successful re-download, tiny file", func(t *testing.T) {
-		fileName := filepath.Join(os.TempDir(), "download-test")
-		defer os.Remove(fileName)
+		fileName := downloadTestFile(t)
 		require.NoError(t, os.WriteFile(fileName, mockData[:8], 0660))
 
 		require.NoError(t, downloadInto(fileName, srv.URL+"/no_resume", int64(len(mockData))))
@@ -95,8 +93,7 @@ func TestDownload(t *testing.T) {
 	})
 
 	t.Run("successful re-download, half file", func(t *testing.T) {
-		fileName := filepath.Join(os.TempDir(), "download-test")
-		defer os.Remove(fileName)
+		fileName := downloadTestFile(t)
 		require.NoError(t, os.WriteFile(fileName, mockData[:1024*512], 0660))
 
 		require.NoError(t, downloadInto(fileName, srv.URL+"/no_resume", int64(len(mockData))))
@@ -105,8 +102,7 @@ func TestDownload(t *testing.T) {
 	})
 
 	t.Run("successful re-download, full file", func(t *testing.T) {
-		fileName := filepath.Join(os.TempDir(), "download-test")
-		defer os.Remove(fileName)
+		fileName := downloadTestFile(t)
 		require.NoError(t, os.WriteFile(fileName, mockData, 0660))
 
 		require.NoError(t, downloadInto(fileName, srv.URL+"/no_resume", int64(len(mockData))))
@@ -115,24 +111,21 @@ func TestDownload(t *testing.T) {
 	})
 
 	t.Run("unsuccessful resume, tiny file", func(t *testing.T) {
-		fileName := filepath.Join(os.TempDir(), "download-test")
-		defer os.Remove(fileName)
+		fileName := downloadTestFile(t)
 		require.NoError(t, os.WriteFile(fileName, mockData[:8], 0660))
 
 		require.Error(t, downloadInto(fileName, srv.URL+"/wrong_resume", int64(len(mockData))))
 	})
 
 	t.Run("unsuccessful resume, half file", func(t *testing.T) {
-		fileName := filepath.Join(os.TempDir(), "download-test")
-		defer os.Remove(fileName)
+		fileName := downloadTestFile(t)
 		require.NoError(t, os.WriteFile(fileName, mockData[:1024*512], 0660))
 
 		require.Error(t, downloadInto(fileName, srv.URL+"/wrong_resume", int64(len(mockData))))
 	})
 
 	t.Run("successful resume from wrong file with an already downloaded file", func(t *testing.T) {
-		fileName := filepath.Join(os.TempDir(), "download-test")
-		defer os.Remove(fileName)
+		fileName := downloadTestFile(t)
 		require.NoError(t, os.WriteFile(fileName, mockData, 0660))
 
 		require.NoError(t, downloadInto(fileName, srv.URL+"/wrong_resume", int64(len(mockData))))
@@ -141,8 +134,7 @@ func TestDownload(t *testing.T) {
 	})
 
 	t.Run("unknown file", func(t *testing.T) {
-		fileName := filepath.Join(os.TempDir(), "download-test")
-		defer os.Remove(fileName)
+		fileName := downloadTestFile(t)
 		require.NoError(t, os.WriteFile(fileName, mockData[:1024*512], 0660))
 
 		require.Error(t, downloadInto(fileName, srv.URL+"/wrong_path", int64(len(mockData))))

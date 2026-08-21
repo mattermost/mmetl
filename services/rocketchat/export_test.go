@@ -191,7 +191,7 @@ func TestExportOrder(t *testing.T) {
 		},
 	}
 
-	tmpFile, err := os.CreateTemp(t.TempDir(), "export-*.jsonl")
+	tmpFile, err := os.CreateTemp(workDir(t), "export-*.jsonl")
 	require.NoError(t, err)
 	tmpFile.Close()
 
@@ -308,7 +308,7 @@ func TestExportLinesAreValidJSON(t *testing.T) {
 		},
 	}
 
-	tmpFile, err := os.CreateTemp(t.TempDir(), "export-*.jsonl")
+	tmpFile, err := os.CreateTemp(workDir(t), "export-*.jsonl")
 	require.NoError(t, err)
 	tmpFile.Close()
 

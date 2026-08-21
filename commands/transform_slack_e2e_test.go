@@ -44,7 +44,10 @@ func resetCobraFlags(cmd *cobra.Command) {
 	}
 }
 
-const transformLogFile = "transform-slack.log"
+func workDir(t *testing.T) string {
+	t.Helper()
+	return testhelper.WorkDir(t)
+}
 
 // uniqueTeamName generates a unique team name for testing to avoid conflicts.
 // Uses crypto/rand for sufficient entropy to prevent collisions in parallel CI,
@@ -71,11 +74,10 @@ func TestTransformSlackE2E(t *testing.T) {
 	// Setup Mattermost with testcontainers
 	th := testhelper.SetupHelper(t)
 	defer th.TearDown()
-	t.Cleanup(func() { os.Remove(transformLogFile) })
 
 	t.Run("basic import creates users and channels in Mattermost", func(t *testing.T) {
 		ctx := context.Background()
-		tempDir := t.TempDir()
+		tempDir := workDir(t)
 		slackExportPath := filepath.Join(tempDir, "slack_export.zip")
 		mmExportPath := filepath.Join(tempDir, "mattermost_import.jsonl")
 		teamName := uniqueTeamName("e2e")
@@ -168,7 +170,7 @@ func TestTransformSlackE2E(t *testing.T) {
 
 	t.Run("import with posts creates messages in Mattermost", func(t *testing.T) {
 		ctx := context.Background()
-		tempDir := t.TempDir()
+		tempDir := workDir(t)
 		slackExportPath := filepath.Join(tempDir, "slack_export.zip")
 		mmExportPath := filepath.Join(tempDir, "mattermost_import.jsonl")
 		teamName := uniqueTeamName("posts")
@@ -244,7 +246,7 @@ func TestTransformSlackE2E(t *testing.T) {
 
 	t.Run("invalid reaction emoji names are sanitized and import", func(t *testing.T) {
 		ctx := context.Background()
-		tempDir := t.TempDir()
+		tempDir := workDir(t)
 		slackExportPath := filepath.Join(tempDir, "slack_export.zip")
 		mmExportPath := filepath.Join(tempDir, "mattermost_import.jsonl")
 		teamName := uniqueTeamName("rxne")
@@ -301,7 +303,7 @@ func TestTransformSlackE2E(t *testing.T) {
 
 	t.Run("mentions are correctly converted in export and import", func(t *testing.T) {
 		ctx := context.Background()
-		tempDir := t.TempDir()
+		tempDir := workDir(t)
 		slackExportPath := filepath.Join(tempDir, "slack_export.zip")
 		mmExportPath := filepath.Join(tempDir, "mattermost_import.jsonl")
 		teamName := uniqueTeamName("mentions")
@@ -456,7 +458,7 @@ func TestTransformSlackE2E(t *testing.T) {
 
 	t.Run("deleted user is imported with deactivated status", func(t *testing.T) {
 		ctx := context.Background()
-		tempDir := t.TempDir()
+		tempDir := workDir(t)
 		slackExportPath := filepath.Join(tempDir, "slack_export.zip")
 		mmExportPath := filepath.Join(tempDir, "mattermost_import.jsonl")
 		teamName := uniqueTeamName("deleted")
@@ -510,10 +512,9 @@ func TestTransformSlackE2ETeamConsistency(t *testing.T) {
 	ctx := context.Background()
 	th := testhelper.SetupHelper(t)
 	defer th.TearDown()
-	t.Cleanup(func() { os.Remove(transformLogFile) })
 
 	teamName := uniqueTeamName("consist")
-	tempDir := t.TempDir()
+	tempDir := workDir(t)
 	slackExportPath := filepath.Join(tempDir, "slack_export.zip")
 	mmExportPath := filepath.Join(tempDir, "mattermost_import.jsonl")
 
@@ -570,7 +571,7 @@ func TestTransformSlackE2EBotImport(t *testing.T) {
 
 	t.Run("bot users are imported as Mattermost bots with correct properties", func(t *testing.T) {
 		ctx := context.Background()
-		tempDir := t.TempDir()
+		tempDir := workDir(t)
 		slackExportPath := filepath.Join(tempDir, "slack_export.zip")
 		mmExportPath := filepath.Join(tempDir, "mattermost_import.jsonl")
 		teamName := uniqueTeamName("bots")
@@ -598,7 +599,6 @@ func TestTransformSlackE2EBotImport(t *testing.T) {
 		c.SetArgs(args)
 		err = c.Execute()
 		require.NoError(t, err, "transform command should succeed")
-		defer os.Remove(transformLogFile)
 
 		// 4. Import into Mattermost
 		t.Log("Importing data with bots into Mattermost...")
@@ -642,7 +642,7 @@ func TestTransformSlackE2EBotImport(t *testing.T) {
 
 	t.Run("bot posts are correctly attributed to bot users", func(t *testing.T) {
 		ctx := context.Background()
-		tempDir := t.TempDir()
+		tempDir := workDir(t)
 		slackExportPath := filepath.Join(tempDir, "slack_export.zip")
 		mmExportPath := filepath.Join(tempDir, "mattermost_import.jsonl")
 		teamName := uniqueTeamName("botposts")
@@ -670,7 +670,6 @@ func TestTransformSlackE2EBotImport(t *testing.T) {
 		c.SetArgs(args)
 		err = c.Execute()
 		require.NoError(t, err)
-		defer os.Remove(transformLogFile)
 
 		// 4. Import into Mattermost
 		err = th.ImportBulkData(ctx, mmExportPath)
@@ -710,7 +709,7 @@ func TestTransformSlackE2EBotImport(t *testing.T) {
 	})
 
 	t.Run("transform fails without --bot-owner when bots exist", func(t *testing.T) {
-		tempDir := t.TempDir()
+		tempDir := workDir(t)
 		slackExportPath := filepath.Join(tempDir, "slack_export.zip")
 		mmExportPath := filepath.Join(tempDir, "mattermost_import.jsonl")
 		teamName := uniqueTeamName("noowner")
@@ -732,7 +731,6 @@ func TestTransformSlackE2EBotImport(t *testing.T) {
 		resetCobraFlags(c)
 		c.SetArgs(args)
 		err = c.Execute()
-		defer os.Remove(transformLogFile)
 
 		// Should fail with a clear error about --bot-owner
 		require.Error(t, err, "transform should fail without --bot-owner when bots exist")
@@ -740,7 +738,7 @@ func TestTransformSlackE2EBotImport(t *testing.T) {
 	})
 
 	t.Run("transform succeeds without --bot-owner when no bots exist", func(t *testing.T) {
-		tempDir := t.TempDir()
+		tempDir := workDir(t)
 		slackExportPath := filepath.Join(tempDir, "slack_export.zip")
 		mmExportPath := filepath.Join(tempDir, "mattermost_import.jsonl")
 		teamName := uniqueTeamName("nobots")
@@ -762,14 +760,13 @@ func TestTransformSlackE2EBotImport(t *testing.T) {
 		resetCobraFlags(c)
 		c.SetArgs(args)
 		err = c.Execute()
-		defer os.Remove(transformLogFile)
 
 		require.NoError(t, err, "transform should succeed without --bot-owner when no bots exist")
 	})
 
 	t.Run("deleted bot produces correct delete_at in export and imports successfully", func(t *testing.T) {
 		ctx := context.Background()
-		tempDir := t.TempDir()
+		tempDir := workDir(t)
 		slackExportPath := filepath.Join(tempDir, "slack_export.zip")
 		mmExportPath := filepath.Join(tempDir, "mattermost_import.jsonl")
 		teamName := uniqueTeamName("delbot")
@@ -797,7 +794,6 @@ func TestTransformSlackE2EBotImport(t *testing.T) {
 		c.SetArgs(args)
 		err = c.Execute()
 		require.NoError(t, err)
-		defer os.Remove(transformLogFile)
 
 		// Verify the generated JSONL contains a bot line with delete_at set.
 		// Note: Mattermost's importBot server function does not currently honor
@@ -856,7 +852,7 @@ func TestTransformSlackE2EBotImport(t *testing.T) {
 		defer subTH.TearDown()
 
 		ctx := context.Background()
-		tempDir := t.TempDir()
+		tempDir := workDir(t)
 		slackExportPath := filepath.Join(tempDir, "slack_export.zip")
 		mmExportPath := filepath.Join(tempDir, "mattermost_import.jsonl")
 		teamName := uniqueTeamName("badowner")
@@ -885,7 +881,6 @@ func TestTransformSlackE2EBotImport(t *testing.T) {
 		c.SetArgs(args)
 		err = c.Execute()
 		require.NoError(t, err, "transform should succeed regardless of owner existence")
-		defer os.Remove(transformLogFile)
 
 		// Import succeeds even though the owner username doesn't exist
 		err = subTH.ImportBulkData(ctx, mmExportPath)
@@ -909,7 +904,7 @@ func TestTransformSlackE2EBotImport(t *testing.T) {
 	t.Run("archived channels are imported as archived in Mattermost", func(t *testing.T) {
 		// Reuses the outer th; isolation is provided by the unique team name.
 		ctx := context.Background()
-		tempDir := t.TempDir()
+		tempDir := workDir(t)
 		slackExportPath := filepath.Join(tempDir, "slack_export.zip")
 		mmExportPath := filepath.Join(tempDir, "mattermost_import.jsonl")
 		teamName := uniqueTeamName("archived")
@@ -936,7 +931,6 @@ func TestTransformSlackE2EBotImport(t *testing.T) {
 		c.SetArgs(args)
 		err = c.Execute()
 		require.NoError(t, err, "transform command should succeed")
-		defer os.Remove(transformLogFile)
 
 		// 4. Verify the JSONL contains deleted_at for the archived channel
 		t.Log("Checking JSONL output for archived channel...")
@@ -996,11 +990,10 @@ func TestTransformSlackE2ELastViewedAt(t *testing.T) {
 
 	th := testhelper.SetupHelper(t)
 	defer th.TearDown()
-	t.Cleanup(func() { os.Remove(transformLogFile) })
 
 	t.Run("channels and DMs are not marked as unread after import", func(t *testing.T) {
 		ctx := context.Background()
-		tempDir := t.TempDir()
+		tempDir := workDir(t)
 		slackExportPath := filepath.Join(tempDir, "slack_export.zip")
 		mmExportPath := filepath.Join(tempDir, "mattermost_import.jsonl")
 		teamName := uniqueTeamName("unread")
@@ -1058,7 +1051,7 @@ func TestTransformSlackE2ELastViewedAt(t *testing.T) {
 
 	t.Run("member MsgCount matches imported post count", func(t *testing.T) {
 		ctx := context.Background()
-		tempDir := t.TempDir()
+		tempDir := workDir(t)
 		slackExportPath := filepath.Join(tempDir, "slack_export.zip")
 		mmExportPath := filepath.Join(tempDir, "mattermost_import.jsonl")
 		teamName := uniqueTeamName("msgcnt")
@@ -1138,10 +1131,9 @@ func TestTransformSlackE2EMpimDedup(t *testing.T) {
 
 	th := testhelper.SetupHelper(t)
 	defer th.TearDown()
-	t.Cleanup(func() { os.Remove(transformLogFile) })
 
 	ctx := context.Background()
-	tempDir := t.TempDir()
+	tempDir := workDir(t)
 	slackExportPath := filepath.Join(tempDir, "slack_export.zip")
 	mmExportPath := filepath.Join(tempDir, "mattermost_import.jsonl")
 	teamName := uniqueTeamName("mpim")
@@ -1288,10 +1280,9 @@ func TestTransformSlackE2EMpimsNotMergedWhenMembersDiffer(t *testing.T) {
 
 	th := testhelper.SetupHelper(t)
 	defer th.TearDown()
-	t.Cleanup(func() { os.Remove(transformLogFile) })
 
 	ctx := context.Background()
-	tempDir := t.TempDir()
+	tempDir := workDir(t)
 	slackExportPath := filepath.Join(tempDir, "slack_export.zip")
 	mmExportPath := filepath.Join(tempDir, "mattermost_import.jsonl")
 	teamName := uniqueTeamName("mpimno")
@@ -1411,10 +1402,9 @@ func TestTransformSlackE2EGuestImport(t *testing.T) {
 
 	th := testhelper.SetupHelper(t)
 	defer th.TearDown()
-	t.Cleanup(func() { os.Remove(transformLogFile) })
 
 	ctx := context.Background()
-	tempDir := t.TempDir()
+	tempDir := workDir(t)
 	slackExportPath := filepath.Join(tempDir, "slack_export.zip")
 	mmExportPath := filepath.Join(tempDir, "mattermost_import.jsonl")
 	teamName := uniqueTeamName("guests")
@@ -1555,10 +1545,9 @@ func TestTransformSlackE2EGuestSkip(t *testing.T) {
 
 	th := testhelper.SetupHelper(t)
 	defer th.TearDown()
-	t.Cleanup(func() { os.Remove(transformLogFile) })
 
 	ctx := context.Background()
-	tempDir := t.TempDir()
+	tempDir := workDir(t)
 	slackExportPath := filepath.Join(tempDir, "slack_export.zip")
 	mmExportPath := filepath.Join(tempDir, "mattermost_import.jsonl")
 	teamName := uniqueTeamName("guestskip")
@@ -1627,10 +1616,9 @@ func TestTransformSlackE2EGuestUserMode(t *testing.T) {
 
 	th := testhelper.SetupHelper(t)
 	defer th.TearDown()
-	t.Cleanup(func() { os.Remove(transformLogFile) })
 
 	ctx := context.Background()
-	tempDir := t.TempDir()
+	tempDir := workDir(t)
 	slackExportPath := filepath.Join(tempDir, "slack_export.zip")
 	mmExportPath := filepath.Join(tempDir, "mattermost_import.jsonl")
 	teamName := uniqueTeamName("guestuser")
@@ -1706,10 +1694,9 @@ func TestTransformSlackE2EChannellessGuestMpimThread(t *testing.T) {
 
 	th := testhelper.SetupHelper(t)
 	defer th.TearDown()
-	t.Cleanup(func() { os.Remove(transformLogFile) })
 
 	ctx := context.Background()
-	tempDir := t.TempDir()
+	tempDir := workDir(t)
 	slackExportPath := filepath.Join(tempDir, "slack_export.zip")
 	mmExportPath := filepath.Join(tempDir, "mattermost_import.jsonl")
 	teamName := uniqueTeamName("clguestmpim")

@@ -111,10 +111,9 @@ func TestTransformRocketChatImportE2E(t *testing.T) {
 
 	th := testhelper.SetupHelper(t)
 	ctx := context.Background()
-	dir := t.TempDir()
+	dir := workDir(t)
 	outputPath := filepath.Join(dir, "mattermost_import.jsonl")
 	teamName := uniqueTeamName("rce2e")
-	t.Cleanup(func() { os.Remove("transform-rocketchat.log") })
 
 	description := "Coordination for the engineering team"
 	users := []any{
@@ -231,10 +230,9 @@ func TestTransformRocketChatE2EGuestImport(t *testing.T) {
 
 	th := testhelper.SetupHelper(t)
 	ctx := context.Background()
-	dir := t.TempDir()
+	dir := workDir(t)
 	outputPath := filepath.Join(dir, "mattermost_import.jsonl")
 	teamName := uniqueTeamName("rcguest")
-	t.Cleanup(func() { os.Remove("transform-rocketchat.log") })
 
 	users := []any{
 		rcBSONUser{ID: "alice-id", Username: "alice", Name: "Alice Anderson", Emails: []rcMail{{Address: "alice@example.com", Verified: true}}, Active: true, Roles: []string{"user"}, Type: "user"},
@@ -345,11 +343,10 @@ func TestTransformRocketChatE2EBotImport(t *testing.T) {
 	}
 
 	th := testhelper.SetupHelper(t)
-	t.Cleanup(func() { os.Remove("transform-rocketchat.log") })
 
 	t.Run("bots and deactivated users import with posts and ownership", func(t *testing.T) {
 		ctx := context.Background()
-		dir := t.TempDir()
+		dir := workDir(t)
 		outputPath := filepath.Join(dir, "mattermost_import.jsonl")
 		teamName := uniqueTeamName("rcbots")
 		baseTime := time.Date(2024, 2, 1, 10, 0, 0, 0, time.UTC)
@@ -423,7 +420,7 @@ func TestTransformRocketChatE2EBotImport(t *testing.T) {
 	})
 
 	t.Run("transform fails without bot owner", func(t *testing.T) {
-		dir := t.TempDir()
+		dir := workDir(t)
 		outputPath := filepath.Join(dir, "mattermost_import.jsonl")
 		writeDumpDir(t, dir,
 			[]any{rcBSONUser{ID: "bot-id", Username: "buildbot", Name: "Build Bot", Active: true, Roles: []string{"bot", "user"}, Type: "bot"}},
@@ -450,10 +447,9 @@ func TestTransformRocketChatE2EGroupDMs(t *testing.T) {
 
 	th := testhelper.SetupHelper(t)
 	ctx := context.Background()
-	dir := t.TempDir()
+	dir := workDir(t)
 	outputPath := filepath.Join(dir, "mattermost_import.jsonl")
 	teamName := uniqueTeamName("rcgdm")
-	t.Cleanup(func() { os.Remove("transform-rocketchat.log") })
 
 	users := []any{
 		rcBSONUser{ID: "alice-id", Username: "alice", Name: "Alice Anderson", Emails: []rcMail{{Address: "alice@example.com", Verified: true}}, Active: true, Roles: []string{"user"}, Type: "user"},
@@ -563,12 +559,10 @@ func TestTransformRocketChatE2E(t *testing.T) {
 	}
 
 	t.Run("valid export produces correct JSONL", func(t *testing.T) {
-		dir := t.TempDir()
+		dir := workDir(t)
 		outputPath := filepath.Join(dir, "output.jsonl")
 
 		writeDumpDir(t, dir, defaultUsers, defaultRooms, defaultMessages, defaultSubs)
-
-		defer os.Remove("transform-rocketchat.log")
 
 		c := commands.RootCmd
 		resetRCFlags()
@@ -643,10 +637,9 @@ func TestTransformRocketChatE2E(t *testing.T) {
 	})
 
 	t.Run("team name uppercase is lowercased", func(t *testing.T) {
-		dir := t.TempDir()
+		dir := workDir(t)
 		outputPath := filepath.Join(dir, "output.jsonl")
 		writeDumpDir(t, dir, defaultUsers, defaultRooms, defaultMessages, defaultSubs)
-		defer os.Remove("transform-rocketchat.log")
 
 		c := commands.RootCmd
 		resetRCFlags()
@@ -670,7 +663,7 @@ func TestTransformRocketChatE2E(t *testing.T) {
 	})
 
 	t.Run("thread replies nested under parent post", func(t *testing.T) {
-		dir := t.TempDir()
+		dir := workDir(t)
 		outputPath := filepath.Join(dir, "output.jsonl")
 
 		// root message m1 and a reply m2 (tmid = m1)
@@ -695,7 +688,6 @@ func TestTransformRocketChatE2E(t *testing.T) {
 			rcSubscription{RoomID: "r1", User: rcMsgUser{ID: "u2", Username: "janesmith"}},
 		}
 		writeDumpDir(t, dir, defaultUsers, rooms, []any{rootMsg, replyMsg}, subs)
-		defer os.Remove("transform-rocketchat.log")
 
 		c := commands.RootCmd
 		resetRCFlags()
@@ -733,10 +725,9 @@ func TestTransformRocketChatE2E(t *testing.T) {
 
 func TestTransformRocketChatEdgeCases(t *testing.T) {
 	t.Run("empty collections produce minimal JSONL", func(t *testing.T) {
-		dir := t.TempDir()
+		dir := workDir(t)
 		outputPath := filepath.Join(dir, "output.jsonl")
 		writeDumpDir(t, dir, []any{}, []any{}, []any{}, []any{})
-		defer os.Remove("transform-rocketchat.log")
 
 		c := commands.RootCmd
 		resetRCFlags()
@@ -759,7 +750,7 @@ func TestTransformRocketChatEdgeCases(t *testing.T) {
 	})
 
 	t.Run("message with username not in UsersById uses username from message", func(t *testing.T) {
-		dir := t.TempDir()
+		dir := workDir(t)
 		outputPath := filepath.Join(dir, "output.jsonl")
 
 		users := []any{
@@ -774,7 +765,6 @@ func TestTransformRocketChatEdgeCases(t *testing.T) {
 		}
 		subs := []any{rcSubscription{RoomID: "r1", User: rcMsgUser{ID: "u1", Username: "alice"}}}
 		writeDumpDir(t, dir, users, rooms, messages, subs)
-		defer os.Remove("transform-rocketchat.log")
 
 		c := commands.RootCmd
 		resetRCFlags()
@@ -799,7 +789,7 @@ func TestTransformRocketChatEdgeCases(t *testing.T) {
 	})
 
 	t.Run("encrypted room is skipped", func(t *testing.T) {
-		dir := t.TempDir()
+		dir := workDir(t)
 		outputPath := filepath.Join(dir, "output.jsonl")
 
 		rooms := []any{
@@ -822,7 +812,6 @@ func TestTransformRocketChatEdgeCases(t *testing.T) {
 		marshalBSONFileCmds(t, filepath.Join(dir, "rocketchat_room.bson"), append(rooms, encryptedRoom))
 		marshalBSONFileCmds(t, filepath.Join(dir, "rocketchat_message.bson"), []any{})
 		marshalBSONFileCmds(t, filepath.Join(dir, "rocketchat_subscription.bson"), subs)
-		defer os.Remove("transform-rocketchat.log")
 
 		c := commands.RootCmd
 		resetRCFlags()
@@ -851,14 +840,13 @@ func TestTransformRocketChatEdgeCases(t *testing.T) {
 	})
 
 	t.Run("user with no email and default-email-domain generates email", func(t *testing.T) {
-		dir := t.TempDir()
+		dir := workDir(t)
 		outputPath := filepath.Join(dir, "output.jsonl")
 
 		users := []any{
 			rcBSONUser{ID: "u1", Username: "noemail", Name: "No Email", Active: true, Type: "user"},
 		}
 		writeDumpDir(t, dir, users, []any{}, []any{}, []any{})
-		defer os.Remove("transform-rocketchat.log")
 
 		c := commands.RootCmd
 		resetRCFlags()

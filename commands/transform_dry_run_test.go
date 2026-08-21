@@ -15,7 +15,6 @@ import (
 
 func runTransformSlack(t *testing.T, args ...string) error {
 	t.Helper()
-	t.Cleanup(func() { os.Remove("transform-slack.log") })
 	c := commands.RootCmd
 	resetCobraFlags(c)
 	c.SetArgs(append([]string{"transform", "slack"}, args...))
@@ -24,7 +23,6 @@ func runTransformSlack(t *testing.T, args ...string) error {
 
 func runTransformRocketChat(t *testing.T, args ...string) error {
 	t.Helper()
-	t.Cleanup(func() { os.Remove("transform-rocketchat.log") })
 	c := commands.RootCmd
 	resetCobraFlags(c)
 	c.SetArgs(append([]string{"transform", "rocketchat"}, args...))
@@ -49,7 +47,7 @@ func writeZip(t *testing.T, path string, files map[string]string) {
 
 func dryRunOut(t *testing.T) (output, attachmentsDir string) {
 	t.Helper()
-	dir := t.TempDir()
+	dir := testhelper.WorkDir(t)
 	return filepath.Join(dir, "out.jsonl"), filepath.Join(dir, "data")
 }
 
@@ -63,7 +61,7 @@ func assertNoDryRunOutput(t *testing.T, output, attachmentsDir string) {
 
 func missingAttachmentExport(t *testing.T) string {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "missing-file.zip")
+	path := filepath.Join(testhelper.WorkDir(t), "missing-file.zip")
 	require.NoError(t, testhelper.NewSlackExportBuilder().
 		AddUser(slack.SlackUser{
 			Id: "U001", Username: "jane",
@@ -83,7 +81,7 @@ func missingAttachmentExport(t *testing.T) string {
 
 func TestTransformSlackDryRun(t *testing.T) {
 	t.Run("requires --team", func(t *testing.T) {
-		path := filepath.Join(t.TempDir(), "export.zip")
+		path := filepath.Join(testhelper.WorkDir(t), "export.zip")
 		require.NoError(t, testhelper.SlackBasicExport().Build(path))
 
 		err := runTransformSlack(t, "--dry-run", "--file", path)
@@ -92,7 +90,7 @@ func TestTransformSlackDryRun(t *testing.T) {
 	})
 
 	t.Run("succeeds for a valid export", func(t *testing.T) {
-		path := filepath.Join(t.TempDir(), "export.zip")
+		path := filepath.Join(testhelper.WorkDir(t), "export.zip")
 		output, attachmentsDir := dryRunOut(t)
 		require.NoError(t, testhelper.ExportWithGuestPosts().Build(path))
 
@@ -108,7 +106,7 @@ func TestTransformSlackDryRun(t *testing.T) {
 	})
 
 	t.Run("rejects an invalid guest-handling mode", func(t *testing.T) {
-		path := filepath.Join(t.TempDir(), "export.zip")
+		path := filepath.Join(testhelper.WorkDir(t), "export.zip")
 		require.NoError(t, testhelper.ExportWithGuestPosts().Build(path))
 
 		err := runTransformSlack(t,
@@ -121,7 +119,7 @@ func TestTransformSlackDryRun(t *testing.T) {
 	})
 
 	t.Run("fails when required files are missing", func(t *testing.T) {
-		path := filepath.Join(t.TempDir(), "incomplete.zip")
+		path := filepath.Join(testhelper.WorkDir(t), "incomplete.zip")
 		writeZip(t, path, map[string]string{"users.json": "[]"})
 
 		err := runTransformSlack(t, "--dry-run", "--team", "testteam", "--file", path)
@@ -130,7 +128,7 @@ func TestTransformSlackDryRun(t *testing.T) {
 	})
 
 	t.Run("fails when bots exist without --bot-owner", func(t *testing.T) {
-		path := filepath.Join(t.TempDir(), "bots.zip")
+		path := filepath.Join(testhelper.WorkDir(t), "bots.zip")
 		require.NoError(t, testhelper.ExportWithBots().Build(path))
 
 		err := runTransformSlack(t, "--dry-run", "--team", "testteam", "--file", path)
@@ -139,7 +137,7 @@ func TestTransformSlackDryRun(t *testing.T) {
 	})
 
 	t.Run("succeeds when bots exist with --bot-owner", func(t *testing.T) {
-		path := filepath.Join(t.TempDir(), "bots.zip")
+		path := filepath.Join(testhelper.WorkDir(t), "bots.zip")
 		output, attachmentsDir := dryRunOut(t)
 		require.NoError(t, testhelper.ExportWithBots().Build(path))
 
@@ -155,7 +153,7 @@ func TestTransformSlackDryRun(t *testing.T) {
 	})
 
 	t.Run("fails on empty emails without a fallback flag", func(t *testing.T) {
-		dir := t.TempDir()
+		dir := testhelper.WorkDir(t)
 		path := filepath.Join(dir, "noemail.zip")
 		output := filepath.Join(dir, "out.jsonl")
 		require.NoError(t, testhelper.NewSlackExportBuilder().
@@ -195,7 +193,7 @@ func TestTransformSlackDryRun(t *testing.T) {
 	})
 
 	t.Run("succeeds when CheckIntermediate only reports warnings", func(t *testing.T) {
-		path := filepath.Join(t.TempDir(), "dup-channels.zip")
+		path := filepath.Join(testhelper.WorkDir(t), "dup-channels.zip")
 		output, attachmentsDir := dryRunOut(t)
 		require.NoError(t, testhelper.NewSlackExportBuilder().
 			AddUser(slack.SlackUser{
@@ -219,7 +217,7 @@ func TestTransformSlackDryRun(t *testing.T) {
 
 func TestTransformRocketChatDryRun(t *testing.T) {
 	t.Run("fails when bots exist without --bot-owner", func(t *testing.T) {
-		dir := t.TempDir()
+		dir := testhelper.WorkDir(t)
 		writeDumpDir(t, dir,
 			[]any{
 				rcBSONUser{ID: "alice-id", Username: "alice", Name: "Alice", Emails: []rcMail{{Address: "alice@example.com"}}, Active: true, Roles: []string{"user"}, Type: "user"},
@@ -236,7 +234,7 @@ func TestTransformRocketChatDryRun(t *testing.T) {
 	})
 
 	t.Run("succeeds when bots exist with --bot-owner", func(t *testing.T) {
-		dir := t.TempDir()
+		dir := testhelper.WorkDir(t)
 		output, attachmentsDir := dryRunOut(t)
 		writeDumpDir(t, dir,
 			[]any{
@@ -260,7 +258,7 @@ func TestTransformRocketChatDryRun(t *testing.T) {
 	})
 
 	t.Run("succeeds without bots", func(t *testing.T) {
-		dir := t.TempDir()
+		dir := testhelper.WorkDir(t)
 		output, attachmentsDir := dryRunOut(t)
 		writeDumpDir(t, dir,
 			[]any{rcBSONUser{ID: "alice-id", Username: "alice", Name: "Alice", Emails: []rcMail{{Address: "alice@example.com"}}, Active: true, Roles: []string{"user"}, Type: "user"}},
@@ -281,7 +279,7 @@ func TestTransformRocketChatDryRun(t *testing.T) {
 	})
 
 	t.Run("fails when required dump files are missing", func(t *testing.T) {
-		dir := t.TempDir()
+		dir := testhelper.WorkDir(t)
 		marshalBSONFileCmds(t, filepath.Join(dir, "users.bson"), []any{})
 
 		err := runTransformRocketChat(t, "--dry-run", "--team", "testteam", "--dump-dir", dir)
@@ -289,7 +287,7 @@ func TestTransformRocketChatDryRun(t *testing.T) {
 	})
 
 	t.Run("fails on empty emails without a fallback flag", func(t *testing.T) {
-		dir := t.TempDir()
+		dir := testhelper.WorkDir(t)
 		writeDumpDir(t, dir,
 			[]any{rcBSONUser{ID: "alice-id", Username: "alice", Name: "Alice", Active: true, Roles: []string{"user"}, Type: "user"}},
 			[]any{rcRoom{ID: "r1", Type: "c", Name: "general", FName: "General"}},
@@ -303,7 +301,7 @@ func TestTransformRocketChatDryRun(t *testing.T) {
 	})
 
 	t.Run("fails when a GridFS upload is missing chunks", func(t *testing.T) {
-		dir := t.TempDir()
+		dir := testhelper.WorkDir(t)
 		writeDumpDir(t, dir,
 			[]any{rcBSONUser{ID: "alice-id", Username: "alice", Name: "Alice", Emails: []rcMail{{Address: "alice@example.com"}}, Active: true, Roles: []string{"user"}, Type: "user"}},
 			[]any{rcRoom{ID: "r1", Type: "c", Name: "general", FName: "General"}},
@@ -320,7 +318,7 @@ func TestTransformRocketChatDryRun(t *testing.T) {
 	})
 
 	t.Run("succeeds when a missing GridFS upload is skipped", func(t *testing.T) {
-		dir := t.TempDir()
+		dir := testhelper.WorkDir(t)
 		output, attachmentsDir := dryRunOut(t)
 		writeDumpDir(t, dir,
 			[]any{rcBSONUser{ID: "alice-id", Username: "alice", Name: "Alice", Emails: []rcMail{{Address: "alice@example.com"}}, Active: true, Roles: []string{"user"}, Type: "user"}},

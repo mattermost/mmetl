@@ -24,9 +24,7 @@ type TestStruct struct {
 
 func setupGridTransformer(t *testing.T) *GridTransformer {
 	gridTransformer := NewGridTransformer(logrus.New())
-	testDir := createTestDir(t)
-	defer os.RemoveAll(testDir)
-	gridTransformer.dirPath = testDir
+	gridTransformer.dirPath = createTestDir(t)
 
 	return gridTransformer
 }
@@ -162,7 +160,6 @@ func TestFindTeamIdFromChannelDir(t *testing.T) {
 
 	t.Run("finds the team name in a post directory", func(t *testing.T) {
 		dir := createDirAndWriteFiles(postsWithTwoTeams, t)
-		defer os.RemoveAll(dir)
 		bt.dirPath = dir
 		teamID, err := bt.findTeamIdFromChannelDir("")
 		assert.NoError(t, err)
@@ -177,7 +174,6 @@ func TestFindTeamIdFromChannelDir(t *testing.T) {
 
 	t.Run("fails to read file in directory (os.ReadFile error)", func(t *testing.T) {
 		dir := createTestDir(t)
-		defer os.RemoveAll(dir)
 		bt.dirPath = dir
 
 		// Create a file and remove read permissions to provoke a read error
@@ -194,7 +190,6 @@ func TestFindTeamIdFromChannelDir(t *testing.T) {
 
 	t.Run("fails to read file in directory (json.Unmarshal error)", func(t *testing.T) {
 		dir := createTestDir(t)
-		defer os.RemoveAll(dir)
 		bt.dirPath = dir
 
 		// Create a file with invalid JSON contents
@@ -213,7 +208,6 @@ func TestFindTeamIdFromChannelDir(t *testing.T) {
 
 	t.Run("finds no team name in a post directory", func(t *testing.T) {
 		dir := createDirAndWriteFiles(postsWithoutTeam, t)
-		defer os.RemoveAll(dir)
 		bt.dirPath = dir
 
 		teamID, err := bt.findTeamIdFromChannelDir("")
@@ -440,12 +434,9 @@ func marshalJSON(data any, t *testing.T) []byte {
 }
 
 func createTestDir(t *testing.T) string {
-	dir, err := os.MkdirTemp("", "mmetl_test_*")
-
-	if err != nil {
-		t.Fatal(errors.Wrap(err, "error creating test directory"))
-	}
-
+	t.Helper()
+	dir := t.TempDir()
+	t.Chdir(dir)
 	return dir
 }
 

@@ -17,7 +17,7 @@ import (
 
 func TestSlackExportBuilder(t *testing.T) {
 	t.Run("creates valid zip file", func(t *testing.T) {
-		tempDir := t.TempDir()
+		tempDir := WorkDir(t)
 		outputPath := filepath.Join(tempDir, "export.zip")
 
 		err := NewSlackExportBuilder().
@@ -54,7 +54,7 @@ func TestSlackExportBuilder(t *testing.T) {
 	})
 
 	t.Run("creates valid channels.json", func(t *testing.T) {
-		tempDir := t.TempDir()
+		tempDir := WorkDir(t)
 		outputPath := filepath.Join(tempDir, "export.zip")
 
 		err := NewSlackExportBuilder().
@@ -110,7 +110,7 @@ func TestSlackExportBuilder(t *testing.T) {
 	})
 
 	t.Run("creates valid users.json", func(t *testing.T) {
-		tempDir := t.TempDir()
+		tempDir := WorkDir(t)
 		outputPath := filepath.Join(tempDir, "export.zip")
 
 		err := NewSlackExportBuilder().
@@ -172,7 +172,7 @@ func TestSlackExportBuilder(t *testing.T) {
 	})
 
 	t.Run("creates valid posts in channel folders", func(t *testing.T) {
-		tempDir := t.TempDir()
+		tempDir := WorkDir(t)
 		outputPath := filepath.Join(tempDir, "export.zip")
 
 		err := NewSlackExportBuilder().
@@ -225,7 +225,7 @@ func TestSlackExportBuilder(t *testing.T) {
 	})
 
 	t.Run("creates private channels in groups.json", func(t *testing.T) {
-		tempDir := t.TempDir()
+		tempDir := WorkDir(t)
 		outputPath := filepath.Join(tempDir, "export.zip")
 
 		err := NewSlackExportBuilder().
@@ -264,7 +264,7 @@ func TestSlackExportBuilder(t *testing.T) {
 	})
 
 	t.Run("creates group DMs in mpims.json", func(t *testing.T) {
-		tempDir := t.TempDir()
+		tempDir := WorkDir(t)
 		outputPath := filepath.Join(tempDir, "export.zip")
 
 		err := NewSlackExportBuilder().
@@ -294,7 +294,7 @@ func TestSlackExportBuilder(t *testing.T) {
 	})
 
 	t.Run("creates direct messages in dms.json", func(t *testing.T) {
-		tempDir := t.TempDir()
+		tempDir := WorkDir(t)
 		outputPath := filepath.Join(tempDir, "export.zip")
 
 		err := NewSlackExportBuilder().
@@ -323,7 +323,7 @@ func TestSlackExportBuilder(t *testing.T) {
 	})
 
 	t.Run("creates posts with thread timestamps", func(t *testing.T) {
-		tempDir := t.TempDir()
+		tempDir := WorkDir(t)
 		outputPath := filepath.Join(tempDir, "export.zip")
 
 		err := NewSlackExportBuilder().
@@ -377,7 +377,7 @@ func TestSlackExportBuilderCanBeParsedByTransformer(t *testing.T) {
 	logger.SetLevel(logrus.DebugLevel)
 
 	t.Run("BasicExport can be parsed", func(t *testing.T) {
-		tempDir := t.TempDir()
+		tempDir := WorkDir(t)
 		outputPath := filepath.Join(tempDir, "export.zip")
 
 		err := SlackBasicExport().Build(outputPath)
@@ -419,7 +419,7 @@ func TestSlackExportBuilderCanBeParsedByTransformer(t *testing.T) {
 	})
 
 	t.Run("ExportWithPosts can be parsed", func(t *testing.T) {
-		tempDir := t.TempDir()
+		tempDir := WorkDir(t)
 		outputPath := filepath.Join(tempDir, "export.zip")
 
 		err := ExportWithPosts().Build(outputPath)
@@ -457,7 +457,7 @@ func TestSlackExportBuilderCanBeParsedByTransformer(t *testing.T) {
 	})
 
 	t.Run("ExportWithThreads can be parsed and threads are preserved", func(t *testing.T) {
-		tempDir := t.TempDir()
+		tempDir := WorkDir(t)
 		outputPath := filepath.Join(tempDir, "export.zip")
 
 		err := ExportWithThreads().Build(outputPath)
@@ -495,7 +495,7 @@ func TestSlackExportBuilderCanBeParsedByTransformer(t *testing.T) {
 	})
 
 	t.Run("ExportWithMentions can be parsed", func(t *testing.T) {
-		tempDir := t.TempDir()
+		tempDir := WorkDir(t)
 		outputPath := filepath.Join(tempDir, "export.zip")
 
 		err := ExportWithMentions().Build(outputPath)
@@ -535,7 +535,7 @@ func TestSlackExportBuilderCanBeParsedByTransformer(t *testing.T) {
 	})
 
 	t.Run("ExportWithDeletedUser can be parsed", func(t *testing.T) {
-		tempDir := t.TempDir()
+		tempDir := WorkDir(t)
 		outputPath := filepath.Join(tempDir, "export.zip")
 
 		err := ExportWithDeletedUser().Build(outputPath)
@@ -583,7 +583,7 @@ func TestSlackExportBuilderCanBeParsedByTransformer(t *testing.T) {
 
 func TestSlackExportBuilderValidation(t *testing.T) {
 	t.Run("fails when post references non-existent channel", func(t *testing.T) {
-		tempDir := t.TempDir()
+		tempDir := WorkDir(t)
 		outputPath := filepath.Join(tempDir, "export.zip")
 
 		err := NewSlackExportBuilder().
@@ -602,7 +602,7 @@ func TestSlackExportBuilderValidation(t *testing.T) {
 	})
 
 	t.Run("fails when post references non-existent user", func(t *testing.T) {
-		tempDir := t.TempDir()
+		tempDir := WorkDir(t)
 		outputPath := filepath.Join(tempDir, "export.zip")
 
 		err := NewSlackExportBuilder().
@@ -621,7 +621,7 @@ func TestSlackExportBuilderValidation(t *testing.T) {
 	})
 
 	t.Run("fails when channel member references non-existent user", func(t *testing.T) {
-		tempDir := t.TempDir()
+		tempDir := WorkDir(t)
 		outputPath := filepath.Join(tempDir, "export.zip")
 
 		err := NewSlackExportBuilder().
@@ -639,7 +639,7 @@ func TestSlackExportBuilderValidation(t *testing.T) {
 	})
 
 	t.Run("fails when channel creator references non-existent user", func(t *testing.T) {
-		tempDir := t.TempDir()
+		tempDir := WorkDir(t)
 		outputPath := filepath.Join(tempDir, "export.zip")
 
 		err := NewSlackExportBuilder().
@@ -658,7 +658,7 @@ func TestSlackExportBuilderValidation(t *testing.T) {
 	})
 
 	t.Run("validates private channels", func(t *testing.T) {
-		tempDir := t.TempDir()
+		tempDir := WorkDir(t)
 		outputPath := filepath.Join(tempDir, "export.zip")
 
 		err := NewSlackExportBuilder().
@@ -675,7 +675,7 @@ func TestSlackExportBuilderValidation(t *testing.T) {
 	})
 
 	t.Run("validates group channels", func(t *testing.T) {
-		tempDir := t.TempDir()
+		tempDir := WorkDir(t)
 		outputPath := filepath.Join(tempDir, "export.zip")
 
 		err := NewSlackExportBuilder().
@@ -692,7 +692,7 @@ func TestSlackExportBuilderValidation(t *testing.T) {
 	})
 
 	t.Run("validates direct channels", func(t *testing.T) {
-		tempDir := t.TempDir()
+		tempDir := WorkDir(t)
 		outputPath := filepath.Join(tempDir, "export.zip")
 
 		err := NewSlackExportBuilder().
@@ -709,7 +709,7 @@ func TestSlackExportBuilderValidation(t *testing.T) {
 	})
 
 	t.Run("allows posts to private channels", func(t *testing.T) {
-		tempDir := t.TempDir()
+		tempDir := WorkDir(t)
 		outputPath := filepath.Join(tempDir, "export.zip")
 
 		err := NewSlackExportBuilder().
@@ -730,7 +730,7 @@ func TestSlackExportBuilderValidation(t *testing.T) {
 	})
 
 	t.Run("allows bot messages without User field", func(t *testing.T) {
-		tempDir := t.TempDir()
+		tempDir := WorkDir(t)
 		outputPath := filepath.Join(tempDir, "export.zip")
 
 		err := NewSlackExportBuilder().
@@ -749,7 +749,7 @@ func TestSlackExportBuilderValidation(t *testing.T) {
 	})
 
 	t.Run("allows empty creator field", func(t *testing.T) {
-		tempDir := t.TempDir()
+		tempDir := WorkDir(t)
 		outputPath := filepath.Join(tempDir, "export.zip")
 
 		err := NewSlackExportBuilder().
@@ -766,7 +766,7 @@ func TestSlackExportBuilderValidation(t *testing.T) {
 	})
 
 	t.Run("valid export passes validation", func(t *testing.T) {
-		tempDir := t.TempDir()
+		tempDir := WorkDir(t)
 		outputPath := filepath.Join(tempDir, "export.zip")
 
 		err := NewSlackExportBuilder().
@@ -800,7 +800,7 @@ func TestSlackExportBuilderValidation(t *testing.T) {
 
 func TestSlackExportBuilderSkipValidation(t *testing.T) {
 	t.Run("SkipValidation allows building inconsistent exports", func(t *testing.T) {
-		tempDir := t.TempDir()
+		tempDir := WorkDir(t)
 		outputPath := filepath.Join(tempDir, "export.zip")
 
 		// This would normally fail validation - post references non-existent user
@@ -827,7 +827,7 @@ func TestTransformerHandlesInconsistentExports(t *testing.T) {
 	logger.SetLevel(logrus.WarnLevel)
 
 	t.Run("creates placeholder user for posts from missing users", func(t *testing.T) {
-		tempDir := t.TempDir()
+		tempDir := WorkDir(t)
 		outputPath := filepath.Join(tempDir, "export.zip")
 
 		// Build an export with a post from a non-existent user
@@ -874,7 +874,7 @@ func TestTransformerHandlesInconsistentExports(t *testing.T) {
 	})
 
 	t.Run("creates placeholder user for channel members that dont exist", func(t *testing.T) {
-		tempDir := t.TempDir()
+		tempDir := WorkDir(t)
 		outputPath := filepath.Join(tempDir, "export.zip")
 
 		// Build an export with a channel member that doesn't exist
@@ -917,7 +917,7 @@ func TestTransformerHandlesInconsistentExports(t *testing.T) {
 	})
 
 	t.Run("handles posts from multiple missing users", func(t *testing.T) {
-		tempDir := t.TempDir()
+		tempDir := WorkDir(t)
 		outputPath := filepath.Join(tempDir, "export.zip")
 
 		// Build an export with multiple missing users
@@ -979,7 +979,7 @@ func TestSlackExportBuilderBotFixtures(t *testing.T) {
 	logger.SetLevel(logrus.DebugLevel)
 
 	t.Run("ExportWithBots can be parsed and contains bot users", func(t *testing.T) {
-		tempDir := t.TempDir()
+		tempDir := WorkDir(t)
 		outputPath := filepath.Join(tempDir, "export.zip")
 
 		err := ExportWithBots().Build(outputPath)
@@ -1040,7 +1040,7 @@ func TestSlackExportBuilderBotFixtures(t *testing.T) {
 	})
 
 	t.Run("ExportWithBotPosts can be parsed and contains bot posts", func(t *testing.T) {
-		tempDir := t.TempDir()
+		tempDir := WorkDir(t)
 		outputPath := filepath.Join(tempDir, "export.zip")
 
 		err := ExportWithBotPosts().Build(outputPath)
@@ -1086,7 +1086,7 @@ func TestSlackExportBuilderBotFixtures(t *testing.T) {
 	})
 
 	t.Run("ExportWithDeletedBot can be parsed and contains deleted bot", func(t *testing.T) {
-		tempDir := t.TempDir()
+		tempDir := WorkDir(t)
 		outputPath := filepath.Join(tempDir, "export.zip")
 
 		err := ExportWithDeletedBot().Build(outputPath)
@@ -1132,7 +1132,7 @@ func TestSlackExportBuilderBotFixtures(t *testing.T) {
 
 func TestSlackExportBuilderEdgeCases(t *testing.T) {
 	t.Run("empty export creates valid zip", func(t *testing.T) {
-		tempDir := t.TempDir()
+		tempDir := WorkDir(t)
 		outputPath := filepath.Join(tempDir, "export.zip")
 
 		err := NewSlackExportBuilder().Build(outputPath)
@@ -1153,7 +1153,7 @@ func TestSlackExportBuilderEdgeCases(t *testing.T) {
 	})
 
 	t.Run("AddPosts adds multiple posts", func(t *testing.T) {
-		tempDir := t.TempDir()
+		tempDir := WorkDir(t)
 		outputPath := filepath.Join(tempDir, "export.zip")
 
 		posts := []slack.SlackPost{
