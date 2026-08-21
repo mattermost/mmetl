@@ -177,7 +177,9 @@ func (t *Transformer) TransformUsers(users []SlackUser, skipEmptyEmails bool, de
 		}
 
 		if !newUser.IsBot {
-			newUser.Sanitise(t.Logger, defaultEmailDomain, skipEmptyEmails)
+			if err := newUser.Sanitise(t.Logger, defaultEmailDomain, skipEmptyEmails); err != nil {
+				t.RecordError(err)
+			}
 		}
 		resultUsers[newUser.Id] = newUser
 		t.Logger.Debugf("Slack user with username %s has been imported.", newUser.Username)
@@ -799,6 +801,10 @@ func (t *Transformer) AddFilesToPost(post *SlackPost, skipAttachments bool, slac
 		return
 	}
 	if post.File != nil {
+		if t.DryRun {
+			t.verifySlackAttachment(post.File, slackExport.Uploads, allowDownload)
+			return
+		}
 		if err := addFileToPost(post.File, slackExport.Uploads, newPost, attachmentsDir, allowDownload); err != nil {
 			t.Logger.WithError(err).Error("Failed to add file to post")
 		}
@@ -808,11 +814,30 @@ func (t *Transformer) AddFilesToPost(post *SlackPost, skipAttachments bool, slac
 				t.Logger.Warnf("Not able to access the file %s as file access is denied so skipping", file.Id)
 				continue
 			}
+			if t.DryRun {
+				t.verifySlackAttachment(file, slackExport.Uploads, allowDownload)
+				continue
+			}
 			if err := addFileToPost(file, slackExport.Uploads, newPost, attachmentsDir, allowDownload); err != nil {
 				t.Logger.WithError(err).Error("Failed to add file to post")
 			}
 		}
 	}
+}
+
+func (t *Transformer) verifySlackAttachment(file *SlackFile, uploads map[string]*zip.File, allowDownload bool) {
+	if file.Name == "" {
+		t.Logger.Warnf("Not able to access the file %s as file access is denied so skipping", file.Id)
+		return
+	}
+	if _, ok := uploads[file.Id]; ok {
+		return
+	}
+	if allowDownload {
+		t.Logger.Warnf("Attachment %s is not in the zip; --allow-download would fetch it at transform time", file.Id)
+		return
+	}
+	t.RecordError(fmt.Errorf("failed to retrieve file with id %s", file.Id))
 }
 
 func (t *Transformer) AddAttachmentsToPost(post *SlackPost, newPost *IntermediatePost) (model.StringInterface, []byte) {
@@ -1207,7 +1232,7 @@ func (t *Transformer) Transform(slackExport *SlackExport, attachmentsDir string,
 	t.DeduplicateDirectAndGroupChannelsByMembers()
 
 	if err := t.TransformPosts(slackExport, attachmentsDir, skipAttachments, discardInvalidProps, allowDownload); err != nil {
-		return err
+		t.RecordError(err)
 	}
 
 	t.ComputeChannelPostStats()
@@ -1218,7 +1243,7 @@ func (t *Transformer) Transform(slackExport *SlackExport, attachmentsDir string,
 			t.droppedPostRefs, t.droppedReactionRefs, t.droppedMembershipRefs)
 	}
 
-	return nil
+	return t.Err()
 }
 
 func makeAlphaNum(str string, allowAdditional ...rune) string {

@@ -989,7 +989,7 @@ func exportUserRoles(t *testing.T, mode string) (systemRole, teamRole, channelRo
 			{RoomID: "r1", User: RCMessageUser{ID: "g1", Username: "guesty"}},
 		},
 	}
-	tr.Transform(parsed, true, false, "", mode)
+	require.NoError(t, tr.Transform(parsed, true, false, "", mode))
 
 	var buf bytes.Buffer
 	require.NoError(t, tr.ExportUsers(&buf, ""))
@@ -1212,7 +1212,7 @@ func TestChannellessGuestEndToEnd(t *testing.T) {
 
 	t.Run("guest mode drops the channel-less guest and their DM post", func(t *testing.T) {
 		tr := NewTransformer("myteam", newLogger())
-		tr.Transform(newDump(), true, false, "", GuestHandlingGuest)
+		require.NoError(t, tr.Transform(newDump(), true, false, "", GuestHandlingGuest))
 
 		assert.Nil(t, tr.Intermediate.UsersById["g1"], "channel-less guest dropped")
 		require.NotNil(t, tr.Intermediate.UsersById["k1"], "guest with a channel membership kept")
@@ -1238,7 +1238,7 @@ func TestChannellessGuestEndToEnd(t *testing.T) {
 
 	t.Run("user mode keeps the channel-less guest as a regular member", func(t *testing.T) {
 		tr := NewTransformer("myteam", newLogger())
-		tr.Transform(newDump(), true, false, "", GuestHandlingUser)
+		require.NoError(t, tr.Transform(newDump(), true, false, "", GuestHandlingUser))
 
 		require.NotNil(t, tr.Intermediate.UsersById["g1"], "in user mode channel-less guests are kept")
 	})
@@ -1272,7 +1272,7 @@ func TestSkippedUsersReferentialIntegrity(t *testing.T) {
 	}
 
 	tr := NewTransformer("myteam", newLogger())
-	tr.Transform(newDump(), true, false, "", GuestHandlingUser)
+	require.NoError(t, tr.Transform(newDump(), true, false, "", GuestHandlingUser))
 
 	// rocket.cat must not be exported, not even as a placeholder.
 	assert.Nil(t, tr.Intermediate.UsersById["app1"])
@@ -1320,7 +1320,7 @@ func TestGuestSkipReferentialIntegrity(t *testing.T) {
 	}
 
 	tr := NewTransformer("myteam", newLogger())
-	tr.Transform(parsed, true, false, "", GuestHandlingSkip)
+	require.NoError(t, tr.Transform(parsed, true, false, "", GuestHandlingSkip))
 
 	// The guest is dropped along with its post and membership.
 	assert.Nil(t, tr.Intermediate.UsersById["g1"])

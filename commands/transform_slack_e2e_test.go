@@ -17,6 +17,7 @@ import (
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mmetl/commands"
 	"github.com/mattermost/mmetl/services/slack"
+	"github.com/mattermost/mmetl/services/slack/fixtures"
 	"github.com/mattermost/mmetl/testhelper"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -44,8 +45,6 @@ func resetCobraFlags(cmd *cobra.Command) {
 	}
 }
 
-const transformLogFile = "transform-slack.log"
-
 // uniqueTeamName generates a unique team name for testing to avoid conflicts.
 // Uses crypto/rand for sufficient entropy to prevent collisions in parallel CI,
 // falling back to time-based naming if crypto/rand fails.
@@ -71,17 +70,16 @@ func TestTransformSlackE2E(t *testing.T) {
 	// Setup Mattermost with testcontainers
 	th := testhelper.SetupHelper(t)
 	defer th.TearDown()
-	t.Cleanup(func() { os.Remove(transformLogFile) })
 
 	t.Run("basic import creates users and channels in Mattermost", func(t *testing.T) {
 		ctx := context.Background()
-		tempDir := t.TempDir()
+		tempDir := testhelper.WorkDir(t)
 		slackExportPath := filepath.Join(tempDir, "slack_export.zip")
 		mmExportPath := filepath.Join(tempDir, "mattermost_import.jsonl")
 		teamName := uniqueTeamName("e2e")
 
 		// 1. Create Slack export fixture
-		err := testhelper.SlackBasicExport().Build(slackExportPath)
+		err := fixtures.SlackBasicExport().Build(slackExportPath)
 		require.NoError(t, err, "failed to create Slack export fixture")
 
 		// 2. Create the team in Mattermost first (required for import)
@@ -168,13 +166,13 @@ func TestTransformSlackE2E(t *testing.T) {
 
 	t.Run("import with posts creates messages in Mattermost", func(t *testing.T) {
 		ctx := context.Background()
-		tempDir := t.TempDir()
+		tempDir := testhelper.WorkDir(t)
 		slackExportPath := filepath.Join(tempDir, "slack_export.zip")
 		mmExportPath := filepath.Join(tempDir, "mattermost_import.jsonl")
 		teamName := uniqueTeamName("posts")
 
 		// 1. Create Slack export with posts
-		err := testhelper.ExportWithPosts().Build(slackExportPath)
+		err := fixtures.ExportWithPosts().Build(slackExportPath)
 		require.NoError(t, err)
 
 		// 2. Create team
@@ -244,14 +242,14 @@ func TestTransformSlackE2E(t *testing.T) {
 
 	t.Run("invalid reaction emoji names are sanitized and import", func(t *testing.T) {
 		ctx := context.Background()
-		tempDir := t.TempDir()
+		tempDir := testhelper.WorkDir(t)
 		slackExportPath := filepath.Join(tempDir, "slack_export.zip")
 		mmExportPath := filepath.Join(tempDir, "mattermost_import.jsonl")
 		teamName := uniqueTeamName("rxne")
 		const invalidEmoji = "リハテスト"
 		const postMessage = "post with invalid reaction emoji"
 
-		err := testhelper.SlackBasicExport().
+		err := fixtures.SlackBasicExport().
 			AddPost("general", slack.SlackPost{
 				User:      "U001",
 				Text:      postMessage,
@@ -301,13 +299,13 @@ func TestTransformSlackE2E(t *testing.T) {
 
 	t.Run("mentions are correctly converted in export and import", func(t *testing.T) {
 		ctx := context.Background()
-		tempDir := t.TempDir()
+		tempDir := testhelper.WorkDir(t)
 		slackExportPath := filepath.Join(tempDir, "slack_export.zip")
 		mmExportPath := filepath.Join(tempDir, "mattermost_import.jsonl")
 		teamName := uniqueTeamName("mentions")
 
 		// 1. Create Slack export with mentions
-		err := testhelper.ExportWithMentions().Build(slackExportPath)
+		err := fixtures.ExportWithMentions().Build(slackExportPath)
 		require.NoError(t, err)
 
 		// 2. Create team
@@ -456,13 +454,13 @@ func TestTransformSlackE2E(t *testing.T) {
 
 	t.Run("deleted user is imported with deactivated status", func(t *testing.T) {
 		ctx := context.Background()
-		tempDir := t.TempDir()
+		tempDir := testhelper.WorkDir(t)
 		slackExportPath := filepath.Join(tempDir, "slack_export.zip")
 		mmExportPath := filepath.Join(tempDir, "mattermost_import.jsonl")
 		teamName := uniqueTeamName("deleted")
 
 		// 1. Create Slack export with deleted user
-		err := testhelper.ExportWithDeletedUser().Build(slackExportPath)
+		err := fixtures.ExportWithDeletedUser().Build(slackExportPath)
 		require.NoError(t, err)
 
 		// 2. Create team
@@ -510,15 +508,14 @@ func TestTransformSlackE2ETeamConsistency(t *testing.T) {
 	ctx := context.Background()
 	th := testhelper.SetupHelper(t)
 	defer th.TearDown()
-	t.Cleanup(func() { os.Remove(transformLogFile) })
 
 	teamName := uniqueTeamName("consist")
-	tempDir := t.TempDir()
+	tempDir := testhelper.WorkDir(t)
 	slackExportPath := filepath.Join(tempDir, "slack_export.zip")
 	mmExportPath := filepath.Join(tempDir, "mattermost_import.jsonl")
 
 	// Create export with posts
-	err := testhelper.ExportWithPosts().Build(slackExportPath)
+	err := fixtures.ExportWithPosts().Build(slackExportPath)
 	require.NoError(t, err)
 
 	// Create team
@@ -570,13 +567,13 @@ func TestTransformSlackE2EBotImport(t *testing.T) {
 
 	t.Run("bot users are imported as Mattermost bots with correct properties", func(t *testing.T) {
 		ctx := context.Background()
-		tempDir := t.TempDir()
+		tempDir := testhelper.WorkDir(t)
 		slackExportPath := filepath.Join(tempDir, "slack_export.zip")
 		mmExportPath := filepath.Join(tempDir, "mattermost_import.jsonl")
 		teamName := uniqueTeamName("bots")
 
 		// 1. Create Slack export with bots
-		err := testhelper.ExportWithBots().Build(slackExportPath)
+		err := fixtures.ExportWithBots().Build(slackExportPath)
 		require.NoError(t, err, "failed to create Slack export fixture")
 
 		// 2. Create team and ensure the bot owner (admin) exists
@@ -598,7 +595,6 @@ func TestTransformSlackE2EBotImport(t *testing.T) {
 		c.SetArgs(args)
 		err = c.Execute()
 		require.NoError(t, err, "transform command should succeed")
-		defer os.Remove(transformLogFile)
 
 		// 4. Import into Mattermost
 		t.Log("Importing data with bots into Mattermost...")
@@ -642,13 +638,13 @@ func TestTransformSlackE2EBotImport(t *testing.T) {
 
 	t.Run("bot posts are correctly attributed to bot users", func(t *testing.T) {
 		ctx := context.Background()
-		tempDir := t.TempDir()
+		tempDir := testhelper.WorkDir(t)
 		slackExportPath := filepath.Join(tempDir, "slack_export.zip")
 		mmExportPath := filepath.Join(tempDir, "mattermost_import.jsonl")
 		teamName := uniqueTeamName("botposts")
 
 		// 1. Create Slack export with bot posts
-		err := testhelper.ExportWithBotPosts().Build(slackExportPath)
+		err := fixtures.ExportWithBotPosts().Build(slackExportPath)
 		require.NoError(t, err)
 
 		// 2. Create team
@@ -670,7 +666,6 @@ func TestTransformSlackE2EBotImport(t *testing.T) {
 		c.SetArgs(args)
 		err = c.Execute()
 		require.NoError(t, err)
-		defer os.Remove(transformLogFile)
 
 		// 4. Import into Mattermost
 		err = th.ImportBulkData(ctx, mmExportPath)
@@ -710,13 +705,13 @@ func TestTransformSlackE2EBotImport(t *testing.T) {
 	})
 
 	t.Run("transform fails without --bot-owner when bots exist", func(t *testing.T) {
-		tempDir := t.TempDir()
+		tempDir := testhelper.WorkDir(t)
 		slackExportPath := filepath.Join(tempDir, "slack_export.zip")
 		mmExportPath := filepath.Join(tempDir, "mattermost_import.jsonl")
 		teamName := uniqueTeamName("noowner")
 
 		// Create Slack export with bots
-		err := testhelper.ExportWithBots().Build(slackExportPath)
+		err := fixtures.ExportWithBots().Build(slackExportPath)
 		require.NoError(t, err)
 
 		// Run transform WITHOUT --bot-owner
@@ -732,7 +727,6 @@ func TestTransformSlackE2EBotImport(t *testing.T) {
 		resetCobraFlags(c)
 		c.SetArgs(args)
 		err = c.Execute()
-		defer os.Remove(transformLogFile)
 
 		// Should fail with a clear error about --bot-owner
 		require.Error(t, err, "transform should fail without --bot-owner when bots exist")
@@ -740,13 +734,13 @@ func TestTransformSlackE2EBotImport(t *testing.T) {
 	})
 
 	t.Run("transform succeeds without --bot-owner when no bots exist", func(t *testing.T) {
-		tempDir := t.TempDir()
+		tempDir := testhelper.WorkDir(t)
 		slackExportPath := filepath.Join(tempDir, "slack_export.zip")
 		mmExportPath := filepath.Join(tempDir, "mattermost_import.jsonl")
 		teamName := uniqueTeamName("nobots")
 
 		// Create Slack export WITHOUT bots
-		err := testhelper.SlackBasicExport().Build(slackExportPath)
+		err := fixtures.SlackBasicExport().Build(slackExportPath)
 		require.NoError(t, err)
 
 		// Run transform without --bot-owner (should be fine since no bots)
@@ -762,20 +756,19 @@ func TestTransformSlackE2EBotImport(t *testing.T) {
 		resetCobraFlags(c)
 		c.SetArgs(args)
 		err = c.Execute()
-		defer os.Remove(transformLogFile)
 
 		require.NoError(t, err, "transform should succeed without --bot-owner when no bots exist")
 	})
 
 	t.Run("deleted bot produces correct delete_at in export and imports successfully", func(t *testing.T) {
 		ctx := context.Background()
-		tempDir := t.TempDir()
+		tempDir := testhelper.WorkDir(t)
 		slackExportPath := filepath.Join(tempDir, "slack_export.zip")
 		mmExportPath := filepath.Join(tempDir, "mattermost_import.jsonl")
 		teamName := uniqueTeamName("delbot")
 
 		// Create Slack export with a deleted bot
-		err := testhelper.ExportWithDeletedBot().Build(slackExportPath)
+		err := fixtures.ExportWithDeletedBot().Build(slackExportPath)
 		require.NoError(t, err)
 
 		// Create team
@@ -797,7 +790,6 @@ func TestTransformSlackE2EBotImport(t *testing.T) {
 		c.SetArgs(args)
 		err = c.Execute()
 		require.NoError(t, err)
-		defer os.Remove(transformLogFile)
 
 		// Verify the generated JSONL contains a bot line with delete_at set.
 		// Note: Mattermost's importBot server function does not currently honor
@@ -856,13 +848,13 @@ func TestTransformSlackE2EBotImport(t *testing.T) {
 		defer subTH.TearDown()
 
 		ctx := context.Background()
-		tempDir := t.TempDir()
+		tempDir := testhelper.WorkDir(t)
 		slackExportPath := filepath.Join(tempDir, "slack_export.zip")
 		mmExportPath := filepath.Join(tempDir, "mattermost_import.jsonl")
 		teamName := uniqueTeamName("badowner")
 
 		// Create Slack export with bots
-		err := testhelper.ExportWithBots().Build(slackExportPath)
+		err := fixtures.ExportWithBots().Build(slackExportPath)
 		require.NoError(t, err)
 
 		// Create team
@@ -885,7 +877,6 @@ func TestTransformSlackE2EBotImport(t *testing.T) {
 		c.SetArgs(args)
 		err = c.Execute()
 		require.NoError(t, err, "transform should succeed regardless of owner existence")
-		defer os.Remove(transformLogFile)
 
 		// Import succeeds even though the owner username doesn't exist
 		err = subTH.ImportBulkData(ctx, mmExportPath)
@@ -909,13 +900,13 @@ func TestTransformSlackE2EBotImport(t *testing.T) {
 	t.Run("archived channels are imported as archived in Mattermost", func(t *testing.T) {
 		// Reuses the outer th; isolation is provided by the unique team name.
 		ctx := context.Background()
-		tempDir := t.TempDir()
+		tempDir := testhelper.WorkDir(t)
 		slackExportPath := filepath.Join(tempDir, "slack_export.zip")
 		mmExportPath := filepath.Join(tempDir, "mattermost_import.jsonl")
 		teamName := uniqueTeamName("archived")
 
 		// 1. Create Slack export with an archived channel
-		err := testhelper.ExportWithArchivedChannels().Build(slackExportPath)
+		err := fixtures.ExportWithArchivedChannels().Build(slackExportPath)
 		require.NoError(t, err, "failed to create Slack export fixture with archived channels")
 
 		// 2. Create team
@@ -936,7 +927,6 @@ func TestTransformSlackE2EBotImport(t *testing.T) {
 		c.SetArgs(args)
 		err = c.Execute()
 		require.NoError(t, err, "transform command should succeed")
-		defer os.Remove(transformLogFile)
 
 		// 4. Verify the JSONL contains deleted_at for the archived channel
 		t.Log("Checking JSONL output for archived channel...")
@@ -996,16 +986,15 @@ func TestTransformSlackE2ELastViewedAt(t *testing.T) {
 
 	th := testhelper.SetupHelper(t)
 	defer th.TearDown()
-	t.Cleanup(func() { os.Remove(transformLogFile) })
 
 	t.Run("channels and DMs are not marked as unread after import", func(t *testing.T) {
 		ctx := context.Background()
-		tempDir := t.TempDir()
+		tempDir := testhelper.WorkDir(t)
 		slackExportPath := filepath.Join(tempDir, "slack_export.zip")
 		mmExportPath := filepath.Join(tempDir, "mattermost_import.jsonl")
 		teamName := uniqueTeamName("unread")
 
-		err := testhelper.ExportWithDirectMessages().Build(slackExportPath)
+		err := fixtures.ExportWithDirectMessages().Build(slackExportPath)
 		require.NoError(t, err)
 
 		team := th.CreateTeam(ctx, teamName, "Unread E2E Team")
@@ -1058,7 +1047,7 @@ func TestTransformSlackE2ELastViewedAt(t *testing.T) {
 
 	t.Run("member MsgCount matches imported post count", func(t *testing.T) {
 		ctx := context.Background()
-		tempDir := t.TempDir()
+		tempDir := testhelper.WorkDir(t)
 		slackExportPath := filepath.Join(tempDir, "slack_export.zip")
 		mmExportPath := filepath.Join(tempDir, "mattermost_import.jsonl")
 		teamName := uniqueTeamName("msgcnt")
@@ -1067,7 +1056,7 @@ func TestTransformSlackE2ELastViewedAt(t *testing.T) {
 		//   general: 2 root posts (no replies)
 		//   random:  0 posts
 		//   D001:    2 root posts (no replies)
-		err := testhelper.ExportWithDirectMessages().Build(slackExportPath)
+		err := fixtures.ExportWithDirectMessages().Build(slackExportPath)
 		require.NoError(t, err)
 
 		team := th.CreateTeam(ctx, teamName, "MsgCount E2E Team")
@@ -1138,15 +1127,14 @@ func TestTransformSlackE2EMpimDedup(t *testing.T) {
 
 	th := testhelper.SetupHelper(t)
 	defer th.TearDown()
-	t.Cleanup(func() { os.Remove(transformLogFile) })
 
 	ctx := context.Background()
-	tempDir := t.TempDir()
+	tempDir := testhelper.WorkDir(t)
 	slackExportPath := filepath.Join(tempDir, "slack_export.zip")
 	mmExportPath := filepath.Join(tempDir, "mattermost_import.jsonl")
 	teamName := uniqueTeamName("mpim")
 
-	require.NoError(t, testhelper.ExportWithDuplicateMpims().Build(slackExportPath),
+	require.NoError(t, fixtures.ExportWithDuplicateMpims().Build(slackExportPath),
 		"failed to build duplicate-MPIM Slack export fixture")
 
 	team := th.CreateTeam(ctx, teamName, "MPIM Dedup E2E Team")
@@ -1288,15 +1276,14 @@ func TestTransformSlackE2EMpimsNotMergedWhenMembersDiffer(t *testing.T) {
 
 	th := testhelper.SetupHelper(t)
 	defer th.TearDown()
-	t.Cleanup(func() { os.Remove(transformLogFile) })
 
 	ctx := context.Background()
-	tempDir := t.TempDir()
+	tempDir := testhelper.WorkDir(t)
 	slackExportPath := filepath.Join(tempDir, "slack_export.zip")
 	mmExportPath := filepath.Join(tempDir, "mattermost_import.jsonl")
 	teamName := uniqueTeamName("mpimno")
 
-	require.NoError(t, testhelper.ExportWithOverlappingMpims().Build(slackExportPath),
+	require.NoError(t, fixtures.ExportWithOverlappingMpims().Build(slackExportPath),
 		"failed to build overlapping-MPIM Slack export fixture")
 
 	team := th.CreateTeam(ctx, teamName, "MPIM No-Merge E2E Team")
@@ -1411,15 +1398,14 @@ func TestTransformSlackE2EGuestImport(t *testing.T) {
 
 	th := testhelper.SetupHelper(t)
 	defer th.TearDown()
-	t.Cleanup(func() { os.Remove(transformLogFile) })
 
 	ctx := context.Background()
-	tempDir := t.TempDir()
+	tempDir := testhelper.WorkDir(t)
 	slackExportPath := filepath.Join(tempDir, "slack_export.zip")
 	mmExportPath := filepath.Join(tempDir, "mattermost_import.jsonl")
 	teamName := uniqueTeamName("guests")
 
-	err := testhelper.ExportWithGuests().Build(slackExportPath)
+	err := fixtures.ExportWithGuests().Build(slackExportPath)
 	require.NoError(t, err, "failed to create Slack export fixture")
 
 	team := th.CreateTeam(ctx, teamName, "Guests E2E Team")
@@ -1555,15 +1541,14 @@ func TestTransformSlackE2EGuestSkip(t *testing.T) {
 
 	th := testhelper.SetupHelper(t)
 	defer th.TearDown()
-	t.Cleanup(func() { os.Remove(transformLogFile) })
 
 	ctx := context.Background()
-	tempDir := t.TempDir()
+	tempDir := testhelper.WorkDir(t)
 	slackExportPath := filepath.Join(tempDir, "slack_export.zip")
 	mmExportPath := filepath.Join(tempDir, "mattermost_import.jsonl")
 	teamName := uniqueTeamName("guestskip")
 
-	err := testhelper.ExportWithGuestPosts().Build(slackExportPath)
+	err := fixtures.ExportWithGuestPosts().Build(slackExportPath)
 	require.NoError(t, err, "failed to create Slack export fixture")
 
 	team := th.CreateTeam(ctx, teamName, "Guest Skip E2E Team")
@@ -1627,15 +1612,14 @@ func TestTransformSlackE2EGuestUserMode(t *testing.T) {
 
 	th := testhelper.SetupHelper(t)
 	defer th.TearDown()
-	t.Cleanup(func() { os.Remove(transformLogFile) })
 
 	ctx := context.Background()
-	tempDir := t.TempDir()
+	tempDir := testhelper.WorkDir(t)
 	slackExportPath := filepath.Join(tempDir, "slack_export.zip")
 	mmExportPath := filepath.Join(tempDir, "mattermost_import.jsonl")
 	teamName := uniqueTeamName("guestuser")
 
-	err := testhelper.ExportWithGuestPosts().Build(slackExportPath)
+	err := fixtures.ExportWithGuestPosts().Build(slackExportPath)
 	require.NoError(t, err, "failed to create Slack export fixture")
 
 	team := th.CreateTeam(ctx, teamName, "Guest User Mode E2E Team")
@@ -1706,15 +1690,14 @@ func TestTransformSlackE2EChannellessGuestMpimThread(t *testing.T) {
 
 	th := testhelper.SetupHelper(t)
 	defer th.TearDown()
-	t.Cleanup(func() { os.Remove(transformLogFile) })
 
 	ctx := context.Background()
-	tempDir := t.TempDir()
+	tempDir := testhelper.WorkDir(t)
 	slackExportPath := filepath.Join(tempDir, "slack_export.zip")
 	mmExportPath := filepath.Join(tempDir, "mattermost_import.jsonl")
 	teamName := uniqueTeamName("clguestmpim")
 
-	err := testhelper.ExportWithChannellessGuestMpim().Build(slackExportPath)
+	err := fixtures.ExportWithChannellessGuestMpim().Build(slackExportPath)
 	require.NoError(t, err, "failed to create Slack export fixture")
 
 	team := th.CreateTeam(ctx, teamName, "Channelless Guest MPIM E2E Team")

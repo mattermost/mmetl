@@ -1,12 +1,12 @@
 package commands
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path"
 	"strings"
 
-	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 
 	"github.com/mattermost/mmetl/services/rocketchat"
@@ -49,6 +49,7 @@ func init() {
   "skip"  - drop guest users entirely, along with their memberships and authored posts.`)
 	TransformRocketChatCmd.Flags().Bool("debug", false, "Whether to show debug logs or not")
 	TransformRocketChatCmd.Flags().String("bot-owner", "", "Username of the Mattermost user who will own all imported bots. Required if the RocketChat export contains bot users.")
+	TransformRocketChatCmd.Flags().Bool("dry-run", false, "Parse and transform the export without writing JSONL or copying attachments. Logs warnings and errors to the terminal. Exits non-zero if problems are found, including missing attachments that a real transform would skip.")
 
 	TransformCmd.AddCommand(TransformRocketChatCmd)
 }
@@ -65,6 +66,7 @@ func transformRocketChatCmdF(cmd *cobra.Command, args []string) error {
 	guestHandling, _ := cmd.Flags().GetString("guest-handling")
 	debug, _ := cmd.Flags().GetBool("debug")
 	botOwner, _ := cmd.Flags().GetString("bot-owner")
+	dryRun, _ := cmd.Flags().GetBool("dry-run")
 
 	if err := rocketchat.ValidateGuestHandling(guestHandling); err != nil {
 		return err
@@ -72,28 +74,19 @@ func transformRocketChatCmdF(cmd *cobra.Command, args []string) error {
 
 	team = strings.ToLower(team)
 
-	// Validate output path before doing any work, matching the guard in
-	// transformSlackCmdF.
-	if fileInfo, err := os.Stat(outputFilePath); err != nil && !os.IsNotExist(err) {
-		return err
-	} else if err == nil && fileInfo.IsDir() {
-		return fmt.Errorf("output file %q is a directory", outputFilePath)
+	if !dryRun {
+		if fileInfo, err := os.Stat(outputFilePath); err != nil && !os.IsNotExist(err) {
+			return err
+		} else if err == nil && fileInfo.IsDir() {
+			return fmt.Errorf("output file %q is a directory", outputFilePath)
+		}
 	}
 
-	logger := log.New()
-	logFile, err := os.OpenFile("transform-rocketchat.log", os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	logger, closeLogger, err := configureTransformLogger(dryRun, debug, "transform-rocketchat.log")
 	if err != nil {
 		return err
 	}
-	defer logFile.Close()
-	logger.SetOutput(logFile)
-	logger.SetFormatter(customLogFormatter)
-	logger.SetReportCaller(true)
-
-	if debug {
-		logger.Level = log.DebugLevel
-		logger.Info("Debug mode enabled")
-	}
+	defer closeLogger()
 
 	parsed, err := rocketchat.ParseDump(dumpDir, logger)
 	if err != nil {
@@ -101,43 +94,56 @@ func transformRocketChatCmdF(cmd *cobra.Command, args []string) error {
 	}
 
 	transformer := rocketchat.NewTransformer(team, logger)
-	transformer.Transform(parsed, skipAttachments, skipEmptyEmails, defaultEmailDomain, guestHandling)
-
-	// Validate that --bot-owner is provided if there are bot users.
-	// Do this before attachment extraction so we fail fast without doing
-	// expensive I/O that would be wasted.
-	hasBots := false
-	for _, user := range transformer.Intermediate.UsersById {
-		if user.IsBot {
-			hasBots = true
-			break
-		}
+	if err = transformer.Transform(parsed, skipAttachments, skipEmptyEmails, defaultEmailDomain, guestHandling); err != nil && !dryRun {
+		return err
 	}
+
 	botOwner = strings.TrimSpace(botOwner)
-	if hasBots && botOwner == "" {
-		return fmt.Errorf("the RocketChat export contains bot users but --bot-owner was not specified. Please provide the username of a Mattermost user who will own the imported bots")
+	if hasBotUsers(transformer.Intermediate.UsersById) && botOwner == "" {
+		err = errMissingBotOwner("RocketChat")
+		if dryRun {
+			transformer.RecordError(err)
+		} else {
+			return err
+		}
 	}
 
 	if !skipAttachments {
 		chunksFilePath := path.Join(dumpDir, "rocketchat_uploads.chunks.bson")
 		var gridfsIndex *rocketchat.GridFSIndex
-		if _, err := os.Stat(chunksFilePath); err == nil {
+		_, statErr := os.Stat(chunksFilePath)
+		if statErr == nil {
 			gridfsIndex, err = rocketchat.BuildGridFSIndex(chunksFilePath)
 			if err != nil {
 				return fmt.Errorf("failed to index GridFS chunks from %s: %w. "+
 					"Fix the dump, or re-run with --skip-attachments to proceed without attachments", chunksFilePath, err)
 			}
-		} else if !os.IsNotExist(err) {
-			return fmt.Errorf("stat GridFS chunks file %s: %w", chunksFilePath, err)
+		} else if !os.IsNotExist(statErr) {
+			return fmt.Errorf("stat GridFS chunks file %s: %w", chunksFilePath, statErr)
 		}
 
-		attachmentsOutput := path.Join(attachmentsDir, "bulk-export-attachments")
-		if err := rocketchat.ExtractAttachments(parsed.UploadsByID, gridfsIndex, attachmentsOutput, uploadsDir, logger); err != nil {
-			return err
+		if dryRun {
+			if err = rocketchat.VerifyAttachments(parsed.UploadsByID, gridfsIndex, uploadsDir, logger); err != nil {
+				transformer.RecordError(err)
+			}
+		} else {
+			attachmentsOutput := path.Join(attachmentsDir, "bulk-export-attachments")
+			if err = rocketchat.ExtractAttachments(parsed.UploadsByID, gridfsIndex, attachmentsOutput, uploadsDir, logger); err != nil {
+				return err
+			}
 		}
 	}
 
-	if err := transformer.Export(outputFilePath, botOwner); err != nil {
+	if dryRun {
+		transformer.CheckIntermediate()
+		if err = transformer.Err(); err != nil {
+			return errors.New(dryRunFailedMsg)
+		}
+		logger.Info("Dry-run succeeded")
+		return nil
+	}
+
+	if err = transformer.Export(outputFilePath, botOwner); err != nil {
 		return err
 	}
 
