@@ -37,9 +37,8 @@ type Exporter struct {
 	// emojiNames is lazy-initialized on first SanitizeEmojiName call.
 	emojiNames *EmojiNameSanitizer
 
-	// errs collects non-fatal-to-the-loop problems (empty emails, missing
-	// attachments in dry-run) so Transform can report them all instead of
-	// exiting on the first one.
+	// errs collects problems found while looping (empty emails, missing
+	// attachments in dry-run) so Transform can return them together.
 	errs []error
 }
 

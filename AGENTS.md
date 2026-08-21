@@ -22,8 +22,7 @@ Pipeline is **Parse → Transform → Export** around a source-agnostic core:
 
 ## Conventions
 
-- Validation is `transform --dry-run` (same flags as a real transform);
-  `mmetl check` was removed.
+- Validation is `transform --dry-run` (same flags as a real transform).
 - Any bot user in the source requires `--bot-owner`, or the transform errors.
 - Empty emails are invalid by default; relax with `--skip-empty-emails` or
   `--default-email-domain`.

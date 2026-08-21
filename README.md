@@ -22,11 +22,11 @@ go install github.com/mattermost/mmetl@latest
 
 ## Usage
 
-The typical workflow is two steps — validate the export, then transform it.
-`mmetl check` is gone; use `transform --dry-run` with the same flags you will
-use for the real run (`--team` is required, and `--bot-owner` if the export
-contains bots). Dry-run writes nothing and exits non-zero if problems are
-found, including missing attachments that a real transform would skip.
+The typical workflow is two steps — dry-run the transform to catch issues,
+then write the import file. `--dry-run` takes the same flags as a real run
+(`--team` is required, and `--bot-owner` if the export contains bots). It
+writes nothing and exits non-zero if problems are found, including missing
+attachments that a real transform would skip.
 
 ```sh
 # 1. Dry-run the transform to catch issues before writing output
