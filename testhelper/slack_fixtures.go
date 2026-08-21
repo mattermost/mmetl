@@ -204,6 +204,11 @@ func (b *SlackExportBuilder) Build(outputPath string) error {
 		return err
 	}
 
+	// Official Slack exports include this at the archive root; transform precheck requires it.
+	if err := b.writeJSONFile(tempDir, "integration_logs.json", []any{}); err != nil {
+		return err
+	}
+
 	// Write posts for each channel in channel-name/date.json format
 	for channelName, posts := range b.posts {
 		channelDir := filepath.Join(tempDir, channelName)

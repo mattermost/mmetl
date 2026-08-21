@@ -22,11 +22,16 @@ go install github.com/mattermost/mmetl@latest
 
 ## Usage
 
-The typical workflow is two steps — validate the export, then transform it:
+The typical workflow is two steps — validate the export, then transform it.
+`mmetl check` is gone; use `transform --dry-run` with the same flags you will
+use for the real run (`--team` is required, and `--bot-owner` if the export
+contains bots). Dry-run writes nothing and exits non-zero if problems are
+found, including missing attachments that a real transform would skip.
 
 ```sh
-# 1. Check the export for issues before transforming
-mmetl check slack --file export.zip
+# 1. Dry-run the transform to catch issues before writing output
+mmetl transform slack --team myteam --file export.zip --dry-run
+mmetl transform rocketchat --team myteam --dump-dir /tmp/rc-dump/meteor --dry-run
 
 # 2. Transform it into a Mattermost import file
 mmetl transform slack --team myteam --file export.zip --output mm_export.jsonl
@@ -37,7 +42,7 @@ Slack **Enterprise Grid** exports must be split first. `mmetl grid-transform` in
 ```sh
 mmetl grid-transform --file slackexport.zip
 # then, for each generated zip:
-mmetl check slack --file acme.zip
+mmetl transform slack --team acme --file acme.zip --dry-run
 mmetl transform slack --team acme --file acme.zip --output acme.jsonl
 ```
 

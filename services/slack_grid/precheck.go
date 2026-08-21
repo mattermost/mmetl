@@ -19,8 +19,9 @@ func (t *GridTransformer) GridPreCheck(zipReader *zip.Reader) bool {
 	valid := true
 
 	for _, fileName := range requiredFiles {
-		fileExists := t.CheckForRequiredFile(zipReader, fileName)
-		valid = valid && fileExists
+		if err := t.CheckForRequiredFile(zipReader, fileName); err != nil {
+			valid = false
+		}
 	}
 
 	if len(t.Teams) == 0 {

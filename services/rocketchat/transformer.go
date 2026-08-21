@@ -109,7 +109,7 @@ func NewTransformer(teamName string, logger log.FieldLogger) *Transformer {
 // Transform runs all transformation phases against a parsed dump in order:
 // users, channels, subscriptions, then messages.
 // When skipAttachments is true, no attachment paths are written into posts.
-func (t *Transformer) Transform(parsed *ParsedData, skipAttachments bool, skipEmptyEmails bool, defaultEmailDomain string, guestHandling string) {
+func (t *Transformer) Transform(parsed *ParsedData, skipAttachments bool, skipEmptyEmails bool, defaultEmailDomain string, guestHandling string) error {
 	// Guests are exported with Mattermost guest roles only in "guest" mode.
 	t.EmitGuestRoles = guestHandling == GuestHandlingGuest
 
@@ -129,6 +129,8 @@ func (t *Transformer) Transform(parsed *ParsedData, skipAttachments bool, skipEm
 		t.Logger.Infof("Dropped %d posts and %d channel/DM memberships referencing skipped users",
 			t.droppedPostRefs, t.droppedMembershipRefs)
 	}
+
+	return t.Err()
 }
 
 // transformUsers converts RocketChatUser records into IntermediateUser records
@@ -197,7 +199,9 @@ func (t *Transformer) transformUsers(users []RocketChatUser, skipEmptyEmails boo
 		}
 
 		if !newUser.IsBot {
-			newUser.Sanitise(t.Logger, defaultEmailDomain, skipEmptyEmails)
+			if err := newUser.Sanitise(t.Logger, defaultEmailDomain, skipEmptyEmails); err != nil {
+				t.RecordError(err)
+			}
 		}
 		result[newUser.Id] = newUser
 		t.Logger.Debugf("transformed user: %s isBot: %t isGuest: %t", newUser.Username, newUser.IsBot, newUser.IsGuest)

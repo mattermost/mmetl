@@ -362,3 +362,40 @@ func TestExtractAttachments(t *testing.T) {
 		assert.Equal(t, "up1_caf_.txt", entries[0].Name())
 	})
 }
+
+func TestVerifyAttachments(t *testing.T) {
+	logger := log.New()
+	logger.SetOutput(os.Stderr)
+
+	t.Run("GridFS present is ok", func(t *testing.T) {
+		dir := t.TempDir()
+		content := []byte("binary")
+		uploads := map[string]*RocketChatUpload{
+			"up1": {ID: "up1", Name: "photo.jpg", Size: int64(len(content)), Store: "GridFS:Uploads", Complete: true},
+		}
+		chunksPath := buildBSONChunksFile(t, dir, []GridFSChunk{
+			{FilesID: "up1", N: 0, Data: content},
+		})
+		idx, err := BuildGridFSIndex(chunksPath)
+		require.NoError(t, err)
+		require.NoError(t, VerifyAttachments(uploads, idx, "", logger))
+	})
+
+	t.Run("missing GridFS chunks is an error", func(t *testing.T) {
+		uploads := map[string]*RocketChatUpload{
+			"up1": {ID: "up1", Name: "missing.jpg", Size: 1, Store: "GridFS:Uploads", Complete: true},
+		}
+		err := VerifyAttachments(uploads, nil, "", logger)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "GridFS chunks not found")
+	})
+
+	t.Run("missing FileSystem file is an error", func(t *testing.T) {
+		uploads := map[string]*RocketChatUpload{
+			"up1": {ID: "up1", Name: "photo.png", Store: "FileSystem", Path: "/file-upload/up1/photo.png", Complete: true},
+		}
+		err := VerifyAttachments(uploads, nil, t.TempDir(), logger)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
+	})
+}

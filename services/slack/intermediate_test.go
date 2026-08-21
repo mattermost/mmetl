@@ -3,7 +3,6 @@ package slack
 import (
 	"bytes"
 	"fmt"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -565,23 +564,16 @@ func assertUserFieldsWithinLimits(t *testing.T, user *IntermediateUser) {
 }
 
 func TestIntermediateUserSanitise(t *testing.T) {
-	t.Run("If there is no email, and --default-email-domain and --skip-empty-emails flags are not provided, we should exit the program.", func(t *testing.T) {
+	t.Run("If there is no email, and --default-email-domain and --skip-empty-emails flags are not provided, we should return an error.", func(t *testing.T) {
 		user := &IntermediateUser{
 			Username: "test-username",
 			Email:    "",
 		}
 
-		exitCode := -1
-		intermediate.ExitFunc = func(code int) {
-			exitCode = code
-		}
-		defer func() {
-			intermediate.ExitFunc = os.Exit
-		}()
+		err := user.Sanitise(log.New(), "", false)
 
-		user.Sanitise(log.New(), "", false)
-
-		require.Equal(t, 1, exitCode)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "does not have an email address")
 	})
 
 	t.Run("If there is no email, and --default-email-domain flag is provided, use domain to create an email address.", func(t *testing.T) {
@@ -590,29 +582,8 @@ func TestIntermediateUserSanitise(t *testing.T) {
 			Email:    "",
 		}
 
-		exitCode := -1
-		intermediate.ExitFunc = func(code int) {
-			exitCode = code
-		}
-		defer func() {
-			intermediate.ExitFunc = os.Exit
-		}()
-
-		logger := log.New()
-		logOutput := logger.Out
-		buf := &bytes.Buffer{}
-		log.SetOutput(buf)
-		defer func() {
-			log.SetOutput(logOutput)
-		}()
-
-		defaultEmailDomain := "testdomain.com"
-		skipEmptyEmails := false
-		user.Sanitise(logger, defaultEmailDomain, skipEmptyEmails)
-
-		expectedEmail := "test-username@testdomain.com"
-		require.Equal(t, expectedEmail, user.Email)
-		require.Equal(t, -1, exitCode)
+		require.NoError(t, user.Sanitise(log.New(), "testdomain.com", false))
+		require.Equal(t, "test-username@testdomain.com", user.Email)
 	})
 
 	t.Run("If there is no email, and --skip-empty-emails flag is provided, set email to blank.", func(t *testing.T) {
@@ -621,18 +592,8 @@ func TestIntermediateUserSanitise(t *testing.T) {
 			Email:    "",
 		}
 
-		exitCode := -1
-		intermediate.ExitFunc = func(code int) {
-			exitCode = code
-		}
-		defer func() {
-			intermediate.ExitFunc = os.Exit
-		}()
-
-		user.Sanitise(log.New(), "", true)
-
+		require.NoError(t, user.Sanitise(log.New(), "", true))
 		require.Equal(t, "", user.Email)
-		require.Equal(t, -1, exitCode)
 	})
 
 	t.Run("If there is an email, program should continue with no error logged.", func(t *testing.T) {
@@ -641,19 +602,8 @@ func TestIntermediateUserSanitise(t *testing.T) {
 			Email:    "test-email@otherdomain.com",
 		}
 
-		exitCode := -1
-		intermediate.ExitFunc = func(code int) {
-			exitCode = code
-		}
-		defer func() {
-			intermediate.ExitFunc = os.Exit
-		}()
-
-		user.Sanitise(log.New(), "", false)
-
-		expectedEmail := "test-email@otherdomain.com"
-		require.Equal(t, expectedEmail, user.Email)
-		require.Equal(t, -1, exitCode)
+		require.NoError(t, user.Sanitise(log.New(), "", false))
+		require.Equal(t, "test-email@otherdomain.com", user.Email)
 	})
 
 	t.Run("Properties should respect the max length", func(t *testing.T) {
@@ -669,7 +619,7 @@ func TestIntermediateUserSanitise(t *testing.T) {
 		expectedLastName := strings.Repeat("b", model.UserLastNameMaxRunes)
 		expectedPosition := strings.Repeat("c", model.UserPositionMaxRunes)
 
-		user.Sanitise(log.New(), "", false)
+		require.NoError(t, user.Sanitise(log.New(), "", false))
 
 		// Verify fields are not greater than max allowed runes
 		assertUserFieldsWithinLimits(t, user)
@@ -693,7 +643,7 @@ func TestIntermediateUserSanitise(t *testing.T) {
 		expectedLastName := "Doe"
 		expectedPosition := "Software Engineer"
 
-		user.Sanitise(log.New(), "", false)
+		require.NoError(t, user.Sanitise(log.New(), "", false))
 
 		// Verify fields are not greater than max allowed runes
 		assertUserFieldsWithinLimits(t, user)
@@ -716,7 +666,7 @@ func TestIntermediateUserSanitise(t *testing.T) {
 		expectedLastName := strings.Repeat("b", model.UserLastNameMaxRunes)
 		expectedPosition := strings.Repeat("c", model.UserPositionMaxRunes)
 
-		user.Sanitise(log.New(), "", false)
+		require.NoError(t, user.Sanitise(log.New(), "", false))
 
 		// Verify fields are not greater than max allowed runes
 		assertUserFieldsWithinLimits(t, user)
@@ -737,7 +687,7 @@ func TestIntermediateUserSanitise(t *testing.T) {
 			Position:  strings.Repeat("🎯", model.UserPositionMaxRunes+3),
 		}
 
-		user.Sanitise(log.New(), "", false)
+		require.NoError(t, user.Sanitise(log.New(), "", false))
 
 		// Verify fields are not greater than max allowed runes
 		assertUserFieldsWithinLimits(t, user)

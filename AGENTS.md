@@ -8,8 +8,8 @@ attachments directory.
 
 Pipeline is **Parse → Transform → Export** around a source-agnostic core:
 
-- `commands/` — Cobra layer; one `transform_<provider>.go` / `check_<provider>.go`
-  per provider. Command funcs read flags, open input, then drive a service.
+- `commands/` — Cobra layer; one `transform_<provider>.go` per provider.
+  Command funcs read flags, open input, then drive a service.
 - `services/<provider>/` — provider-specific Parse + Transform (`slack`,
   `rocketchat`, `slack_grid`).
 - `services/intermediate/` — the source-agnostic core. `types.go` defines the
@@ -22,11 +22,13 @@ Pipeline is **Parse → Transform → Export** around a source-agnostic core:
 
 ## Conventions
 
+- Validation is `transform --dry-run` (same flags as a real transform);
+  `mmetl check` was removed.
 - Any bot user in the source requires `--bot-owner`, or the transform errors.
 - Empty emails are invalid by default; relax with `--skip-empty-emails` or
   `--default-email-domain`.
-- `intermediate.ExitFunc` / `NowFunc` are test seams for determinism — reuse
-  them rather than adding new globals.
+- `intermediate.NowFunc` is a test seam for determinism — reuse it rather
+  than adding new globals.
 
 ## After making code changes
 

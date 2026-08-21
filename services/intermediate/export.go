@@ -2,6 +2,7 @@ package intermediate
 
 import (
 	"encoding/json"
+	stderrors "errors"
 	"io"
 	"os"
 	"sort"
@@ -35,6 +36,28 @@ type Exporter struct {
 
 	// emojiNames is lazy-initialized on first SanitizeEmojiName call.
 	emojiNames *EmojiNameSanitizer
+
+	// errs collects non-fatal-to-the-loop problems (empty emails, missing
+	// attachments in dry-run) so Transform can report them all instead of
+	// exiting on the first one.
+	errs []error
+}
+
+// RecordError logs err and stores it so Err() can return every problem found
+// during a transform. nil is ignored.
+func (e *Exporter) RecordError(err error) {
+	if err == nil {
+		return
+	}
+	if e.Logger != nil {
+		e.Logger.Error(err)
+	}
+	e.errs = append(e.errs, err)
+}
+
+// Err returns a joined error of every RecordError call, or nil.
+func (e *Exporter) Err() error {
+	return stderrors.Join(e.errs...)
 }
 
 // isEffectiveGuest reports whether user should be exported with Mattermost

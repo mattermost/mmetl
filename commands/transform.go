@@ -2,6 +2,7 @@ package commands
 
 import (
 	"archive/zip"
+	"errors"
 	"fmt"
 	"os"
 	"path"
@@ -12,6 +13,7 @@ import (
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 
+	"github.com/mattermost/mmetl/services/intermediate"
 	"github.com/mattermost/mmetl/services/slack"
 )
 
@@ -54,6 +56,7 @@ func init() {
 	TransformSlackCmd.Flags().BoolP("discard-invalid-props", "p", false, "Skips converting posts with invalid props instead discarding the props themselves")
 	TransformSlackCmd.Flags().Bool("debug", false, "Whether to show debug logs or not")
 	TransformSlackCmd.Flags().String("bot-owner", "", "Username of the Mattermost user who will own all imported bots. Required if the Slack export contains bot users.")
+	TransformSlackCmd.Flags().Bool("dry-run", false, "Parse and transform the export without writing JSONL or copying attachments. Logs warnings and errors to the terminal. Exits non-zero if problems are found, including missing attachments that a real transform would skip.")
 
 	TransformCmd.AddCommand(
 		TransformSlackCmd,
@@ -78,6 +81,7 @@ func transformSlackCmdF(cmd *cobra.Command, args []string) error {
 	debug, _ := cmd.Flags().GetBool("debug")
 	botOwner, _ := cmd.Flags().GetString("bot-owner")
 	guestHandling, _ := cmd.Flags().GetString("guest-handling")
+	dryRun, _ := cmd.Flags().GetBool("dry-run")
 
 	if err := slack.ValidateGuestHandling(guestHandling); err != nil {
 		return err
@@ -86,25 +90,27 @@ func transformSlackCmdF(cmd *cobra.Command, args []string) error {
 	// convert team name to lowercase since Mattermost expects all team names to be lowercase
 	team = strings.ToLower(team)
 
-	// output file
-	if fileInfo, err := os.Stat(outputFilePath); err != nil && !os.IsNotExist(err) {
-		return err
-	} else if err == nil && fileInfo.IsDir() {
-		return fmt.Errorf("output file \"%s\" is a directory", outputFilePath)
-	}
-
-	// attachments dir
-	attachmentsFullDir := path.Join(attachmentsDir, attachmentsInternal)
-
-	if !skipAttachments {
-		if fileInfo, err := os.Stat(attachmentsFullDir); os.IsNotExist(err) {
-			if createErr := os.MkdirAll(attachmentsFullDir, 0755); createErr != nil {
-				return createErr
-			}
-		} else if err != nil {
+	if !dryRun {
+		// output file
+		if fileInfo, err := os.Stat(outputFilePath); err != nil && !os.IsNotExist(err) {
 			return err
-		} else if !fileInfo.IsDir() {
-			return fmt.Errorf("file \"%s\" is not a directory", attachmentsDir)
+		} else if err == nil && fileInfo.IsDir() {
+			return fmt.Errorf("output file \"%s\" is a directory", outputFilePath)
+		}
+
+		// attachments dir
+		attachmentsFullDir := path.Join(attachmentsDir, attachmentsInternal)
+
+		if !skipAttachments {
+			if fileInfo, err := os.Stat(attachmentsFullDir); os.IsNotExist(err) {
+				if createErr := os.MkdirAll(attachmentsFullDir, 0755); createErr != nil {
+					return createErr
+				}
+			} else if err != nil {
+				return err
+			} else if !fileInfo.IsDir() {
+				return fmt.Errorf("file \"%s\" is not a directory", attachmentsDir)
+			}
 		}
 	}
 
@@ -125,21 +131,21 @@ func transformSlackCmdF(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	logger := log.New()
-	logFile, err := os.OpenFile("transform-slack.log", os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0666)
+	logger, closeLogger, err := configureTransformLogger(dryRun, debug, "transform-slack.log")
 	if err != nil {
 		return err
 	}
-	defer logFile.Close()
-	logger.SetOutput(logFile)
-	logger.SetFormatter(customLogFormatter)
-	logger.SetReportCaller(true)
+	defer closeLogger()
 
-	if debug {
-		logger.Level = log.DebugLevel
-		logger.Info("Debug mode enabled")
-	}
 	slackTransformer := slack.NewTransformer(team, logger)
+	slackTransformer.DryRun = dryRun
+
+	if err = slackTransformer.Precheck(zipReader); err != nil {
+		if dryRun {
+			return errors.New(dryRunFailedMsg)
+		}
+		return err
+	}
 
 	slackExport, err := slackTransformer.ParseSlackExportFile(zipReader, skipConvertPosts)
 	if err != nil {
@@ -147,21 +153,27 @@ func transformSlackCmdF(cmd *cobra.Command, args []string) error {
 	}
 
 	err = slackTransformer.Transform(slackExport, attachmentsDir, skipAttachments, discardInvalidProps, allowDownload, skipEmptyEmails, defaultEmailDomain, guestHandling)
-	if err != nil {
+	if err != nil && !dryRun {
 		return err
 	}
 
-	// Validate that --bot-owner is provided if there are bot users
-	hasBots := false
-	for _, user := range slackTransformer.Intermediate.UsersById {
-		if user.IsBot {
-			hasBots = true
-			break
+	botOwner = strings.TrimSpace(botOwner)
+	if hasBotUsers(slackTransformer.Intermediate.UsersById) && botOwner == "" {
+		err = errMissingBotOwner("Slack")
+		if dryRun {
+			slackTransformer.RecordError(err)
+		} else {
+			return err
 		}
 	}
-	botOwner = strings.TrimSpace(botOwner)
-	if hasBots && botOwner == "" {
-		return fmt.Errorf("the Slack export contains bot users but --bot-owner was not specified. Please provide the username of a Mattermost user who will own the imported bots")
+
+	if dryRun {
+		slackTransformer.CheckIntermediate()
+		if err = slackTransformer.Err(); err != nil {
+			return errors.New(dryRunFailedMsg)
+		}
+		slackTransformer.Logger.Info("Dry-run succeeded")
+		return nil
 	}
 
 	if err = slackTransformer.Export(outputFilePath, botOwner); err != nil {
@@ -171,6 +183,47 @@ func transformSlackCmdF(cmd *cobra.Command, args []string) error {
 	slackTransformer.Logger.Info("Transformation succeeded!")
 
 	return nil
+}
+
+const dryRunFailedMsg = "dry-run failed; review the errors above"
+
+func configureTransformLogger(dryRun, debug bool, logFileName string) (*log.Logger, func(), error) {
+	logger := log.New()
+	closer := func() {}
+
+	if dryRun {
+		logger.SetOutput(os.Stdout)
+		logger.SetFormatter(&log.TextFormatter{ForceColors: true})
+	} else {
+		logFile, err := os.OpenFile(logFileName, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0666)
+		if err != nil {
+			return nil, nil, err
+		}
+		closer = func() { logFile.Close() }
+		logger.SetOutput(logFile)
+		logger.SetFormatter(customLogFormatter)
+		logger.SetReportCaller(true)
+	}
+
+	if debug {
+		logger.Level = log.DebugLevel
+		logger.Info("Debug mode enabled")
+	}
+
+	return logger, closer, nil
+}
+
+func hasBotUsers(users map[string]*intermediate.IntermediateUser) bool {
+	for _, user := range users {
+		if user != nil && user.IsBot {
+			return true
+		}
+	}
+	return false
+}
+
+func errMissingBotOwner(source string) error {
+	return fmt.Errorf("the %s export contains bot users but --bot-owner was not specified. Please provide the username of a Mattermost user who will own the imported bots", source)
 }
 
 var customLogFormatter = &log.JSONFormatter{
