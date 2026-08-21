@@ -195,7 +195,7 @@ func configureTransformLogger(dryRun, debug bool, logFileName string) (*log.Logg
 		logger.SetOutput(os.Stdout)
 		logger.SetFormatter(&log.TextFormatter{ForceColors: true})
 	} else {
-		logFile, err := os.OpenFile(logFileName, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0666)
+		logFile, err := os.OpenFile(logFileName, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
 		if err != nil {
 			return nil, nil, err
 		}
