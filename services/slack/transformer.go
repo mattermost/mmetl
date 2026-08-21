@@ -14,10 +14,8 @@ import (
 type Transformer struct {
 	intermediate.Exporter
 
-	// skippedUserIDs records users dropped during TransformUsers (guests under
-	// --guest-handling=skip) so that later stages can drop channel memberships
-	// and posts referencing them, leaving no dangling references in the export.
-	skippedUserIDs map[string]bool
+	// Skipped-user bookkeeping (MarkUserSkipped/IsSkippedUser/SkippedUserRef)
+	// is on the embedded Exporter, shared with every other source Transformer.
 
 	// droppedPostRefs / droppedReactionRefs / droppedMembershipRefs count
 	// references removed because they pointed at a skipped user, for the
@@ -26,12 +24,6 @@ type Transformer struct {
 	droppedPostRefs       int
 	droppedReactionRefs   int
 	droppedMembershipRefs int
-
-	// warnedDroppedThreads records channel+thread keys already warned about when
-	// a thread was dropped because its root was never imported (e.g. a skipped
-	// guest started it), so a thread with many replies emits one WARN, not one
-	// per reply. droppedPostRefs still counts every dropped reply.
-	warnedDroppedThreads map[string]bool
 }
 
 // Guest handling modes for the --guest-handling flag.
@@ -63,20 +55,5 @@ func NewTransformer(teamName string, logger log.FieldLogger) *Transformer {
 			Intermediate: &intermediate.Intermediate{},
 			Logger:       logger,
 		},
-		skippedUserIDs: make(map[string]bool),
-	}
-}
-
-// isSkippedUser reports whether the given Slack user ID was dropped in
-// TransformUsers.
-func (t *Transformer) isSkippedUser(id string) bool {
-	return id != "" && t.skippedUserIDs[id]
-}
-
-// markUserSkipped records a user ID as skipped so downstream stages can drop
-// memberships and posts that reference it.
-func (t *Transformer) markUserSkipped(id string) {
-	if id != "" {
-		t.skippedUserIDs[id] = true
 	}
 }

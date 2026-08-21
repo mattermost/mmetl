@@ -889,8 +889,8 @@ func TestTransformUsersGuests(t *testing.T) {
 		assert.Nil(t, slackTransformer.Intermediate.UsersById[singleChannelGuestId])
 		assert.NotNil(t, slackTransformer.Intermediate.UsersById[regularId])
 		assert.NotNil(t, slackTransformer.Intermediate.UsersById["B001"])
-		assert.True(t, slackTransformer.skippedUserIDs[multiChannelGuestId])
-		assert.True(t, slackTransformer.skippedUserIDs[singleChannelGuestId])
+		assert.True(t, slackTransformer.IsSkippedUser(multiChannelGuestId))
+		assert.True(t, slackTransformer.IsSkippedUser(singleChannelGuestId))
 	})
 }
 
@@ -921,7 +921,7 @@ func TestDropChannellessGuests(t *testing.T) {
 
 		assert.Nil(t, slackTransformer.Intermediate.UsersById["U002"], "channelless guest must be dropped")
 		assert.NotNil(t, slackTransformer.Intermediate.UsersById["U001"], "regular user must be kept")
-		assert.True(t, slackTransformer.skippedUserIDs["U002"])
+		assert.True(t, slackTransformer.IsSkippedUser("U002"))
 		assert.Empty(t, slackTransformer.Intermediate.DirectChannels, "DM must be dropped once it collapses to a single member")
 	})
 
@@ -988,7 +988,7 @@ func TestDropChannellessGuests(t *testing.T) {
 		require.NoError(t, err)
 
 		assert.Nil(t, slackTransformer.Intermediate.UsersById["U003"], "channelless guest must be dropped")
-		assert.True(t, slackTransformer.skippedUserIDs["U003"])
+		assert.True(t, slackTransformer.IsSkippedUser("U003"))
 
 		require.Len(t, slackTransformer.Intermediate.GroupChannels, 1, "the MPIM must survive with its two regular members")
 		assert.ElementsMatch(t, []string{"regular1", "regular2"}, slackTransformer.Intermediate.GroupChannels[0].MembersUsernames)

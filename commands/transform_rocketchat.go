@@ -9,7 +9,17 @@ import (
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 
+	"github.com/mattermost/mmetl/services/intermediate"
 	"github.com/mattermost/mmetl/services/rocketchat"
+)
+
+// transformRocketChatLogFile and transformRocketChatSummaryFile are both
+// always written to the working directory, unaffected by --output —
+// matching the existing log file's behavior rather than adding a separate
+// configurable path.
+const (
+	transformRocketChatLogFile     = "transform-rocketchat.log"
+	transformRocketChatSummaryFile = "transform-rocketchat-summary.md"
 )
 
 var TransformRocketChatCmd = &cobra.Command{
@@ -81,7 +91,7 @@ func transformRocketChatCmdF(cmd *cobra.Command, args []string) error {
 	}
 
 	logger := log.New()
-	logFile, err := os.OpenFile("transform-rocketchat.log", os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	logFile, err := os.OpenFile(transformRocketChatLogFile, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
 		return err
 	}
@@ -89,6 +99,12 @@ func transformRocketChatCmdF(cmd *cobra.Command, args []string) error {
 	logger.SetOutput(logFile)
 	logger.SetFormatter(customLogFormatter)
 	logger.SetReportCaller(true)
+
+	// Attach the collector to the concrete *logrus.Logger before it's handed to
+	// the transformer as the log.FieldLogger interface (AddHook isn't part of
+	// that interface) — see services/intermediate/warning_collector.go.
+	summaryCollector := intermediate.NewWarningCollector()
+	logger.AddHook(summaryCollector)
 
 	if debug {
 		logger.Level = log.DebugLevel
@@ -131,14 +147,30 @@ func transformRocketChatCmdF(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("stat GridFS chunks file %s: %w", chunksFilePath, err)
 		}
 
-		attachmentsOutput := path.Join(attachmentsDir, "bulk-export-attachments")
-		if err := rocketchat.ExtractAttachments(parsed.UploadsByID, gridfsIndex, attachmentsOutput, uploadsDir, logger); err != nil {
+		attachmentsOutput := path.Join(attachmentsDir, intermediate.AttachmentsDirName)
+		failedAttachments, err := rocketchat.ExtractAttachments(parsed.UploadsByID, gridfsIndex, attachmentsOutput, uploadsDir, logger)
+		if err != nil {
 			return err
 		}
+		// Attachments that failed extraction were already provisionally added
+		// to their posts by Transform(); drop them now so the exported JSONL
+		// never references a file that wasn't actually written, and so the
+		// summary doesn't double-count them as both Transformed and Skipped.
+		intermediate.PruneAttachments(transformer.Intermediate, failedAttachments)
 	}
 
 	if err := transformer.Export(outputFilePath, botOwner); err != nil {
 		return err
+	}
+
+	// The summary is purely informational — the real artifact (outputFilePath)
+	// has already been written successfully above, so a failure here (e.g. a
+	// full disk) must not be reported as a failed transform.
+	if err := writeTransformSummary("RocketChat Transform Summary", transformRocketChatSummaryFile, transformer.Intermediate, summaryCollector); err != nil {
+		logger.WithError(err).Warn("Failed to write transform summary")
+		fmt.Printf("Transformation succeeded, but failed to write summary to %s: %v\n", transformRocketChatSummaryFile, err)
+	} else {
+		fmt.Printf("Transformation succeeded! Summary written to %s\n", transformRocketChatSummaryFile)
 	}
 
 	logger.Infof("Transformation succeeded! Users: %d, Public channels: %d, Private channels: %d, Posts: %d",

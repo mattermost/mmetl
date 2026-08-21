@@ -12,10 +12,18 @@ import (
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 
+	"github.com/mattermost/mmetl/services/intermediate"
 	"github.com/mattermost/mmetl/services/slack"
 )
 
-const attachmentsInternal = "bulk-export-attachments"
+const attachmentsInternal = intermediate.AttachmentsDirName
+
+// transformSlackLogFile and transformSlackSummaryFile are both always written
+// to the working directory
+const (
+	transformSlackLogFile     = "transform-slack.log"
+	transformSlackSummaryFile = "transform-slack-summary.md"
+)
 
 var TransformCmd = &cobra.Command{
 	Use:   "transform",
@@ -126,7 +134,7 @@ func transformSlackCmdF(cmd *cobra.Command, args []string) error {
 	}
 
 	logger := log.New()
-	logFile, err := os.OpenFile("transform-slack.log", os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0666)
+	logFile, err := os.OpenFile(transformSlackLogFile, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0666)
 	if err != nil {
 		return err
 	}
@@ -134,6 +142,12 @@ func transformSlackCmdF(cmd *cobra.Command, args []string) error {
 	logger.SetOutput(logFile)
 	logger.SetFormatter(customLogFormatter)
 	logger.SetReportCaller(true)
+
+	// Attach the collector to the concrete *logrus.Logger before it's handed to
+	// the transformer as the log.FieldLogger interface (AddHook isn't part of
+	// that interface) — see services/intermediate/warning_collector.go.
+	summaryCollector := intermediate.NewWarningCollector()
+	logger.AddHook(summaryCollector)
 
 	if debug {
 		logger.Level = log.DebugLevel
@@ -166,6 +180,16 @@ func transformSlackCmdF(cmd *cobra.Command, args []string) error {
 
 	if err = slackTransformer.Export(outputFilePath, botOwner); err != nil {
 		return err
+	}
+
+	// The summary is purely informational — the real artifact (outputFilePath)
+	// has already been written successfully above, so a failure here (e.g. a
+	// full disk) must not be reported as a failed transform.
+	if err := writeTransformSummary("Slack Transform Summary", transformSlackSummaryFile, slackTransformer.Intermediate, summaryCollector); err != nil {
+		slackTransformer.Logger.WithError(err).Warn("Failed to write transform summary")
+		fmt.Printf("Transformation succeeded, but failed to write summary to %s: %v\n", transformSlackSummaryFile, err)
+	} else {
+		fmt.Printf("Transformation succeeded! Summary written to %s\n", transformSlackSummaryFile)
 	}
 
 	slackTransformer.Logger.Info("Transformation succeeded!")

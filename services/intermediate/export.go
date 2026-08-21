@@ -14,6 +14,16 @@ import (
 
 const POST_MAX_ATTACHMENTS = 5
 
+// AttachmentsDirName is the directory name embedded in every attachment path
+// a source Transformer writes into IntermediatePost.Attachments (e.g.
+// "bulk-export-attachments/<id>_<name>"). It must match, byte for byte,
+// wherever a source's attachment-extraction pass builds its own copy of the
+// same path to look up or prune an attachment (see ExtractAttachments in
+// services/rocketchat/attachments.go and PruneAttachments in
+// services/intermediate/attachments.go) — otherwise that matching silently
+// breaks.
+const AttachmentsDirName = "bulk-export-attachments"
+
 // Exporter writes an Intermediate representation to the Mattermost bulk-import
 // JSONL format. Source-specific transformers embed it to gain the Export* methods.
 type Exporter struct {
@@ -33,8 +43,54 @@ type Exporter struct {
 	// direct-channel export passes rather than rebuilt on each call.
 	guestUsernames map[string]bool
 
+	// skippedUserIDs / skippedUserNames back MarkUserSkipped/IsSkippedUser/
+	// SkippedUserRef below — shared by every source Transformer (Slack,
+	// RocketChat, ...) so a user dropped mid-transform (e.g. a guest under
+	// --guest-handling=skip) can still be referenced by name in later log
+	// lines that only carry the raw source ID, even after being removed from
+	// Intermediate.UsersById.
+	skippedUserIDs   map[string]bool
+	skippedUserNames map[string]string
+
 	// emojiNames is lazy-initialized on first SanitizeEmojiName call.
 	emojiNames *EmojiNameSanitizer
+}
+
+// MarkUserSkipped records a user ID (and username, if known at the call site)
+// as skipped so downstream stages can drop memberships, posts, and reactions
+// that reference it, and so SkippedUserRef can still name them later.
+func (e *Exporter) MarkUserSkipped(id, username string) {
+	if id == "" {
+		return
+	}
+	if e.skippedUserIDs == nil {
+		e.skippedUserIDs = make(map[string]bool)
+	}
+	e.skippedUserIDs[id] = true
+	if username != "" {
+		if e.skippedUserNames == nil {
+			e.skippedUserNames = make(map[string]string)
+		}
+		e.skippedUserNames[id] = username
+	}
+}
+
+// IsSkippedUser reports whether the given source user ID was dropped via
+// MarkUserSkipped.
+func (e *Exporter) IsSkippedUser(id string) bool {
+	return id != "" && e.skippedUserIDs[id]
+}
+
+// SkippedUserRef formats a skipped user's ID for a log message, including
+// their username when it was captured at skip time — see MarkUserSkipped.
+func (e *Exporter) SkippedUserRef(id string) string {
+	return FormatEntityRef(e.skippedUserNames[id], id)
+}
+
+// SkippedUsername returns the username captured for a skipped user ID via
+// MarkUserSkipped, or "" if none was recorded.
+func (e *Exporter) SkippedUsername(id string) string {
+	return e.skippedUserNames[id]
 }
 
 // isEffectiveGuest reports whether user should be exported with Mattermost
