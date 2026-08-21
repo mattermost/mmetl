@@ -154,7 +154,7 @@ func TestTransformUsers(t *testing.T) {
 		require.Len(t, tr.Intermediate.UsersById, 1)
 		assert.Nil(t, tr.Intermediate.UsersById["app1"])
 		assert.NotNil(t, tr.Intermediate.UsersById["u1"])
-		assert.True(t, tr.skippedUserIDs["app1"])
+		assert.True(t, tr.IsSkippedUser("app1"))
 		assert.True(t, tr.skippedUsernames["rocket.cat"])
 	})
 
@@ -168,8 +168,8 @@ func TestTransformUsers(t *testing.T) {
 		tr.transformUsers(users, false, "", GuestHandlingUser)
 		require.Len(t, tr.Intermediate.UsersById, 1)
 		assert.NotNil(t, tr.Intermediate.UsersById["u1"])
-		assert.True(t, tr.skippedUserIDs["x1"])
-		assert.True(t, tr.skippedUserIDs["x2"])
+		assert.True(t, tr.IsSkippedUser("x1"))
+		assert.True(t, tr.IsSkippedUser("x2"))
 	})
 
 	t.Run("guest role sets IsGuest", func(t *testing.T) {
@@ -228,7 +228,7 @@ func TestTransformUsers(t *testing.T) {
 		require.Len(t, tr.Intermediate.UsersById, 1)
 		assert.Nil(t, tr.Intermediate.UsersById["g1"])
 		assert.NotNil(t, tr.Intermediate.UsersById["u1"])
-		assert.True(t, tr.skippedUserIDs["g1"])
+		assert.True(t, tr.IsSkippedUser("g1"))
 		assert.True(t, tr.skippedUsernames["guesty"])
 	})
 
@@ -978,7 +978,7 @@ func TestSkipChannellessGuests(t *testing.T) {
 		tr.skipChannellessGuests()
 
 		assert.Nil(t, tr.Intermediate.UsersById["g1"], "channel-less guest should be dropped")
-		assert.True(t, tr.skippedUserIDs["g1"])
+		assert.True(t, tr.IsSkippedUser("g1"))
 		assert.True(t, tr.skippedUsernames["guesty"])
 		assert.NotNil(t, tr.Intermediate.UsersById["g2"], "guest with a membership stays a guest")
 		assert.NotNil(t, tr.Intermediate.UsersById["u1"])
@@ -994,7 +994,7 @@ func TestSkipChannellessGuests(t *testing.T) {
 		tr.skipChannellessGuests()
 
 		assert.NotNil(t, tr.Intermediate.UsersById["g1"], "channel-less guests are only dropped in guest mode")
-		assert.False(t, tr.skippedUserIDs["g1"])
+		assert.False(t, tr.IsSkippedUser("g1"))
 	})
 
 	t.Run("channel-less guest in a DM collapses it to a self-DM", func(t *testing.T) {

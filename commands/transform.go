@@ -182,12 +182,17 @@ func transformSlackCmdF(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// The summary is purely informational — the real artifact (outputFilePath)
+	// has already been written successfully above, so a failure here (e.g. a
+	// full disk) must not be reported as a failed transform.
 	if err := writeTransformSummary("Slack Transform Summary", transformSlackSummaryFile, slackTransformer.Intermediate, summaryCollector); err != nil {
-		return err
+		slackTransformer.Logger.WithError(err).Warn("Failed to write transform summary")
+		fmt.Printf("Transformation succeeded, but failed to write summary to %s: %v\n", transformSlackSummaryFile, err)
+	} else {
+		fmt.Printf("Transformation succeeded! Summary written to %s\n", transformSlackSummaryFile)
 	}
 
 	slackTransformer.Logger.Info("Transformation succeeded!")
-	fmt.Printf("Transformation succeeded! Summary written to %s\n", transformSlackSummaryFile)
 
 	return nil
 }

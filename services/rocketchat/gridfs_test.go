@@ -224,8 +224,9 @@ func TestExtractAttachments(t *testing.T) {
 		idx, err := BuildGridFSIndex(chunksPath)
 		require.NoError(t, err)
 
-		err = ExtractAttachments(uploads, idx, outDir, "", logger)
+		failed, err := ExtractAttachments(uploads, idx, outDir, "", logger)
 		require.NoError(t, err)
+		assert.Empty(t, failed, "a successfully extracted attachment must not be reported as failed")
 
 		expectedPath := filepath.Join(outDir, "up1_photo.jpg")
 		data, err := os.ReadFile(expectedPath)
@@ -247,7 +248,7 @@ func TestExtractAttachments(t *testing.T) {
 			"up1": {ID: "up1", Name: "photo.png", Store: "FileSystem", Path: "/file-upload/up1/photo.png", Complete: true},
 		}
 
-		err := ExtractAttachments(uploads, nil, outDir, uploadsDir, logger)
+		_, err := ExtractAttachments(uploads, nil, outDir, uploadsDir, logger)
 		require.NoError(t, err)
 
 		expectedPath := filepath.Join(outDir, "up1_photo.png")
@@ -264,7 +265,7 @@ func TestExtractAttachments(t *testing.T) {
 			"up1": {ID: "up1", Name: "incomplete.jpg", Store: "GridFS:Uploads", Complete: false},
 		}
 
-		err := ExtractAttachments(uploads, nil, outDir, "", logger)
+		_, err := ExtractAttachments(uploads, nil, outDir, "", logger)
 		require.NoError(t, err)
 		// output dir might not exist since nothing was written
 		_, statErr := os.Stat(filepath.Join(outDir, "up1_incomplete.jpg"))
@@ -285,8 +286,15 @@ func TestExtractAttachments(t *testing.T) {
 		idx, err := BuildGridFSIndex(emptyChunks)
 		require.NoError(t, err)
 
-		err = ExtractAttachments(uploads, idx, outDir, "", logger)
+		failed, err := ExtractAttachments(uploads, idx, outDir, "", logger)
 		require.NoError(t, err) // should not error, just warn
+		// The failed path must match the exact form convertMessage embeds in
+		// IntermediatePost.Attachments (see intermediate.PruneAttachments),
+		// otherwise a caller can't remove the reference to a file that was
+		// never written — leaving the summary to double-count it as both
+		// Transformed and Skipped, and the exported JSONL to reference a
+		// nonexistent file.
+		assert.Equal(t, map[string]bool{"bulk-export-attachments/up1_missing.jpg": true}, failed)
 	})
 
 	t.Run("extract zero-byte GridFS upload without chunks file", func(t *testing.T) {
@@ -297,7 +305,7 @@ func TestExtractAttachments(t *testing.T) {
 			"up1": {ID: "up1", Name: "empty.txt", Size: 0, Store: "GridFS:Uploads", Complete: true},
 		}
 
-		err := ExtractAttachments(uploads, nil, outDir, "", logger)
+		_, err := ExtractAttachments(uploads, nil, outDir, "", logger)
 		require.NoError(t, err)
 
 		extractedPath := filepath.Join(outDir, "up1_empty.txt")
@@ -320,7 +328,7 @@ func TestExtractAttachments(t *testing.T) {
 		idx, err := BuildGridFSIndex(chunksPath)
 		require.NoError(t, err)
 
-		err = ExtractAttachments(uploads, idx, outDir, "", logger)
+		_, err = ExtractAttachments(uploads, idx, outDir, "", logger)
 		require.NoError(t, err)
 
 		extracted, err := os.ReadFile(filepath.Join(outDir, "up1_preserved.txt"))
@@ -349,7 +357,7 @@ func TestExtractAttachments(t *testing.T) {
 		idx, err := BuildGridFSIndex(chunksPath)
 		require.NoError(t, err)
 
-		err = ExtractAttachments(uploads, idx, outDir, "", logger)
+		_, err = ExtractAttachments(uploads, idx, outDir, "", logger)
 		require.NoError(t, err)
 
 		// NFC normalization composes "e" + combining accent → "é", then

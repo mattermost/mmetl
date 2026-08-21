@@ -102,7 +102,17 @@ func BuildCounts(inter *Intermediate) []EntityCount {
 		} else {
 			users++
 		}
+		// Only public/private channel membership is tracked on the user side
+		// (IntermediateUser.Memberships) — see PopulateUserMemberships. Group
+		// and direct channel membership lives on the channel side instead
+		// (IntermediateChannel.Members), summed below, so both are counted.
 		memberships += len(user.Memberships)
+	}
+	for _, ch := range inter.GroupChannels {
+		memberships += len(ch.Members)
+	}
+	for _, ch := range inter.DirectChannels {
+		memberships += len(ch.Members)
 	}
 	counts[EntityUser] = users
 	counts[EntityBot] = bots

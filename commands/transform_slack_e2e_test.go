@@ -63,6 +63,7 @@ func TestTransformSlackE2E(t *testing.T) {
 	th := testhelper.SetupHelper(t)
 	defer th.TearDown()
 	t.Cleanup(func() { os.Remove(transformLogFile) })
+	t.Cleanup(func() { os.Remove(transformSlackSummaryFile) })
 
 	t.Run("basic import creates users and channels in Mattermost", func(t *testing.T) {
 		ctx := context.Background()
@@ -445,6 +446,7 @@ func TestTransformSlackE2ETeamConsistency(t *testing.T) {
 	th := testhelper.SetupHelper(t)
 	defer th.TearDown()
 	t.Cleanup(func() { os.Remove(transformLogFile) })
+	t.Cleanup(func() { os.Remove(transformSlackSummaryFile) })
 
 	teamName := uniqueTeamName("consist")
 	tempDir := t.TempDir()
@@ -533,6 +535,7 @@ func TestTransformSlackE2EBotImport(t *testing.T) {
 		err = c.Execute()
 		require.NoError(t, err, "transform command should succeed")
 		defer os.Remove(transformLogFile)
+		defer os.Remove(transformSlackSummaryFile)
 
 		// 4. Import into Mattermost
 		t.Log("Importing data with bots into Mattermost...")
@@ -605,6 +608,7 @@ func TestTransformSlackE2EBotImport(t *testing.T) {
 		err = c.Execute()
 		require.NoError(t, err)
 		defer os.Remove(transformLogFile)
+		defer os.Remove(transformSlackSummaryFile)
 
 		// 4. Import into Mattermost
 		err = th.ImportBulkData(ctx, mmExportPath)
@@ -667,6 +671,7 @@ func TestTransformSlackE2EBotImport(t *testing.T) {
 		c.SetArgs(args)
 		err = c.Execute()
 		defer os.Remove(transformLogFile)
+		defer os.Remove(transformSlackSummaryFile)
 
 		// Should fail with a clear error about --bot-owner
 		require.Error(t, err, "transform should fail without --bot-owner when bots exist")
@@ -697,6 +702,7 @@ func TestTransformSlackE2EBotImport(t *testing.T) {
 		c.SetArgs(args)
 		err = c.Execute()
 		defer os.Remove(transformLogFile)
+		defer os.Remove(transformSlackSummaryFile)
 
 		require.NoError(t, err, "transform should succeed without --bot-owner when no bots exist")
 	})
@@ -732,6 +738,7 @@ func TestTransformSlackE2EBotImport(t *testing.T) {
 		err = c.Execute()
 		require.NoError(t, err)
 		defer os.Remove(transformLogFile)
+		defer os.Remove(transformSlackSummaryFile)
 
 		// Verify the generated JSONL contains a bot line with delete_at set.
 		// Note: Mattermost's importBot server function does not currently honor
@@ -820,6 +827,7 @@ func TestTransformSlackE2EBotImport(t *testing.T) {
 		err = c.Execute()
 		require.NoError(t, err, "transform should succeed regardless of owner existence")
 		defer os.Remove(transformLogFile)
+		defer os.Remove(transformSlackSummaryFile)
 
 		// Import succeeds even though the owner username doesn't exist
 		err = subTH.ImportBulkData(ctx, mmExportPath)
@@ -871,6 +879,7 @@ func TestTransformSlackE2EBotImport(t *testing.T) {
 		err = c.Execute()
 		require.NoError(t, err, "transform command should succeed")
 		defer os.Remove(transformLogFile)
+		defer os.Remove(transformSlackSummaryFile)
 
 		// 4. Verify the JSONL contains deleted_at for the archived channel
 		t.Log("Checking JSONL output for archived channel...")
@@ -931,6 +940,7 @@ func TestTransformSlackE2ELastViewedAt(t *testing.T) {
 	th := testhelper.SetupHelper(t)
 	defer th.TearDown()
 	t.Cleanup(func() { os.Remove(transformLogFile) })
+	t.Cleanup(func() { os.Remove(transformSlackSummaryFile) })
 
 	t.Run("channels and DMs are not marked as unread after import", func(t *testing.T) {
 		ctx := context.Background()
@@ -1073,6 +1083,7 @@ func TestTransformSlackE2EMpimDedup(t *testing.T) {
 	th := testhelper.SetupHelper(t)
 	defer th.TearDown()
 	t.Cleanup(func() { os.Remove(transformLogFile) })
+	t.Cleanup(func() { os.Remove(transformSlackSummaryFile) })
 
 	ctx := context.Background()
 	tempDir := t.TempDir()
@@ -1223,6 +1234,7 @@ func TestTransformSlackE2EMpimsNotMergedWhenMembersDiffer(t *testing.T) {
 	th := testhelper.SetupHelper(t)
 	defer th.TearDown()
 	t.Cleanup(func() { os.Remove(transformLogFile) })
+	t.Cleanup(func() { os.Remove(transformSlackSummaryFile) })
 
 	ctx := context.Background()
 	tempDir := t.TempDir()
@@ -1346,6 +1358,7 @@ func TestTransformSlackE2EGuestImport(t *testing.T) {
 	th := testhelper.SetupHelper(t)
 	defer th.TearDown()
 	t.Cleanup(func() { os.Remove(transformLogFile) })
+	t.Cleanup(func() { os.Remove(transformSlackSummaryFile) })
 
 	ctx := context.Background()
 	tempDir := t.TempDir()
@@ -1490,6 +1503,7 @@ func TestTransformSlackE2EGuestSkip(t *testing.T) {
 	th := testhelper.SetupHelper(t)
 	defer th.TearDown()
 	t.Cleanup(func() { os.Remove(transformLogFile) })
+	t.Cleanup(func() { os.Remove(transformSlackSummaryFile) })
 
 	ctx := context.Background()
 	tempDir := t.TempDir()
@@ -1562,6 +1576,7 @@ func TestTransformSlackE2EGuestUserMode(t *testing.T) {
 	th := testhelper.SetupHelper(t)
 	defer th.TearDown()
 	t.Cleanup(func() { os.Remove(transformLogFile) })
+	t.Cleanup(func() { os.Remove(transformSlackSummaryFile) })
 
 	ctx := context.Background()
 	tempDir := t.TempDir()
@@ -1641,6 +1656,7 @@ func TestTransformSlackE2EChannellessGuestMpimThread(t *testing.T) {
 	th := testhelper.SetupHelper(t)
 	defer th.TearDown()
 	t.Cleanup(func() { os.Remove(transformLogFile) })
+	t.Cleanup(func() { os.Remove(transformSlackSummaryFile) })
 
 	ctx := context.Background()
 	tempDir := t.TempDir()

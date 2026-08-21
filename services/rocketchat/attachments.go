@@ -19,16 +19,24 @@ import (
 // chunks file). For FileSystem uploads, files are copied from uploadsDir (the
 // path provided by the user via --uploads-dir).
 //
-// Skips uploads that are incomplete or whose source cannot be found.
+// Skips uploads that are incomplete or whose source cannot be found. Returns
+// the set of attachment paths (in the same "bulk-export-attachments/<id>_<name>"
+// form embedded in IntermediatePost.Attachments by convertMessage) that failed
+// to extract, so the caller can prune them from the already-built Intermediate
+// before exporting — otherwise the JSONL would reference a file that doesn't
+// exist on disk, and the summary would double-count the attachment as both
+// Transformed (still present in post.Attachments) and Skipped (this Warn).
 func ExtractAttachments(
 	uploads map[string]*RocketChatUpload,
 	gridfsIndex *GridFSIndex,
 	outputDir string,
 	uploadsDir string,
 	logger log.FieldLogger,
-) error {
+) (map[string]bool, error) {
+	failedPaths := map[string]bool{}
+
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
-		return fmt.Errorf("creating attachments directory %s: %w", outputDir, err)
+		return nil, fmt.Errorf("creating attachments directory %s: %w", outputDir, err)
 	}
 
 	// Open the GridFS chunks file once and share it across all GridFS uploads for
@@ -38,7 +46,7 @@ func ExtractAttachments(
 		var err error
 		chunksFile, err = os.Open(gridfsIndex.path)
 		if err != nil {
-			return fmt.Errorf("opening GridFS chunks file %s: %w", gridfsIndex.path, err)
+			return nil, fmt.Errorf("opening GridFS chunks file %s: %w", gridfsIndex.path, err)
 		}
 		defer chunksFile.Close()
 	}
@@ -77,6 +85,8 @@ func ExtractAttachments(
 		sanitizedID := sanitizeFilename(upload.ID)
 		destFilename := fmt.Sprintf("%s_%s", sanitizedID, sanitizedName)
 		destPath := filepath.Join(outputDir, destFilename)
+		// Matches the path convertMessage embeds in IntermediatePost.Attachments.
+		relPath := "bulk-export-attachments/" + destFilename
 
 		var extractErr error
 		switch {
@@ -91,6 +101,7 @@ func ExtractAttachments(
 				extractErr = createEmptyFile(destPath)
 			default:
 				entityLogger.Warnf("GridFS chunks not found for upload %s (%s), skipping", upload.ID, upload.Name)
+				failedPaths[relPath] = true
 				skipped++
 				continue
 			}
@@ -98,6 +109,7 @@ func ExtractAttachments(
 		case upload.Store == "FileSystem":
 			if uploadsDir == "" {
 				entityLogger.Warnf("FileSystem upload %s (%s) skipped: --uploads-dir not provided", upload.ID, upload.Name)
+				failedPaths[relPath] = true
 				skipped++
 				continue
 			}
@@ -109,6 +121,7 @@ func ExtractAttachments(
 			srcFilename := sanitizeFilename(filepath.Base(upload.Path))
 			if srcFilename == "" || srcFilename == "." || srcFilename == ".." {
 				entityLogger.Warnf("FileSystem upload %s (%s) skipped: unsafe source path %q", upload.ID, upload.Name, upload.Path)
+				failedPaths[relPath] = true
 				skipped++
 				continue
 			}
@@ -117,6 +130,7 @@ func ExtractAttachments(
 
 		default:
 			entityLogger.Warnf("Unknown upload store %q for %s (%s), skipping", upload.Store, upload.ID, upload.Name)
+			failedPaths[relPath] = true
 			skipped++
 			continue
 		}
@@ -128,6 +142,7 @@ func ExtractAttachments(
 				logger.Warnf("Failed to clean up partial attachment %s: %v", destPath, removeErr)
 			}
 			entityLogger.Warnf("Failed to extract upload %s (%s): %v", upload.ID, upload.Name, extractErr)
+			failedPaths[relPath] = true
 			skipped++
 			continue
 		}
@@ -139,7 +154,7 @@ func ExtractAttachments(
 	}
 
 	logger.Infof("Extracted %d attachments, skipped %d", done, skipped)
-	return nil
+	return failedPaths, nil
 }
 
 func createEmptyFile(path string) error {

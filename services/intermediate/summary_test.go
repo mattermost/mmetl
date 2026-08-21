@@ -63,6 +63,28 @@ func TestBuildCounts(t *testing.T) {
 	}
 }
 
+func TestBuildCounts_GroupAndDirectChannelMemberships(t *testing.T) {
+	// Group/direct channel membership lives on IntermediateChannel.Members, not
+	// IntermediateUser.Memberships (that's public/private-only, populated by
+	// PopulateUserMemberships) — both must be summed into the same row.
+	inter := &Intermediate{
+		GroupChannels:  []*IntermediateChannel{{Name: "mpim1", Members: []string{"u1", "u2", "u3"}}},
+		DirectChannels: []*IntermediateChannel{{Name: "dm1", Members: []string{"u1", "u2"}}},
+		UsersById: map[string]*IntermediateUser{
+			"u1": {Username: "alice", Memberships: []IntermediateMembership{{Name: "town-square"}}},
+		},
+	}
+
+	counts := BuildCounts(inter)
+
+	byKey := make(map[string]EntityCount, len(counts))
+	for _, c := range counts {
+		byKey[c.Key] = c
+	}
+	// 1 public-channel membership (alice) + 3 (mpim1) + 2 (dm1).
+	assert.Equal(t, 6, byKey[EntityChannelMembership].Transformed)
+}
+
 func TestBuildCountsEmpty(t *testing.T) {
 	counts := BuildCounts(&Intermediate{})
 	assert.Len(t, counts, 12)

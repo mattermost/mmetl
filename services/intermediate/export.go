@@ -32,6 +32,52 @@ type Exporter struct {
 	// isEffectiveGuest) so it is computed once and reused across the group- and
 	// direct-channel export passes rather than rebuilt on each call.
 	guestUsernames map[string]bool
+
+	// skippedUserIDs / skippedUserNames back MarkUserSkipped/IsSkippedUser/
+	// SkippedUserRef below — shared by every source Transformer (Slack,
+	// RocketChat, ...) so a user dropped mid-transform (e.g. a guest under
+	// --guest-handling=skip) can still be referenced by name in later log
+	// lines that only carry the raw source ID, even after being removed from
+	// Intermediate.UsersById.
+	skippedUserIDs   map[string]bool
+	skippedUserNames map[string]string
+}
+
+// MarkUserSkipped records a user ID (and username, if known at the call site)
+// as skipped so downstream stages can drop memberships, posts, and reactions
+// that reference it, and so SkippedUserRef can still name them later.
+func (e *Exporter) MarkUserSkipped(id, username string) {
+	if id == "" {
+		return
+	}
+	if e.skippedUserIDs == nil {
+		e.skippedUserIDs = make(map[string]bool)
+	}
+	e.skippedUserIDs[id] = true
+	if username != "" {
+		if e.skippedUserNames == nil {
+			e.skippedUserNames = make(map[string]string)
+		}
+		e.skippedUserNames[id] = username
+	}
+}
+
+// IsSkippedUser reports whether the given source user ID was dropped via
+// MarkUserSkipped.
+func (e *Exporter) IsSkippedUser(id string) bool {
+	return id != "" && e.skippedUserIDs[id]
+}
+
+// SkippedUserRef formats a skipped user's ID for a log message, including
+// their username when it was captured at skip time — see MarkUserSkipped.
+func (e *Exporter) SkippedUserRef(id string) string {
+	return FormatEntityRef(e.skippedUserNames[id], id)
+}
+
+// SkippedUsername returns the username captured for a skipped user ID via
+// MarkUserSkipped, or "" if none was recorded.
+func (e *Exporter) SkippedUsername(id string) string {
+	return e.skippedUserNames[id]
 }
 
 // isEffectiveGuest reports whether user should be exported with Mattermost

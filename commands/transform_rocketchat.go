@@ -148,17 +148,29 @@ func transformRocketChatCmdF(cmd *cobra.Command, args []string) error {
 		}
 
 		attachmentsOutput := path.Join(attachmentsDir, "bulk-export-attachments")
-		if err := rocketchat.ExtractAttachments(parsed.UploadsByID, gridfsIndex, attachmentsOutput, uploadsDir, logger); err != nil {
+		failedAttachments, err := rocketchat.ExtractAttachments(parsed.UploadsByID, gridfsIndex, attachmentsOutput, uploadsDir, logger)
+		if err != nil {
 			return err
 		}
+		// Attachments that failed extraction were already provisionally added
+		// to their posts by Transform(); drop them now so the exported JSONL
+		// never references a file that wasn't actually written, and so the
+		// summary doesn't double-count them as both Transformed and Skipped.
+		intermediate.PruneAttachments(transformer.Intermediate, failedAttachments)
 	}
 
 	if err := transformer.Export(outputFilePath, botOwner); err != nil {
 		return err
 	}
 
+	// The summary is purely informational — the real artifact (outputFilePath)
+	// has already been written successfully above, so a failure here (e.g. a
+	// full disk) must not be reported as a failed transform.
 	if err := writeTransformSummary("RocketChat Transform Summary", transformRocketChatSummaryFile, transformer.Intermediate, summaryCollector); err != nil {
-		return err
+		logger.WithError(err).Warn("Failed to write transform summary")
+		fmt.Printf("Transformation succeeded, but failed to write summary to %s: %v\n", transformRocketChatSummaryFile, err)
+	} else {
+		fmt.Printf("Transformation succeeded! Summary written to %s\n", transformRocketChatSummaryFile)
 	}
 
 	logger.Infof("Transformation succeeded! Users: %d, Public channels: %d, Private channels: %d, Posts: %d",
@@ -167,7 +179,6 @@ func transformRocketChatCmdF(cmd *cobra.Command, args []string) error {
 		len(transformer.Intermediate.PrivateChannels),
 		len(transformer.Intermediate.Posts),
 	)
-	fmt.Printf("Transformation succeeded! Summary written to %s\n", transformRocketChatSummaryFile)
 
 	return nil
 }

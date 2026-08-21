@@ -131,7 +131,9 @@ func (t *Transformer) TransformUsers(users []SlackUser, skipEmptyEmails bool, de
 			guestCount++
 			if guestHandling == GuestHandlingSkip {
 				guestsSkipped++
-				t.markUserSkipped(user.Id, user.Username)
+				t.Logger.WithField(intermediate.EntityKeyField, intermediate.EntityUser).
+					Warnf("Dropping guest user %s: --guest-handling=skip", intermediate.FormatEntityRef(user.Username, user.Id))
+				t.MarkUserSkipped(user.Id, user.Username)
 				continue
 			}
 		}
@@ -198,10 +200,10 @@ func (t *Transformer) TransformUsers(users []SlackUser, skipEmptyEmails bool, de
 func (t *Transformer) filterValidMembers(members []string, users map[string]*IntermediateUser) []string {
 	validMembers := []string{}
 	for _, member := range members {
-		if t.skippedUserIDs[member] {
+		if t.IsSkippedUser(member) {
 			t.droppedMembershipRefs++
 			t.Logger.WithField(intermediate.EntityKeyField, intermediate.EntityChannelMembership).
-				Warnf("Dropping channel membership for %s: user was skipped (e.g. a skipped guest)", t.skippedUserRef(member))
+				Warnf("Dropping channel membership for %s: user was skipped (e.g. a skipped guest)", t.SkippedUserRef(member))
 			continue
 		}
 		if _, ok := users[member]; ok {
@@ -226,8 +228,12 @@ func channelEntity(t model.ChannelType) string {
 		return intermediate.EntityGroupChannel
 	case model.ChannelTypePrivate:
 		return intermediate.EntityPrivateChannel
-	default:
+	case model.ChannelTypeOpen:
 		return intermediate.EntityPublicChannel
+	default:
+		// Genuinely unexpected type — leave untagged (Notes-only) rather than
+		// misattributing it to Public, matching RocketChat's channelEntity.
+		return ""
 	}
 }
 
@@ -557,7 +563,7 @@ func (t *Transformer) dropChannellessGuests(guestHandling string) {
 		}
 		t.Logger.WithField(intermediate.EntityKeyField, intermediate.EntityUser).
 			Warnf("Guest user %s has no public or private channel membership in the Slack export; Mattermost cannot scope a guest's access without one, so this user (and their memberships/posts) is being skipped. Use --guest-handling=user to import them as a regular member instead.", intermediate.FormatEntityRef(user.Username, id))
-		t.markUserSkipped(id, user.Username)
+		t.MarkUserSkipped(id, user.Username)
 		delete(t.Intermediate.UsersById, id)
 		skipped++
 	}
@@ -579,10 +585,10 @@ func (t *Transformer) dropSkippedFromDirectOrGroupChannels(channels []*Intermedi
 	for _, channel := range channels {
 		remaining := []string{}
 		for _, memberId := range channel.Members {
-			if t.skippedUserIDs[memberId] {
+			if t.IsSkippedUser(memberId) {
 				t.droppedMembershipRefs++
 				t.Logger.WithField(intermediate.EntityKeyField, intermediate.EntityChannelMembership).
-					Warnf("Dropping channel membership for %s: user was skipped (e.g. a skipped guest)", t.skippedUserRef(memberId))
+					Warnf("Dropping channel membership for %s: user was skipped (e.g. a skipped guest)", t.SkippedUserRef(memberId))
 				continue
 			}
 			remaining = append(remaining, memberId)
@@ -658,23 +664,19 @@ func AddPostToThreads(original SlackPost, post *IntermediatePost, threads map[st
 // addPostToThreads wraps AddPostToThreads, recording and surfacing the drop when
 // a reply's thread root was never imported (e.g. the root's author was a skipped
 // guest). AddPostToThreads only returns false in that case, so a false return
-// here always means "reply dropped along with its thread". Every dropped reply
-// is counted in droppedPostRefs, but the WARN is emitted once per thread so a
-// large thread doesn't produce one log line per reply.
+// here always means "reply dropped along with its thread". Warns once per
+// dropped reply (tagged EntityReply, so Skipped is accurate) rather than once
+// per thread — every reply in the same thread logs the same message (same
+// threadTS/channel), so WarningCollector's Notes dedup already collapses a
+// large thread's worth of drops into one line with a count, same as it does
+// for every other per-item drop warning in this file.
 func (t *Transformer) addPostToThreads(original SlackPost, post *IntermediatePost, threads map[string]*IntermediatePost, channel *IntermediateChannel, timestamps map[int64]bool) {
 	if AddPostToThreads(original, post, threads, channel, timestamps) {
 		return
 	}
 	t.droppedPostRefs++
-	if t.warnedDroppedThreads == nil {
-		t.warnedDroppedThreads = map[string]bool{}
-	}
-	key := channel.Name + "\x00" + original.ThreadTS
-	if t.warnedDroppedThreads[key] {
-		return // already warned once for this thread; keep counting silently
-	}
-	t.warnedDroppedThreads[key] = true
-	t.Logger.Warnf("Dropping thread %s in channel %q: its root post was not imported (e.g. its author was a skipped guest); replies from other users are being dropped with it", original.ThreadTS, channel.Name)
+	t.Logger.WithField(intermediate.EntityKeyField, intermediate.EntityReply).
+		Warnf("Dropping thread %s in channel %q: its root post was not imported (e.g. its author was a skipped guest); replies from other users are being dropped with it", original.ThreadTS, channel.Name)
 }
 
 func buildChannelsByOriginalNameMap(intermediate *Intermediate) map[string]*IntermediateChannel {
@@ -808,10 +810,10 @@ func (t *Transformer) CreateIntermediateBotUser(userID string) {
 }
 
 func (t *Transformer) CreateAndAddPostToThreads(post SlackPost, threads map[string]*IntermediatePost, timestamps map[int64]bool, channel *IntermediateChannel) {
-	if t.isSkippedUser(post.User) {
+	if t.IsSkippedUser(post.User) {
 		t.droppedPostRefs++
 		t.Logger.WithField(intermediate.EntityKeyField, postEntity(channel.Type)).
-			Warnf("Dropping message from %s: author was a skipped user (e.g. a skipped guest)", t.skippedUserRef(post.User))
+			Warnf("Dropping message from %s: author was a skipped user (e.g. a skipped guest)", t.SkippedUserRef(post.User))
 		return
 	}
 
@@ -903,10 +905,10 @@ func (t *Transformer) getReactionsFromPost(post SlackPost) []*IntermediateReacti
 	reactions := []*IntermediateReaction{}
 	for _, reaction := range post.Reactions {
 		for _, reactionUser := range reaction.Users {
-			if t.isSkippedUser(reactionUser) {
+			if t.IsSkippedUser(reactionUser) {
 				t.droppedReactionRefs++
 				t.Logger.WithField(intermediate.EntityKeyField, intermediate.EntityReaction).
-					Warnf("Dropping reaction from %s: user was skipped (e.g. a skipped guest)", t.skippedUserRef(reactionUser))
+					Warnf("Dropping reaction from %s: user was skipped (e.g. a skipped guest)", t.SkippedUserRef(reactionUser))
 				continue
 			}
 			reactionAuthor := t.Intermediate.UsersById[reactionUser]
@@ -1019,10 +1021,10 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 						Warn("Unable to import the message as the user field is missing.")
 					continue
 				}
-				if t.isSkippedUser(post.User) {
+				if t.IsSkippedUser(post.User) {
 					t.droppedPostRefs++
 					t.Logger.WithField(intermediate.EntityKeyField, postEntityForChannel).
-						Warnf("Dropping message from %s: author was a skipped user (e.g. a skipped guest)", t.skippedUserRef(post.User))
+						Warnf("Dropping message from %s: author was a skipped user (e.g. a skipped guest)", t.SkippedUserRef(post.User))
 					continue
 				}
 				author := t.Intermediate.UsersById[post.User]
@@ -1068,10 +1070,10 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 						Warn("Unable to import the message as the user field is missing.")
 					continue
 				}
-				if t.isSkippedUser(post.Comment.User) {
+				if t.IsSkippedUser(post.Comment.User) {
 					t.droppedPostRefs++
 					t.Logger.WithField(intermediate.EntityKeyField, postEntityForChannel).
-						Warnf("Dropping message from %s: author was a skipped user (e.g. a skipped guest)", t.skippedUserRef(post.Comment.User))
+						Warnf("Dropping message from %s: author was a skipped user (e.g. a skipped guest)", t.SkippedUserRef(post.Comment.User))
 					continue
 				}
 				author := t.Intermediate.UsersById[post.Comment.User]
@@ -1151,10 +1153,10 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 					poster = post.Room.CreatedBy
 				}
 
-				if t.isSkippedUser(poster) {
+				if t.IsSkippedUser(poster) {
 					t.droppedPostRefs++
 					t.Logger.WithField(intermediate.EntityKeyField, postEntityForChannel).
-						Warnf("Dropping message from %s: author was a skipped user (e.g. a skipped guest)", t.skippedUserRef(poster))
+						Warnf("Dropping message from %s: author was a skipped user (e.g. a skipped guest)", t.SkippedUserRef(poster))
 					continue
 				}
 

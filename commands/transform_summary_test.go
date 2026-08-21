@@ -141,3 +141,65 @@ func TestTransformRocketChatCmd_SummaryFile(t *testing.T) {
 	assert.Contains(t, summary, "| Direct posts | 0 | 1 | 0 |")
 	assert.NotContains(t, summary, "No issues encountered.")
 }
+
+// TestTransformRocketChatCmd_SummaryFile_AttachmentExtractionFailure exercises
+// the one path none of the other summary tests cover, since they all pass
+// --skip-attachments: an attachment that ExtractAttachments fails to extract
+// (here, a FileSystem-store upload with no --uploads-dir given) must be
+// pruned from the post it was provisionally added to during Transform, so it
+// counts as Skipped only — not also as Transformed. See
+// intermediate.PruneAttachments and rocketchat.ExtractAttachments.
+func TestTransformRocketChatCmd_SummaryFile_AttachmentExtractionFailure(t *testing.T) {
+	dir := t.TempDir()
+	outputPath := filepath.Join(dir, "bulk-export.jsonl")
+	teamName := uniqueTeamName("rcattachfail")
+	t.Cleanup(func() { os.Remove("transform-rocketchat.log") })
+	t.Cleanup(func() { os.Remove(transformRocketChatSummaryFile) })
+
+	users := []any{
+		rcBSONUser{ID: "alice-id", Username: "alice", Name: "Alice Anderson", Emails: []rcMail{{Address: "alice@example.com", Verified: true}}, Active: true, Roles: []string{"user"}, Type: "user"},
+	}
+	rooms := []any{
+		rcRoom{ID: "engineering-id", Type: "c", Name: "engineering", FName: "Engineering"},
+	}
+	messages := []any{
+		rcMessage{
+			ID: "eng-root", RoomID: "engineering-id", User: rcMsgUser{ID: "alice-id", Username: "alice"}, Message: "see attached",
+			Files: []rcFileRef{{ID: "up1", Name: "photo.png", Type: "image/png", Size: 100}},
+		},
+	}
+	subscriptions := []any{
+		rcSubscription{RoomID: "engineering-id", User: rcMsgUser{ID: "alice-id", Username: "alice"}},
+	}
+	writeDumpDir(t, dir, users, rooms, messages, subscriptions)
+	// FileSystem-store upload with no corresponding --uploads-dir passed below,
+	// so ExtractAttachments fails it with "skipped: --uploads-dir not provided".
+	marshalBSONFileCmds(t, filepath.Join(dir, "rocketchat_uploads.bson"), []any{
+		rcUpload{ID: "up1", Name: "photo.png", Type: "image/png", Size: 100, RoomID: "engineering-id", UserID: "alice-id", Store: "FileSystem", Path: "/file-upload/up1/photo.png", Complete: true},
+	})
+
+	resetRCFlags()
+	commands.RootCmd.SetArgs([]string{
+		"transform", "rocketchat",
+		"--team", teamName,
+		"--dump-dir", dir,
+		"--output", outputPath,
+		// Deliberately no --skip-attachments and no --uploads-dir.
+	})
+	require.NoError(t, commands.RootCmd.Execute())
+
+	content, err := os.ReadFile(transformRocketChatSummaryFile)
+	require.NoError(t, err)
+	summary := string(content)
+
+	// The failed attachment must be Skipped, and NOT also Transformed —
+	// before the fix this read "| Attachments | 1 | 1 | 0 |" (double-counted).
+	assert.Contains(t, summary, "| Attachments | 0 | 1 | 0 |")
+	assert.Contains(t, summary, "--uploads-dir not provided")
+
+	// The exported JSONL's post must not reference the file that was never
+	// written to disk.
+	jsonl, err := os.ReadFile(outputPath)
+	require.NoError(t, err)
+	assert.NotContains(t, string(jsonl), "up1_photo.png")
+}
