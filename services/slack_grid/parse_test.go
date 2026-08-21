@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/mattermost/mmetl/services/slack"
+	"github.com/mattermost/mmetl/testhelper"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
@@ -24,7 +25,7 @@ type TestStruct struct {
 
 func setupGridTransformer(t *testing.T) *GridTransformer {
 	gridTransformer := NewGridTransformer(logrus.New())
-	gridTransformer.dirPath = createTestDir(t)
+	gridTransformer.dirPath = testhelper.WorkDir(t)
 
 	return gridTransformer
 }
@@ -173,7 +174,7 @@ func TestFindTeamIdFromChannelDir(t *testing.T) {
 	})
 
 	t.Run("fails to read file in directory (os.ReadFile error)", func(t *testing.T) {
-		dir := createTestDir(t)
+		dir := testhelper.WorkDir(t)
 		bt.dirPath = dir
 
 		// Create a file and remove read permissions to provoke a read error
@@ -189,7 +190,7 @@ func TestFindTeamIdFromChannelDir(t *testing.T) {
 	})
 
 	t.Run("fails to read file in directory (json.Unmarshal error)", func(t *testing.T) {
-		dir := createTestDir(t)
+		dir := testhelper.WorkDir(t)
 		bt.dirPath = dir
 
 		// Create a file with invalid JSON contents
@@ -399,7 +400,7 @@ func readChannelsFile(path string, t *testing.T) []slack.SlackChannel {
 }
 
 func createDirAndWriteFiles(data [][]Post, t *testing.T) string {
-	dir := createTestDir(t)
+	dir := testhelper.WorkDir(t)
 
 	for i, posts := range data {
 		postArray := marshalJSON(posts, t)
@@ -431,13 +432,6 @@ func marshalJSON(data any, t *testing.T) []byte {
 		t.Fatal(errors.Wrap(err, "error marshalling json"))
 	}
 	return jsonData
-}
-
-func createTestDir(t *testing.T) string {
-	t.Helper()
-	dir := t.TempDir()
-	t.Chdir(dir)
-	return dir
 }
 
 func marshalAndWriteToZipFile(zipWriter *zip.Writer, filename string, data any, t *testing.T) {

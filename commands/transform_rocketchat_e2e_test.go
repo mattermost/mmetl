@@ -111,7 +111,7 @@ func TestTransformRocketChatImportE2E(t *testing.T) {
 
 	th := testhelper.SetupHelper(t)
 	ctx := context.Background()
-	dir := workDir(t)
+	dir := testhelper.WorkDir(t)
 	outputPath := filepath.Join(dir, "mattermost_import.jsonl")
 	teamName := uniqueTeamName("rce2e")
 
@@ -230,7 +230,7 @@ func TestTransformRocketChatE2EGuestImport(t *testing.T) {
 
 	th := testhelper.SetupHelper(t)
 	ctx := context.Background()
-	dir := workDir(t)
+	dir := testhelper.WorkDir(t)
 	outputPath := filepath.Join(dir, "mattermost_import.jsonl")
 	teamName := uniqueTeamName("rcguest")
 
@@ -346,7 +346,7 @@ func TestTransformRocketChatE2EBotImport(t *testing.T) {
 
 	t.Run("bots and deactivated users import with posts and ownership", func(t *testing.T) {
 		ctx := context.Background()
-		dir := workDir(t)
+		dir := testhelper.WorkDir(t)
 		outputPath := filepath.Join(dir, "mattermost_import.jsonl")
 		teamName := uniqueTeamName("rcbots")
 		baseTime := time.Date(2024, 2, 1, 10, 0, 0, 0, time.UTC)
@@ -420,7 +420,7 @@ func TestTransformRocketChatE2EBotImport(t *testing.T) {
 	})
 
 	t.Run("transform fails without bot owner", func(t *testing.T) {
-		dir := workDir(t)
+		dir := testhelper.WorkDir(t)
 		outputPath := filepath.Join(dir, "mattermost_import.jsonl")
 		writeDumpDir(t, dir,
 			[]any{rcBSONUser{ID: "bot-id", Username: "buildbot", Name: "Build Bot", Active: true, Roles: []string{"bot", "user"}, Type: "bot"}},
@@ -447,7 +447,7 @@ func TestTransformRocketChatE2EGroupDMs(t *testing.T) {
 
 	th := testhelper.SetupHelper(t)
 	ctx := context.Background()
-	dir := workDir(t)
+	dir := testhelper.WorkDir(t)
 	outputPath := filepath.Join(dir, "mattermost_import.jsonl")
 	teamName := uniqueTeamName("rcgdm")
 
@@ -559,7 +559,7 @@ func TestTransformRocketChatE2E(t *testing.T) {
 	}
 
 	t.Run("valid export produces correct JSONL", func(t *testing.T) {
-		dir := workDir(t)
+		dir := testhelper.WorkDir(t)
 		outputPath := filepath.Join(dir, "output.jsonl")
 
 		writeDumpDir(t, dir, defaultUsers, defaultRooms, defaultMessages, defaultSubs)
@@ -637,7 +637,7 @@ func TestTransformRocketChatE2E(t *testing.T) {
 	})
 
 	t.Run("team name uppercase is lowercased", func(t *testing.T) {
-		dir := workDir(t)
+		dir := testhelper.WorkDir(t)
 		outputPath := filepath.Join(dir, "output.jsonl")
 		writeDumpDir(t, dir, defaultUsers, defaultRooms, defaultMessages, defaultSubs)
 
@@ -663,7 +663,7 @@ func TestTransformRocketChatE2E(t *testing.T) {
 	})
 
 	t.Run("thread replies nested under parent post", func(t *testing.T) {
-		dir := workDir(t)
+		dir := testhelper.WorkDir(t)
 		outputPath := filepath.Join(dir, "output.jsonl")
 
 		// root message m1 and a reply m2 (tmid = m1)
@@ -725,7 +725,7 @@ func TestTransformRocketChatE2E(t *testing.T) {
 
 func TestTransformRocketChatEdgeCases(t *testing.T) {
 	t.Run("empty collections produce minimal JSONL", func(t *testing.T) {
-		dir := workDir(t)
+		dir := testhelper.WorkDir(t)
 		outputPath := filepath.Join(dir, "output.jsonl")
 		writeDumpDir(t, dir, []any{}, []any{}, []any{}, []any{})
 
@@ -750,7 +750,7 @@ func TestTransformRocketChatEdgeCases(t *testing.T) {
 	})
 
 	t.Run("message with username not in UsersById uses username from message", func(t *testing.T) {
-		dir := workDir(t)
+		dir := testhelper.WorkDir(t)
 		outputPath := filepath.Join(dir, "output.jsonl")
 
 		users := []any{
@@ -789,7 +789,7 @@ func TestTransformRocketChatEdgeCases(t *testing.T) {
 	})
 
 	t.Run("encrypted room is skipped", func(t *testing.T) {
-		dir := workDir(t)
+		dir := testhelper.WorkDir(t)
 		outputPath := filepath.Join(dir, "output.jsonl")
 
 		rooms := []any{
@@ -840,7 +840,7 @@ func TestTransformRocketChatEdgeCases(t *testing.T) {
 	})
 
 	t.Run("user with no email and default-email-domain generates email", func(t *testing.T) {
-		dir := workDir(t)
+		dir := testhelper.WorkDir(t)
 		outputPath := filepath.Join(dir, "output.jsonl")
 
 		users := []any{

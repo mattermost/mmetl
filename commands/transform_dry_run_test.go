@@ -8,6 +8,7 @@ import (
 
 	"github.com/mattermost/mmetl/commands"
 	"github.com/mattermost/mmetl/services/slack"
+	"github.com/mattermost/mmetl/services/slack/fixtures"
 	"github.com/mattermost/mmetl/testhelper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -62,7 +63,7 @@ func assertNoDryRunOutput(t *testing.T, output, attachmentsDir string) {
 func missingAttachmentExport(t *testing.T) string {
 	t.Helper()
 	path := filepath.Join(testhelper.WorkDir(t), "missing-file.zip")
-	require.NoError(t, testhelper.NewSlackExportBuilder().
+	require.NoError(t, fixtures.NewSlackExportBuilder().
 		AddUser(slack.SlackUser{
 			Id: "U001", Username: "jane",
 			Profile: slack.SlackProfile{Email: "jane@example.com", RealName: "Jane"},
@@ -82,7 +83,7 @@ func missingAttachmentExport(t *testing.T) string {
 func TestTransformSlackDryRun(t *testing.T) {
 	t.Run("requires --team", func(t *testing.T) {
 		path := filepath.Join(testhelper.WorkDir(t), "export.zip")
-		require.NoError(t, testhelper.SlackBasicExport().Build(path))
+		require.NoError(t, fixtures.SlackBasicExport().Build(path))
 
 		err := runTransformSlack(t, "--dry-run", "--file", path)
 		require.Error(t, err)
@@ -92,7 +93,7 @@ func TestTransformSlackDryRun(t *testing.T) {
 	t.Run("succeeds for a valid export", func(t *testing.T) {
 		path := filepath.Join(testhelper.WorkDir(t), "export.zip")
 		output, attachmentsDir := dryRunOut(t)
-		require.NoError(t, testhelper.ExportWithGuestPosts().Build(path))
+		require.NoError(t, fixtures.ExportWithGuestPosts().Build(path))
 
 		require.NoError(t, runTransformSlack(t,
 			"--dry-run",
@@ -107,7 +108,7 @@ func TestTransformSlackDryRun(t *testing.T) {
 
 	t.Run("rejects an invalid guest-handling mode", func(t *testing.T) {
 		path := filepath.Join(testhelper.WorkDir(t), "export.zip")
-		require.NoError(t, testhelper.ExportWithGuestPosts().Build(path))
+		require.NoError(t, fixtures.ExportWithGuestPosts().Build(path))
 
 		err := runTransformSlack(t,
 			"--dry-run",
@@ -129,7 +130,7 @@ func TestTransformSlackDryRun(t *testing.T) {
 
 	t.Run("fails when bots exist without --bot-owner", func(t *testing.T) {
 		path := filepath.Join(testhelper.WorkDir(t), "bots.zip")
-		require.NoError(t, testhelper.ExportWithBots().Build(path))
+		require.NoError(t, fixtures.ExportWithBots().Build(path))
 
 		err := runTransformSlack(t, "--dry-run", "--team", "testteam", "--file", path)
 		require.Error(t, err)
@@ -139,7 +140,7 @@ func TestTransformSlackDryRun(t *testing.T) {
 	t.Run("succeeds when bots exist with --bot-owner", func(t *testing.T) {
 		path := filepath.Join(testhelper.WorkDir(t), "bots.zip")
 		output, attachmentsDir := dryRunOut(t)
-		require.NoError(t, testhelper.ExportWithBots().Build(path))
+		require.NoError(t, fixtures.ExportWithBots().Build(path))
 
 		require.NoError(t, runTransformSlack(t,
 			"--dry-run",
@@ -156,7 +157,7 @@ func TestTransformSlackDryRun(t *testing.T) {
 		dir := testhelper.WorkDir(t)
 		path := filepath.Join(dir, "noemail.zip")
 		output := filepath.Join(dir, "out.jsonl")
-		require.NoError(t, testhelper.NewSlackExportBuilder().
+		require.NoError(t, fixtures.NewSlackExportBuilder().
 			AddUser(slack.SlackUser{Id: "U001", Username: "noemail", Profile: slack.SlackProfile{RealName: "No Email"}}).
 			AddChannel(slack.SlackChannel{Id: "C001", Name: "general", Creator: "U001", Members: []string{"U001"}}).
 			Build(path))
@@ -195,7 +196,7 @@ func TestTransformSlackDryRun(t *testing.T) {
 	t.Run("succeeds when CheckIntermediate only reports warnings", func(t *testing.T) {
 		path := filepath.Join(testhelper.WorkDir(t), "dup-channels.zip")
 		output, attachmentsDir := dryRunOut(t)
-		require.NoError(t, testhelper.NewSlackExportBuilder().
+		require.NoError(t, fixtures.NewSlackExportBuilder().
 			AddUser(slack.SlackUser{
 				Id: "U001", Username: "jane",
 				Profile: slack.SlackProfile{Email: "jane@example.com", RealName: "Jane"},

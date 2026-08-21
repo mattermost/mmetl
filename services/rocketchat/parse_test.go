@@ -9,6 +9,7 @@ import (
 
 	"go.mongodb.org/mongo-driver/bson"
 
+	"github.com/mattermost/mmetl/testhelper"
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -31,7 +32,7 @@ func marshalBSONFile(t *testing.T, filePath string, docs []any) {
 
 func TestReadBSONFile(t *testing.T) {
 	t.Run("deserialises single document", func(t *testing.T) {
-		dir := workDir(t)
+		dir := testhelper.WorkDir(t)
 		filePath := filepath.Join(dir, "test.bson")
 
 		expected := RocketChatUser{
@@ -55,7 +56,7 @@ func TestReadBSONFile(t *testing.T) {
 	})
 
 	t.Run("deserialises multiple documents", func(t *testing.T) {
-		dir := workDir(t)
+		dir := testhelper.WorkDir(t)
 		filePath := filepath.Join(dir, "users.bson")
 
 		docs := []any{
@@ -74,7 +75,7 @@ func TestReadBSONFile(t *testing.T) {
 	})
 
 	t.Run("returns empty slice for empty file", func(t *testing.T) {
-		dir := workDir(t)
+		dir := testhelper.WorkDir(t)
 		filePath := filepath.Join(dir, "empty.bson")
 		require.NoError(t, os.WriteFile(filePath, []byte{}, 0600))
 
@@ -91,7 +92,7 @@ func TestReadBSONFile(t *testing.T) {
 
 func TestParseDump(t *testing.T) {
 	t.Run("parses all required collections", func(t *testing.T) {
-		dir := workDir(t)
+		dir := testhelper.WorkDir(t)
 		logger := log.New()
 		logger.SetOutput(os.Stderr)
 
@@ -133,7 +134,7 @@ func TestParseDump(t *testing.T) {
 	})
 
 	t.Run("parses optional uploads collection when present", func(t *testing.T) {
-		dir := workDir(t)
+		dir := testhelper.WorkDir(t)
 		logger := log.New()
 		logger.SetOutput(os.Stderr)
 
@@ -156,7 +157,7 @@ func TestParseDump(t *testing.T) {
 	})
 
 	t.Run("returns error when required file missing", func(t *testing.T) {
-		dir := workDir(t)
+		dir := testhelper.WorkDir(t)
 		logger := log.New()
 		// Only write users.bson, omit the rest
 		marshalBSONFile(t, filepath.Join(dir, "users.bson"), []any{})

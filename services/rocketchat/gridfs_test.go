@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/mattermost/mmetl/testhelper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -36,7 +37,7 @@ func (f *fakeWriteCloser) Close() error {
 }
 
 func TestWriteChunks(t *testing.T) {
-	dir := workDir(t)
+	dir := testhelper.WorkDir(t)
 	// A single-chunk BSON file; the chunk document begins at offset 0.
 	chunksPath := buildBSONChunksFile(t, dir, []GridFSChunk{
 		{FilesID: "f1", N: 0, Data: []byte("payload")},
@@ -81,7 +82,7 @@ func buildBSONChunksFile(t *testing.T, dir string, chunks []GridFSChunk) string 
 
 func TestBuildGridFSIndex(t *testing.T) {
 	t.Run("single chunk file", func(t *testing.T) {
-		dir := workDir(t)
+		dir := testhelper.WorkDir(t)
 		chunks := []GridFSChunk{
 			{FilesID: "file1", N: 0, Data: []byte("hello world")},
 		}
@@ -94,7 +95,7 @@ func TestBuildGridFSIndex(t *testing.T) {
 	})
 
 	t.Run("multiple chunks sorted by n", func(t *testing.T) {
-		dir := workDir(t)
+		dir := testhelper.WorkDir(t)
 		// Write in reverse order — the index should sort by N.
 		chunks := []GridFSChunk{
 			{FilesID: "file1", N: 2, Data: []byte("world")},
@@ -112,7 +113,7 @@ func TestBuildGridFSIndex(t *testing.T) {
 	})
 
 	t.Run("multiple files grouped correctly", func(t *testing.T) {
-		dir := workDir(t)
+		dir := testhelper.WorkDir(t)
 		chunks := []GridFSChunk{
 			{FilesID: "file1", N: 0, Data: []byte("fileone")},
 			{FilesID: "file2", N: 0, Data: []byte("filetwo")},
@@ -126,7 +127,7 @@ func TestBuildGridFSIndex(t *testing.T) {
 	})
 
 	t.Run("empty chunks file", func(t *testing.T) {
-		dir := workDir(t)
+		dir := testhelper.WorkDir(t)
 		p := filepath.Join(dir, "chunks.bson")
 		require.NoError(t, os.WriteFile(p, []byte{}, 0600))
 
@@ -139,7 +140,7 @@ func TestBuildGridFSIndex(t *testing.T) {
 
 func TestGridFSIndexWriteFile(t *testing.T) {
 	t.Run("single chunk", func(t *testing.T) {
-		dir := workDir(t)
+		dir := testhelper.WorkDir(t)
 		outPath := filepath.Join(dir, "out.bin")
 		p := buildBSONChunksFile(t, dir, []GridFSChunk{
 			{FilesID: "file1", N: 0, Data: []byte("hello world")},
@@ -154,7 +155,7 @@ func TestGridFSIndexWriteFile(t *testing.T) {
 	})
 
 	t.Run("multiple chunks concatenated in order", func(t *testing.T) {
-		dir := workDir(t)
+		dir := testhelper.WorkDir(t)
 		outPath := filepath.Join(dir, "out.bin")
 		// Deliberately out of order on disk — reassembly must follow chunk number.
 		p := buildBSONChunksFile(t, dir, []GridFSChunk{
@@ -172,7 +173,7 @@ func TestGridFSIndexWriteFile(t *testing.T) {
 	})
 
 	t.Run("gap in sequence returns error and no output file", func(t *testing.T) {
-		dir := workDir(t)
+		dir := testhelper.WorkDir(t)
 		outPath := filepath.Join(dir, "out.bin")
 		p := buildBSONChunksFile(t, dir, []GridFSChunk{
 			{FilesID: "file1", N: 0, Data: []byte("part0")},
@@ -189,7 +190,7 @@ func TestGridFSIndexWriteFile(t *testing.T) {
 	})
 
 	t.Run("duplicate chunk N returns error and no output file", func(t *testing.T) {
-		dir := workDir(t)
+		dir := testhelper.WorkDir(t)
 		outPath := filepath.Join(dir, "out.bin")
 		p := buildBSONChunksFile(t, dir, []GridFSChunk{
 			{FilesID: "file1", N: 0, Data: []byte("part0")},
@@ -211,7 +212,7 @@ func TestExtractAttachments(t *testing.T) {
 	logger.SetOutput(os.Stderr)
 
 	t.Run("GridFS extraction end-to-end", func(t *testing.T) {
-		dir := workDir(t)
+		dir := testhelper.WorkDir(t)
 		outDir := filepath.Join(dir, "output")
 
 		content := []byte("binary file content")
@@ -234,7 +235,7 @@ func TestExtractAttachments(t *testing.T) {
 	})
 
 	t.Run("FileSystem copy", func(t *testing.T) {
-		dir := workDir(t)
+		dir := testhelper.WorkDir(t)
 		outDir := filepath.Join(dir, "output")
 		uploadsDir := filepath.Join(dir, "uploads")
 		require.NoError(t, os.MkdirAll(uploadsDir, 0755))
@@ -257,7 +258,7 @@ func TestExtractAttachments(t *testing.T) {
 	})
 
 	t.Run("skip incomplete upload", func(t *testing.T) {
-		dir := workDir(t)
+		dir := testhelper.WorkDir(t)
 		outDir := filepath.Join(dir, "output")
 
 		uploads := map[string]*RocketChatUpload{
@@ -272,7 +273,7 @@ func TestExtractAttachments(t *testing.T) {
 	})
 
 	t.Run("skip missing GridFS chunks with warning", func(t *testing.T) {
-		dir := workDir(t)
+		dir := testhelper.WorkDir(t)
 		outDir := filepath.Join(dir, "output")
 
 		uploads := map[string]*RocketChatUpload{
@@ -290,7 +291,7 @@ func TestExtractAttachments(t *testing.T) {
 	})
 
 	t.Run("extract zero-byte GridFS upload without chunks file", func(t *testing.T) {
-		dir := workDir(t)
+		dir := testhelper.WorkDir(t)
 		outDir := filepath.Join(dir, "output")
 
 		uploads := map[string]*RocketChatUpload{
@@ -307,7 +308,7 @@ func TestExtractAttachments(t *testing.T) {
 	})
 
 	t.Run("prefer GridFS chunks over inconsistent zero size metadata", func(t *testing.T) {
-		dir := workDir(t)
+		dir := testhelper.WorkDir(t)
 		outDir := filepath.Join(dir, "output")
 
 		content := []byte("content despite bogus metadata")
@@ -329,7 +330,7 @@ func TestExtractAttachments(t *testing.T) {
 	})
 
 	t.Run("NFC normalization on filename", func(t *testing.T) {
-		dir := workDir(t)
+		dir := testhelper.WorkDir(t)
 		outDir := filepath.Join(dir, "output")
 
 		// Use NFD decomposed form: 'e' + U+0301 COMBINING ACUTE ACCENT.
@@ -368,7 +369,7 @@ func TestVerifyAttachments(t *testing.T) {
 	logger.SetOutput(os.Stderr)
 
 	t.Run("GridFS present is ok", func(t *testing.T) {
-		dir := workDir(t)
+		dir := testhelper.WorkDir(t)
 		content := []byte("binary")
 		uploads := map[string]*RocketChatUpload{
 			"up1": {ID: "up1", Name: "photo.jpg", Size: int64(len(content)), Store: "GridFS:Uploads", Complete: true},
@@ -394,7 +395,7 @@ func TestVerifyAttachments(t *testing.T) {
 		uploads := map[string]*RocketChatUpload{
 			"up1": {ID: "up1", Name: "photo.png", Store: "FileSystem", Path: "/file-upload/up1/photo.png", Complete: true},
 		}
-		err := VerifyAttachments(uploads, nil, workDir(t), logger)
+		err := VerifyAttachments(uploads, nil, testhelper.WorkDir(t), logger)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "not found")
 	})
