@@ -43,6 +43,11 @@ type Transformer struct {
 	skippedUserIDs   map[string]bool
 	skippedUsernames map[string]bool
 
+	// skippedUserNames remembers the username for each skipped user ID, captured
+	// at skip time, so later log messages that only carry the raw RC ID can
+	// still reference the user by name too. See skippedUserRef.
+	skippedUserNames map[string]string
+
 	// droppedPostRefs / droppedMembershipRefs count references removed because
 	// they pointed at a skipped user, for the end-of-transform summary log.
 	droppedPostRefs       int
@@ -88,6 +93,49 @@ func (t *Transformer) isSkippedUser(id string) bool {
 	return id != "" && t.skippedUserIDs[id]
 }
 
+// channelEntity maps an RC room type ("c"/"p"/"d") to the summary's entity
+// key, for tagging Warn/Warnf calls that drop a room/channel. RC's "d" type
+// covers direct (2-member), group (3+ member), and oversized-group-converted-
+// to-private rooms; several drop sites run before that fan-out is decided, so
+// for "d" this defaults to EntityDirectChannel as a best effort — a dropped
+// room that would have become a group channel is still counted, just under
+// the wrong row. Unknown/unsupported types return "" (left untagged, shows
+// only in Notes).
+func channelEntity(roomType string) string {
+	switch roomType {
+	case "c":
+		return intermediate.EntityPublicChannel
+	case "p":
+		return intermediate.EntityPrivateChannel
+	case "d":
+		return intermediate.EntityDirectChannel
+	default:
+		return ""
+	}
+}
+
+// postEntity maps an RC room type to the entity key for a message dropped
+// before Mattermost thread placement (root vs. reply) is resolved — see the
+// equivalent helper in services/slack/intermediate.go for the same caveat
+// about reply misattribution.
+func postEntity(roomType string) string {
+	if roomType == "d" {
+		return intermediate.EntityDirectPost
+	}
+	return intermediate.EntityPost
+}
+
+// withEntity returns a WithField'd logger tagging a dropped entity, or the
+// unmodified logger (so the warning still surfaces in Notes, just without
+// affecting a Skipped count) when entity is "" — e.g. an ambiguous or
+// unrecognized room type.
+func (t *Transformer) withEntity(entity string) log.FieldLogger {
+	if entity == "" {
+		return t.Logger
+	}
+	return t.Logger.WithField(intermediate.EntityKeyField, entity)
+}
+
 // NewTransformer creates a new Transformer for the given team.
 func NewTransformer(teamName string, logger log.FieldLogger) *Transformer {
 	return &Transformer{
@@ -103,6 +151,7 @@ func NewTransformer(teamName string, logger log.FieldLogger) *Transformer {
 		knownChannels:         make(map[string]string),
 		skippedUserIDs:        make(map[string]bool),
 		skippedUsernames:      make(map[string]bool),
+		skippedUserNames:      make(map[string]string),
 	}
 }
 
@@ -245,6 +294,8 @@ func (t *Transformer) dropSkippedMembers(uids, usernames []string) (outUIDs, out
 		for i, uid := range uids {
 			if t.skippedUserIDs[uid] || t.skippedUsernames[usernames[i]] {
 				t.droppedMembershipRefs++
+				t.Logger.WithField(intermediate.EntityKeyField, intermediate.EntityChannelMembership).
+					Warnf("Dropping channel membership for %s: user was skipped", intermediate.FormatEntityRef(usernames[i], uid))
 				continue
 			}
 			outUIDs = append(outUIDs, uid)
@@ -256,6 +307,8 @@ func (t *Transformer) dropSkippedMembers(uids, usernames []string) (outUIDs, out
 	for _, uid := range uids {
 		if t.skippedUserIDs[uid] {
 			t.droppedMembershipRefs++
+			t.Logger.WithField(intermediate.EntityKeyField, intermediate.EntityChannelMembership).
+				Warnf("Dropping channel membership for %s: user was skipped", t.skippedUserRef(uid))
 			continue
 		}
 		outUIDs = append(outUIDs, uid)
@@ -263,6 +316,8 @@ func (t *Transformer) dropSkippedMembers(uids, usernames []string) (outUIDs, out
 	for _, username := range usernames {
 		if t.skippedUsernames[username] {
 			t.droppedMembershipRefs++
+			t.Logger.WithField(intermediate.EntityKeyField, intermediate.EntityChannelMembership).
+				Warnf("Dropping channel membership for %s: user was skipped", username)
 			continue
 		}
 		outUsernames = append(outUsernames, username)
@@ -275,10 +330,19 @@ func (t *Transformer) dropSkippedMembers(uids, usernames []string) (outUIDs, out
 func (t *Transformer) markUserSkipped(id, username string) {
 	if id != "" {
 		t.skippedUserIDs[id] = true
+		if username != "" {
+			t.skippedUserNames[id] = username
+		}
 	}
 	if username != "" {
 		t.skippedUsernames[strings.ToLower(username)] = true
 	}
+}
+
+// skippedUserRef formats a skipped user's ID for a log message, including
+// their username when it was captured at skip time — see skippedUserNames.
+func (t *Transformer) skippedUserRef(id string) string {
+	return intermediate.FormatEntityRef(t.skippedUserNames[id], id)
 }
 
 // skipChannellessGuests drops guest users (in "guest" mode only) that ended up
@@ -303,7 +367,8 @@ func (t *Transformer) skipChannellessGuests() {
 		if !user.IsGuest || user.IsBot || len(user.Memberships) > 0 {
 			continue
 		}
-		t.Logger.Warnf("Dropping guest user %s: no channel memberships, so they can't be imported as a guest (use --guest-handling=user to keep channel-less guests as regular members)", user.Username)
+		t.Logger.WithField(intermediate.EntityKeyField, intermediate.EntityUser).
+			Warnf("Dropping guest user %s: no channel memberships, so they can't be imported as a guest (use --guest-handling=user to keep channel-less guests as regular members)", intermediate.FormatEntityRef(user.Username, id))
 		t.markUserSkipped(id, user.Username)
 		delete(t.Intermediate.UsersById, id)
 		skipped++
@@ -411,7 +476,7 @@ func (t *Transformer) transformChannels(rooms []RocketChatRoom) {
 		room := &rooms[i]
 
 		if room.Encrypted {
-			t.Logger.Warnf("Skipping encrypted room: %s", room.Name)
+			t.withEntity(channelEntity(room.Type)).Warnf("Skipping encrypted room: %s", room.Name)
 			t.skippedRoomIDs[room.ID] = true
 			continue
 		}
@@ -443,7 +508,7 @@ func (t *Transformer) transformChannels(rooms []RocketChatRoom) {
 
 			// If every member was skipped, there is nothing to migrate.
 			if len(uids) == 0 {
-				t.Logger.Warnf("Skipping direct room %s: all members were skipped users", room.ID)
+				t.withEntity(channelEntity(room.Type)).Warnf("Skipping direct room %s: all members were skipped users", room.ID)
 				t.skippedRoomIDs[room.ID] = true
 				continue
 			}
@@ -454,7 +519,7 @@ func (t *Transformer) transformChannels(rooms []RocketChatRoom) {
 			// so drop the room rather than risk dangling references or an
 			// out-of-range panic in the self-DM duplication below.
 			if len(uids) != len(usernames) {
-				t.Logger.Warnf("Skipping direct room %s: mismatched member counts after filtering (%d uids, %d usernames)", room.ID, len(uids), len(usernames))
+				t.withEntity(channelEntity(room.Type)).Warnf("Skipping direct room %s: mismatched member counts after filtering (%d uids, %d usernames)", room.ID, len(uids), len(usernames))
 				t.skippedRoomIDs[room.ID] = true
 				continue
 			}
@@ -616,16 +681,19 @@ func (t *Transformer) transformSubscriptions(subscriptions []RocketChatSubscript
 			continue
 		}
 
-		// Drop memberships of users we deliberately skipped, quietly (they are
-		// expected to be absent), counting them for the summary log.
+		// Drop memberships of users we deliberately skipped (they are expected
+		// to be absent), counting them for the summary log.
 		if t.isSkippedUser(sub.User.ID) {
 			t.droppedMembershipRefs++
+			t.Logger.WithField(intermediate.EntityKeyField, intermediate.EntityChannelMembership).
+				Warnf("Dropping channel membership for %s: user was skipped", intermediate.FormatEntityRef(sub.User.Username, sub.User.ID))
 			continue
 		}
 
 		user, ok := t.Intermediate.UsersById[sub.User.ID]
 		if !ok {
-			t.Logger.Warnf("Subscription references unknown user %s (room %s), skipping", sub.User.ID, sub.RoomID)
+			t.Logger.WithField(intermediate.EntityKeyField, intermediate.EntityChannelMembership).
+				Warnf("Subscription references unknown user %s (room %s), skipping", intermediate.FormatEntityRef(sub.User.Username, sub.User.ID), sub.RoomID)
 			continue
 		}
 
@@ -736,7 +804,9 @@ func (t *Transformer) transformMessages(messages []RocketChatMessage, uploadsByI
 			// in the end-of-transform summary.
 			if replies := threadReplies[m.ID]; len(replies) > 0 {
 				t.droppedPostRefs += len(replies)
-				t.Logger.Warnf("Dropping %d thread reply(ies) because their root post %s was skipped", len(replies), m.ID)
+				t.Logger.WithField(intermediate.EntityKeyField, intermediate.EntityReply).
+					WithField(intermediate.EntityCountField, len(replies)).
+					Warnf("Dropping %d thread reply(ies) because their root post %s was skipped", len(replies), m.ID)
 			}
 			continue
 		}
@@ -780,6 +850,8 @@ func (t *Transformer) convertMessage(m *RocketChatMessage, uploadsById map[strin
 	// references a user with no user line.
 	if t.isSkippedUser(m.User.ID) || t.skippedUsernames[strings.ToLower(m.User.Username)] {
 		t.droppedPostRefs++
+		t.Logger.WithField(intermediate.EntityKeyField, postEntity(t.roomIDToType[m.RoomID])).
+			Warnf("Dropping message from %s: author was a skipped user (e.g. a skipped guest)", intermediate.FormatEntityRef(m.User.Username, m.User.ID))
 		return nil
 	}
 

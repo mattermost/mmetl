@@ -19,6 +19,13 @@ type Transformer struct {
 	// and posts referencing them, leaving no dangling references in the export.
 	skippedUserIDs map[string]bool
 
+	// skippedUserNames remembers the username for each skipped user ID, captured
+	// at skip time (before the user is removed from Intermediate.UsersById, if
+	// it ever was), so later log messages that only carry the raw Slack ID
+	// (e.g. a post's User field) can still reference the user by name too. See
+	// skippedUserRef.
+	skippedUserNames map[string]string
+
 	// droppedPostRefs / droppedReactionRefs / droppedMembershipRefs count
 	// references removed because they pointed at a skipped user, for the
 	// end-of-transform summary log. Reactions are tracked separately from
@@ -63,7 +70,8 @@ func NewTransformer(teamName string, logger log.FieldLogger) *Transformer {
 			Intermediate: &intermediate.Intermediate{},
 			Logger:       logger,
 		},
-		skippedUserIDs: make(map[string]bool),
+		skippedUserIDs:   make(map[string]bool),
+		skippedUserNames: make(map[string]string),
 	}
 }
 
@@ -73,10 +81,21 @@ func (t *Transformer) isSkippedUser(id string) bool {
 	return id != "" && t.skippedUserIDs[id]
 }
 
-// markUserSkipped records a user ID as skipped so downstream stages can drop
-// memberships and posts that reference it.
-func (t *Transformer) markUserSkipped(id string) {
-	if id != "" {
-		t.skippedUserIDs[id] = true
+// markUserSkipped records a user ID (and its username, if known at the call
+// site) as skipped so downstream stages can drop memberships and posts that
+// reference it.
+func (t *Transformer) markUserSkipped(id, username string) {
+	if id == "" {
+		return
 	}
+	t.skippedUserIDs[id] = true
+	if username != "" {
+		t.skippedUserNames[id] = username
+	}
+}
+
+// skippedUserRef formats a skipped user's ID for a log message, including
+// their username when it was captured at skip time — see skippedUserNames.
+func (t *Transformer) skippedUserRef(id string) string {
+	return intermediate.FormatEntityRef(t.skippedUserNames[id], id)
 }

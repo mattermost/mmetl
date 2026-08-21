@@ -9,7 +9,17 @@ import (
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 
+	"github.com/mattermost/mmetl/services/intermediate"
 	"github.com/mattermost/mmetl/services/rocketchat"
+)
+
+// transformRocketChatLogFile and transformRocketChatSummaryFile are both
+// always written to the working directory, unaffected by --output —
+// matching the existing log file's behavior rather than adding a separate
+// configurable path.
+const (
+	transformRocketChatLogFile     = "transform-rocketchat.log"
+	transformRocketChatSummaryFile = "transform-rocketchat-summary.md"
 )
 
 var TransformRocketChatCmd = &cobra.Command{
@@ -81,7 +91,7 @@ func transformRocketChatCmdF(cmd *cobra.Command, args []string) error {
 	}
 
 	logger := log.New()
-	logFile, err := os.OpenFile("transform-rocketchat.log", os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	logFile, err := os.OpenFile(transformRocketChatLogFile, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
 		return err
 	}
@@ -89,6 +99,12 @@ func transformRocketChatCmdF(cmd *cobra.Command, args []string) error {
 	logger.SetOutput(logFile)
 	logger.SetFormatter(customLogFormatter)
 	logger.SetReportCaller(true)
+
+	// Attach the collector to the concrete *logrus.Logger before it's handed to
+	// the transformer as the log.FieldLogger interface (AddHook isn't part of
+	// that interface) — see services/intermediate/warning_collector.go.
+	summaryCollector := intermediate.NewWarningCollector()
+	logger.AddHook(summaryCollector)
 
 	if debug {
 		logger.Level = log.DebugLevel
@@ -141,12 +157,17 @@ func transformRocketChatCmdF(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	if err := writeTransformSummary("RocketChat Transform Summary", transformRocketChatSummaryFile, transformer.Intermediate, summaryCollector); err != nil {
+		return err
+	}
+
 	logger.Infof("Transformation succeeded! Users: %d, Public channels: %d, Private channels: %d, Posts: %d",
 		len(transformer.Intermediate.UsersById),
 		len(transformer.Intermediate.PublicChannels),
 		len(transformer.Intermediate.PrivateChannels),
 		len(transformer.Intermediate.Posts),
 	)
+	fmt.Printf("Transformation succeeded! Summary written to %s\n", transformRocketChatSummaryFile)
 
 	return nil
 }

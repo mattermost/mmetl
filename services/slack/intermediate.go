@@ -131,7 +131,7 @@ func (t *Transformer) TransformUsers(users []SlackUser, skipEmptyEmails bool, de
 			guestCount++
 			if guestHandling == GuestHandlingSkip {
 				guestsSkipped++
-				t.markUserSkipped(user.Id)
+				t.markUserSkipped(user.Id, user.Username)
 				continue
 			}
 		}
@@ -200,6 +200,8 @@ func (t *Transformer) filterValidMembers(members []string, users map[string]*Int
 	for _, member := range members {
 		if t.skippedUserIDs[member] {
 			t.droppedMembershipRefs++
+			t.Logger.WithField(intermediate.EntityKeyField, intermediate.EntityChannelMembership).
+				Warnf("Dropping channel membership for %s: user was skipped (e.g. a skipped guest)", t.skippedUserRef(member))
 			continue
 		}
 		if _, ok := users[member]; ok {
@@ -211,6 +213,35 @@ func (t *Transformer) filterValidMembers(members []string, users map[string]*Int
 		}
 	}
 	return validMembers
+}
+
+// channelEntity maps a Slack channel type to the summary's entity key, for
+// tagging Warn/Warnf calls that drop a channel so WarningCollector can tally
+// it under the right row.
+func channelEntity(t model.ChannelType) string {
+	switch t {
+	case model.ChannelTypeDirect:
+		return intermediate.EntityDirectChannel
+	case model.ChannelTypeGroup:
+		return intermediate.EntityGroupChannel
+	case model.ChannelTypePrivate:
+		return intermediate.EntityPrivateChannel
+	default:
+		return intermediate.EntityPublicChannel
+	}
+}
+
+// postEntity maps a channel's type to the entity key used for a message
+// dropped while still being converted from Slack's flat post list — i.e.
+// before Mattermost thread placement (root vs. reply) is resolved. A message
+// dropped here that would have ended up as a thread reply is therefore
+// counted under Post/DirectPost rather than Replies; that imprecision is
+// preferred over not counting it at all.
+func postEntity(t model.ChannelType) string {
+	if t == model.ChannelTypeDirect || t == model.ChannelTypeGroup {
+		return intermediate.EntityDirectPost
+	}
+	return intermediate.EntityPost
 }
 
 func getOriginalName(channel SlackChannel) string {
@@ -226,7 +257,8 @@ func (t *Transformer) TransformChannels(channels []SlackChannel) []*Intermediate
 	for _, channel := range channels {
 		validMembers := t.filterValidMembers(channel.Members, t.Intermediate.UsersById)
 		if (channel.Type == model.ChannelTypeDirect || channel.Type == model.ChannelTypeGroup) && len(validMembers) <= 1 {
-			t.Logger.Warnf("Bulk export for direct channels containing a single member is not supported. Not importing channel %s", channel.Name)
+			t.Logger.WithField(intermediate.EntityKeyField, channelEntity(channel.Type)).
+				Warnf("Bulk export for direct channels containing a single member is not supported. Not importing channel %s", channel.Name)
 			continue
 		}
 
@@ -523,8 +555,9 @@ func (t *Transformer) dropChannellessGuests(guestHandling string) {
 		if !user.IsGuest || hasChannelAccess[id] {
 			continue
 		}
-		t.Logger.Warnf("Guest user %s has no public or private channel membership in the Slack export; Mattermost cannot scope a guest's access without one, so this user (and their memberships/posts) is being skipped. Use --guest-handling=user to import them as a regular member instead.", user.Username)
-		t.markUserSkipped(id)
+		t.Logger.WithField(intermediate.EntityKeyField, intermediate.EntityUser).
+			Warnf("Guest user %s has no public or private channel membership in the Slack export; Mattermost cannot scope a guest's access without one, so this user (and their memberships/posts) is being skipped. Use --guest-handling=user to import them as a regular member instead.", intermediate.FormatEntityRef(user.Username, id))
+		t.markUserSkipped(id, user.Username)
 		delete(t.Intermediate.UsersById, id)
 		skipped++
 	}
@@ -548,6 +581,8 @@ func (t *Transformer) dropSkippedFromDirectOrGroupChannels(channels []*Intermedi
 		for _, memberId := range channel.Members {
 			if t.skippedUserIDs[memberId] {
 				t.droppedMembershipRefs++
+				t.Logger.WithField(intermediate.EntityKeyField, intermediate.EntityChannelMembership).
+					Warnf("Dropping channel membership for %s: user was skipped (e.g. a skipped guest)", t.skippedUserRef(memberId))
 				continue
 			}
 			remaining = append(remaining, memberId)
@@ -555,7 +590,8 @@ func (t *Transformer) dropSkippedFromDirectOrGroupChannels(channels []*Intermedi
 		channel.Members = remaining
 
 		if len(remaining) <= 1 {
-			t.Logger.Warnf("Bulk export for direct channels containing a single member is not supported. Not importing channel %s", channel.Name)
+			t.Logger.WithField(intermediate.EntityKeyField, channelEntity(channel.Type)).
+				Warnf("Bulk export for direct channels containing a single member is not supported. Not importing channel %s", channel.Name)
 			continue
 		}
 		result = append(result, channel)
@@ -774,6 +810,8 @@ func (t *Transformer) CreateIntermediateBotUser(userID string) {
 func (t *Transformer) CreateAndAddPostToThreads(post SlackPost, threads map[string]*IntermediatePost, timestamps map[int64]bool, channel *IntermediateChannel) {
 	if t.isSkippedUser(post.User) {
 		t.droppedPostRefs++
+		t.Logger.WithField(intermediate.EntityKeyField, postEntity(channel.Type)).
+			Warnf("Dropping message from %s: author was a skipped user (e.g. a skipped guest)", t.skippedUserRef(post.User))
 		return
 	}
 
@@ -805,7 +843,8 @@ func (t *Transformer) AddFilesToPost(post *SlackPost, skipAttachments bool, slac
 	} else if post.Files != nil {
 		for _, file := range post.Files {
 			if file.Name == "" {
-				t.Logger.Warnf("Not able to access the file %s as file access is denied so skipping", file.Id)
+				t.Logger.WithField(intermediate.EntityKeyField, intermediate.EntityAttachment).
+					Warnf("Not able to access the file %s as file access is denied so skipping", file.Id)
 				continue
 			}
 			if err := addFileToPost(file, slackExport.Uploads, newPost, attachmentsDir, allowDownload); err != nil {
@@ -866,6 +905,8 @@ func (t *Transformer) getReactionsFromPost(post SlackPost) []*IntermediateReacti
 		for _, reactionUser := range reaction.Users {
 			if t.isSkippedUser(reactionUser) {
 				t.droppedReactionRefs++
+				t.Logger.WithField(intermediate.EntityKeyField, intermediate.EntityReaction).
+					Warnf("Dropping reaction from %s: user was skipped (e.g. a skipped guest)", t.skippedUserRef(reactionUser))
 				continue
 			}
 			reactionAuthor := t.Intermediate.UsersById[reactionUser]
@@ -902,10 +943,17 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 	for originalChannelName, channelPosts := range slackExport.Posts {
 		channel, ok := channelsByOriginalName[originalChannelName]
 		if !ok {
+			// The number of posts this drops is unknown without counting
+			// channelPosts, and doing so here wouldn't distinguish
+			// post/direct_post/reply anyway — left untagged (Notes-only)
+			// rather than reported as a misleadingly low "1".
 			t.Logger.Warnf("--- Couldn't find channel %s referenced by posts", originalChannelName)
 			delete(slackExport.Posts, originalChannelName)
 			continue
 		}
+		// Fixed for the rest of this channel's posts, so entity attribution for
+		// every message-level drop below is computed once.
+		postEntityForChannel := postEntity(channel.Type)
 
 		timestamps := make(map[int64]bool)
 		sort.Slice(channelPosts, func(i, j int) bool {
@@ -953,7 +1001,8 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 						newPost.Props = props
 					} else {
 						if discardInvalidProps {
-							t.Logger.Warn("Unable to import the post as props exceed the maximum character count. Skipping as --discard-invalid-props is enabled.")
+							t.Logger.WithField(intermediate.EntityKeyField, postEntityForChannel).
+								Warn("Unable to import the post as props exceed the maximum character count. Skipping as --discard-invalid-props is enabled.")
 							continue
 						} else {
 							t.Logger.Warn("Unable to add the props to post as they exceed the maximum character count.")
@@ -966,11 +1015,14 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 			// plain message that can have files attached
 			case post.IsPlainMessage():
 				if post.User == "" {
-					t.Logger.Warn("Unable to import the message as the user field is missing.")
+					t.Logger.WithField(intermediate.EntityKeyField, postEntityForChannel).
+						Warn("Unable to import the message as the user field is missing.")
 					continue
 				}
 				if t.isSkippedUser(post.User) {
 					t.droppedPostRefs++
+					t.Logger.WithField(intermediate.EntityKeyField, postEntityForChannel).
+						Warnf("Dropping message from %s: author was a skipped user (e.g. a skipped guest)", t.skippedUserRef(post.User))
 					continue
 				}
 				author := t.Intermediate.UsersById[post.User]
@@ -993,7 +1045,8 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 						newPost.Props = props
 					} else {
 						if discardInvalidProps {
-							t.Logger.Warn("Unable import post as props exceed the maximum character count. Skipping as --discard-invalid-props is enabled.")
+							t.Logger.WithField(intermediate.EntityKeyField, postEntityForChannel).
+								Warn("Unable import post as props exceed the maximum character count. Skipping as --discard-invalid-props is enabled.")
 							continue
 						} else {
 							t.Logger.Warn("Unable to add props to post as they exceed the maximum character count.")
@@ -1006,15 +1059,19 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 			// file comment
 			case post.IsFileComment():
 				if post.Comment == nil {
-					t.Logger.Warn("Unable to import the message as it has no comments.")
+					t.Logger.WithField(intermediate.EntityKeyField, postEntityForChannel).
+						Warn("Unable to import the message as it has no comments.")
 					continue
 				}
 				if post.Comment.User == "" {
-					t.Logger.Warn("Unable to import the message as the user field is missing.")
+					t.Logger.WithField(intermediate.EntityKeyField, postEntityForChannel).
+						Warn("Unable to import the message as the user field is missing.")
 					continue
 				}
 				if t.isSkippedUser(post.Comment.User) {
 					t.droppedPostRefs++
+					t.Logger.WithField(intermediate.EntityKeyField, postEntityForChannel).
+						Warnf("Dropping message from %s: author was a skipped user (e.g. a skipped guest)", t.skippedUserRef(post.Comment.User))
 					continue
 				}
 				author := t.Intermediate.UsersById[post.Comment.User]
@@ -1035,7 +1092,8 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 			// channel join/leave messages
 			case post.IsJoinLeaveMessage():
 				if post.User == "" {
-					t.Logger.Warn("Unable to import the message as the user field is missing.")
+					t.Logger.WithField(intermediate.EntityKeyField, postEntityForChannel).
+						Warn("Unable to import the message as the user field is missing.")
 					continue
 				}
 
@@ -1044,7 +1102,8 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 			// me message
 			case post.IsMeMessage():
 				if post.User == "" {
-					t.Logger.Warn("Unable to import the message as the user field is missing.")
+					t.Logger.WithField(intermediate.EntityKeyField, postEntityForChannel).
+						Warn("Unable to import the message as the user field is missing.")
 					continue
 				}
 				t.CreateAndAddPostToThreads(post, threads, timestamps, channel)
@@ -1052,7 +1111,8 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 			// change topic message
 			case post.IsChannelTopicMessage():
 				if post.User == "" {
-					t.Logger.Warn("Unable to import the message as the user field is missing.")
+					t.Logger.WithField(intermediate.EntityKeyField, postEntityForChannel).
+						Warn("Unable to import the message as the user field is missing.")
 					continue
 				}
 				t.CreateAndAddPostToThreads(post, threads, timestamps, channel)
@@ -1060,7 +1120,8 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 			// change channel purpose message
 			case post.IsChannelPurposeMessage():
 				if post.User == "" {
-					t.Logger.Warn("Unable to import the message as the user field is missing.")
+					t.Logger.WithField(intermediate.EntityKeyField, postEntityForChannel).
+						Warn("Unable to import the message as the user field is missing.")
 					continue
 				}
 				t.CreateAndAddPostToThreads(post, threads, timestamps, channel)
@@ -1068,7 +1129,8 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 			// change channel name message
 			case post.IsChannelNameMessage():
 				if post.User == "" {
-					t.Logger.Warn("Slack Import: Unable to import the message as the user field is missing.")
+					t.Logger.WithField(intermediate.EntityKeyField, postEntityForChannel).
+						Warn("Slack Import: Unable to import the message as the user field is missing.")
 					continue
 				}
 				t.CreateAndAddPostToThreads(post, threads, timestamps, channel)
@@ -1077,7 +1139,8 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 			case post.isHuddleThread():
 				post.Text = "Call ended"
 				if post.User == "" {
-					t.Logger.Warn("Slack Import: Unable to import the message as the user field is missing.")
+					t.Logger.WithField(intermediate.EntityKeyField, postEntityForChannel).
+						Warn("Slack Import: Unable to import the message as the user field is missing.")
 					continue
 				}
 
@@ -1090,6 +1153,8 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 
 				if t.isSkippedUser(poster) {
 					t.droppedPostRefs++
+					t.Logger.WithField(intermediate.EntityKeyField, postEntityForChannel).
+						Warnf("Dropping message from %s: author was a skipped user (e.g. a skipped guest)", t.skippedUserRef(poster))
 					continue
 				}
 
@@ -1113,7 +1178,8 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 
 				t.addPostToThreads(post, newPost, threads, channel, timestamps)
 			default:
-				t.Logger.Warnf("Unable to import the message as its type is not supported. post_type=%s, post_subtype=%s", post.Type, post.SubType)
+				t.Logger.WithField(intermediate.EntityKeyField, postEntityForChannel).
+					Warnf("Unable to import the message as its type is not supported. post_type=%s, post_subtype=%s", post.Type, post.SubType)
 			}
 		}
 

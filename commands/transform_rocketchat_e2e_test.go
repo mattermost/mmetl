@@ -502,6 +502,12 @@ func TestTransformRocketChatE2EGroupDMs(t *testing.T) {
 }
 
 func TestTransformRocketChatE2E(t *testing.T) {
+	// This test (despite its name) doesn't use testhelper.SetupHelper/Docker, so
+	// it isn't gated by testing.Short() — but it does exercise the transform
+	// command, which now always writes a summary.md (default --summary-output)
+	// into the working directory.
+	t.Cleanup(func() { os.Remove("transform-rocketchat-summary.md") })
+
 	ts1 := time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)
 	ts2 := time.Date(2024, 1, 1, 12, 1, 0, 0, time.UTC)
 	ts3 := time.Date(2024, 1, 1, 12, 2, 0, 0, time.UTC)
@@ -720,6 +726,9 @@ func TestTransformRocketChatE2E(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestTransformRocketChatEdgeCases(t *testing.T) {
+	// Not Docker-gated (see TestTransformRocketChatE2E); same summary.md cleanup need.
+	t.Cleanup(func() { os.Remove("transform-rocketchat-summary.md") })
+
 	t.Run("empty collections produce minimal JSONL", func(t *testing.T) {
 		dir := t.TempDir()
 		outputPath := filepath.Join(dir, "output.jsonl")

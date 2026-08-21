@@ -9,6 +9,8 @@ import (
 
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/text/unicode/norm"
+
+	"github.com/mattermost/mmetl/services/intermediate"
 )
 
 // ExtractAttachments extracts all complete uploads into outputDir.
@@ -41,15 +43,27 @@ func ExtractAttachments(
 		defer chunksFile.Close()
 	}
 
+	// All Warn-level messages in this function report a real, uploaded
+	// attachment we're failing to migrate — tagged so they count as Skipped.
+	// The two Debug-level cases below (incomplete uploads, auto-generated
+	// thumbnails) are RC-internal artifacts with no actual file content to
+	// migrate, not migratable attachments we're losing, so they're excluded
+	// from both Transformed and Skipped rather than reported as either. The
+	// partial-file cleanup-failure Warn further down is incidental to an
+	// already-counted drop and must not be tagged (it would double-count).
+	entityLogger := logger.WithField(intermediate.EntityKeyField, intermediate.EntityAttachment)
+
 	done := 0
 	skipped := 0
 	for _, upload := range uploads {
 		if !upload.Complete {
+			logger.Debugf("Upload %s (%s) is incomplete, skipping", upload.ID, upload.Name)
 			skipped++
 			continue
 		}
 
 		if upload.TypeGroup == "thumb" {
+			logger.Debugf("Skipping auto-generated thumbnail %s (%s)", upload.ID, upload.Name)
 			skipped++
 			continue
 		}
@@ -76,14 +90,14 @@ func ExtractAttachments(
 				// an empty attachment even when the chunks file is absent.
 				extractErr = createEmptyFile(destPath)
 			default:
-				logger.Warnf("GridFS chunks not found for upload %s (%s), skipping", upload.ID, upload.Name)
+				entityLogger.Warnf("GridFS chunks not found for upload %s (%s), skipping", upload.ID, upload.Name)
 				skipped++
 				continue
 			}
 
 		case upload.Store == "FileSystem":
 			if uploadsDir == "" {
-				logger.Warnf("FileSystem upload %s (%s) skipped: --uploads-dir not provided", upload.ID, upload.Name)
+				entityLogger.Warnf("FileSystem upload %s (%s) skipped: --uploads-dir not provided", upload.ID, upload.Name)
 				skipped++
 				continue
 			}
@@ -94,7 +108,7 @@ func ExtractAttachments(
 			// element, so "." and ".." are the only escape vectors that remain.
 			srcFilename := sanitizeFilename(filepath.Base(upload.Path))
 			if srcFilename == "" || srcFilename == "." || srcFilename == ".." {
-				logger.Warnf("FileSystem upload %s (%s) skipped: unsafe source path %q", upload.ID, upload.Name, upload.Path)
+				entityLogger.Warnf("FileSystem upload %s (%s) skipped: unsafe source path %q", upload.ID, upload.Name, upload.Path)
 				skipped++
 				continue
 			}
@@ -102,7 +116,7 @@ func ExtractAttachments(
 			extractErr = copyFile(srcPath, destPath)
 
 		default:
-			logger.Warnf("Unknown upload store %q for %s (%s), skipping", upload.Store, upload.ID, upload.Name)
+			entityLogger.Warnf("Unknown upload store %q for %s (%s), skipping", upload.Store, upload.ID, upload.Name)
 			skipped++
 			continue
 		}
@@ -113,7 +127,7 @@ func ExtractAttachments(
 			if removeErr := os.Remove(destPath); removeErr != nil && !os.IsNotExist(removeErr) {
 				logger.Warnf("Failed to clean up partial attachment %s: %v", destPath, removeErr)
 			}
-			logger.Warnf("Failed to extract upload %s (%s): %v", upload.ID, upload.Name, extractErr)
+			entityLogger.Warnf("Failed to extract upload %s (%s): %v", upload.ID, upload.Name, extractErr)
 			skipped++
 			continue
 		}
