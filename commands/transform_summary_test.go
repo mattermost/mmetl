@@ -184,6 +184,7 @@ func TestTransformRocketChatCmd_SummaryFile_AttachmentExtractionFailure(t *testi
 		"--team", teamName,
 		"--dump-dir", dir,
 		"--output", outputPath,
+		"--attachments-dir", dir,
 		// Deliberately no --skip-attachments and no --uploads-dir.
 	})
 	require.NoError(t, commands.RootCmd.Execute())

@@ -7,18 +7,19 @@ doesn't need to be re-derived when picked up.
 
 ## Context
 
-mmetl's `transform` commands now write a `summary.md` next to the bulk-import
-JSONL (see `services/intermediate/summary.go`, `warning_collector.go`,
+mmetl's `transform` commands now write a `transform-<provider>-summary.md`
+into the working directory, alongside the transform log file and independent
+of `--output` (see `services/intermediate/summary.go`, `warning_collector.go`,
 `render.go`, and the wiring in `commands/transform.go` /
 `commands/transform_rocketchat.go`). It reports, per entity, how many were
 **Transformed** and **Skipped** during the export step, plus a **Notes**
 section explaining why.
 
 The goal is a symmetric report on the **import** side: after running `mmctl
-import process`, produce a sibling `summary.md` with the same entity rows,
-renamed **Imported**/**Skipped**/**Failed**, so an operator can diff the two
-files and confirm the migration was complete — this was the original ask that
-motivated the mmetl-side work.
+import process`, produce a sibling summary with the same entity rows, renamed
+**Imported**/**Skipped**/**Failed**, so an operator can diff the two files and
+confirm the migration was complete — this was the original ask that motivated
+the mmetl-side work.
 
 ## The entity rows (must match mmetl's exactly)
 
@@ -29,10 +30,12 @@ Channel memberships
 These come from `services/intermediate/summary.go`'s `entityRows` — treat that
 as the source of truth if it changes.
 
-## What exists today (checked against `mattermost/mattermost` `master`, current
-as of this writing — the module version this repo pins in `go.mod` was a stale
-pre-`v11.7` snapshot; verify against current `master`/latest release again
-before implementing)
+## What exists today
+
+Checked against `mattermost/mattermost` `master`, current as of this writing.
+The module version this repo pins in `go.mod` was a stale pre-`v11.7`
+snapshot. Verify against the current `master` or latest release again before
+implementing.
 
 - **`job.Data` has no per-entity counts.** For an `import_process` job it only
   ever contains `import_file`, `local_mode`, `extract_content`, and — only on

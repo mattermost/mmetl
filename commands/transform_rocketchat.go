@@ -147,7 +147,7 @@ func transformRocketChatCmdF(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("stat GridFS chunks file %s: %w", chunksFilePath, err)
 		}
 
-		attachmentsOutput := path.Join(attachmentsDir, "bulk-export-attachments")
+		attachmentsOutput := path.Join(attachmentsDir, intermediate.AttachmentsDirName)
 		failedAttachments, err := rocketchat.ExtractAttachments(parsed.UploadsByID, gridfsIndex, attachmentsOutput, uploadsDir, logger)
 		if err != nil {
 			return err

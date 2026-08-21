@@ -139,7 +139,7 @@ func TestTransformRocketChatImportE2E(t *testing.T) {
 	outputPath := filepath.Join(dir, "mattermost_import.jsonl")
 	teamName := uniqueTeamName("rce2e")
 	t.Cleanup(func() { os.Remove("transform-rocketchat.log") })
-	t.Cleanup(func() { os.Remove("transform-rocketchat-summary.md") })
+	t.Cleanup(func() { os.Remove(transformRocketChatSummaryFile) })
 
 	description := "Coordination for the engineering team"
 	users := []any{
@@ -260,7 +260,7 @@ func TestTransformRocketChatE2EGuestImport(t *testing.T) {
 	outputPath := filepath.Join(dir, "mattermost_import.jsonl")
 	teamName := uniqueTeamName("rcguest")
 	t.Cleanup(func() { os.Remove("transform-rocketchat.log") })
-	t.Cleanup(func() { os.Remove("transform-rocketchat-summary.md") })
+	t.Cleanup(func() { os.Remove(transformRocketChatSummaryFile) })
 
 	users := []any{
 		rcBSONUser{ID: "alice-id", Username: "alice", Name: "Alice Anderson", Emails: []rcMail{{Address: "alice@example.com", Verified: true}}, Active: true, Roles: []string{"user"}, Type: "user"},
@@ -372,7 +372,7 @@ func TestTransformRocketChatE2EBotImport(t *testing.T) {
 
 	th := testhelper.SetupHelper(t)
 	t.Cleanup(func() { os.Remove("transform-rocketchat.log") })
-	t.Cleanup(func() { os.Remove("transform-rocketchat-summary.md") })
+	t.Cleanup(func() { os.Remove(transformRocketChatSummaryFile) })
 
 	t.Run("bots and deactivated users import with posts and ownership", func(t *testing.T) {
 		ctx := context.Background()
@@ -481,7 +481,7 @@ func TestTransformRocketChatE2EGroupDMs(t *testing.T) {
 	outputPath := filepath.Join(dir, "mattermost_import.jsonl")
 	teamName := uniqueTeamName("rcgdm")
 	t.Cleanup(func() { os.Remove("transform-rocketchat.log") })
-	t.Cleanup(func() { os.Remove("transform-rocketchat-summary.md") })
+	t.Cleanup(func() { os.Remove(transformRocketChatSummaryFile) })
 
 	users := []any{
 		rcBSONUser{ID: "alice-id", Username: "alice", Name: "Alice Anderson", Emails: []rcMail{{Address: "alice@example.com", Verified: true}}, Active: true, Roles: []string{"user"}, Type: "user"},
@@ -546,7 +546,7 @@ func TestTransformRocketChatE2E(t *testing.T) {
 	// it isn't gated by testing.Short() — but it does exercise the transform
 	// command, which now always writes transform-rocketchat-summary.md into
 	// the working directory (there's no flag to relocate or disable it).
-	t.Cleanup(func() { os.Remove("transform-rocketchat-summary.md") })
+	t.Cleanup(func() { os.Remove(transformRocketChatSummaryFile) })
 
 	ts1 := time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)
 	ts2 := time.Date(2024, 1, 1, 12, 1, 0, 0, time.UTC)
@@ -767,7 +767,7 @@ func TestTransformRocketChatE2E(t *testing.T) {
 
 func TestTransformRocketChatEdgeCases(t *testing.T) {
 	// Not Docker-gated (see TestTransformRocketChatE2E); same summary.md cleanup need.
-	t.Cleanup(func() { os.Remove("transform-rocketchat-summary.md") })
+	t.Cleanup(func() { os.Remove(transformRocketChatSummaryFile) })
 
 	t.Run("empty collections produce minimal JSONL", func(t *testing.T) {
 		dir := t.TempDir()

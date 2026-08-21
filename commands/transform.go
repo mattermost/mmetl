@@ -16,7 +16,7 @@ import (
 	"github.com/mattermost/mmetl/services/slack"
 )
 
-const attachmentsInternal = "bulk-export-attachments"
+const attachmentsInternal = intermediate.AttachmentsDirName
 
 // transformSlackLogFile and transformSlackSummaryFile are both always written
 // to the working directory

@@ -10,10 +10,10 @@
 | Bots | 0 | 0 | 0 |
 | Posts | 0 | 0 | 0 |
 | Direct posts | 1 | 1 | 0 |
-| Replies | 0 | 0 | 0 |
+| Replies | 0 | 1 | 0 |
 | Reactions | 0 | 0 | 0 |
 | Attachments | 0 | 0 | 0 |
-| Channel memberships | 0 | 1 | 0 |
+| Channel memberships | 3 | 1 | 0 |
 
 ## Notes
 

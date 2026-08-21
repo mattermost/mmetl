@@ -145,7 +145,13 @@ func (w *WarningCollector) Notes() []NoteEntry {
 
 	result := make([]NoteEntry, 0, len(keys))
 	for _, k := range keys {
-		result = append(result, *w.notes[k])
+		// Copying the struct alone would still share the Examples backing
+		// array with the collector's own state — clone it so a caller can't
+		// mutate collector-owned storage, or race with a concurrent Fire,
+		// after this lock is released.
+		note := *w.notes[k]
+		note.Examples = append([]string(nil), note.Examples...)
+		result = append(result, note)
 	}
 	return result
 }

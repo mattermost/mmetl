@@ -86,7 +86,7 @@ func ExtractAttachments(
 		destFilename := fmt.Sprintf("%s_%s", sanitizedID, sanitizedName)
 		destPath := filepath.Join(outputDir, destFilename)
 		// Matches the path convertMessage embeds in IntermediatePost.Attachments.
-		relPath := "bulk-export-attachments/" + destFilename
+		relPath := intermediate.AttachmentsDirName + "/" + destFilename
 
 		var extractErr error
 		switch {

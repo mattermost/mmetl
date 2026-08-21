@@ -840,7 +840,8 @@ func (t *Transformer) AddFilesToPost(post *SlackPost, skipAttachments bool, slac
 	}
 	if post.File != nil {
 		if err := addFileToPost(post.File, slackExport.Uploads, newPost, attachmentsDir, allowDownload); err != nil {
-			t.Logger.WithError(err).Error("Failed to add file to post")
+			t.Logger.WithError(err).WithField(intermediate.EntityKeyField, intermediate.EntityAttachment).
+				Errorf("Failed to add file %s to post", post.File.Id)
 		}
 	} else if post.Files != nil {
 		for _, file := range post.Files {
@@ -850,7 +851,8 @@ func (t *Transformer) AddFilesToPost(post *SlackPost, skipAttachments bool, slac
 				continue
 			}
 			if err := addFileToPost(file, slackExport.Uploads, newPost, attachmentsDir, allowDownload); err != nil {
-				t.Logger.WithError(err).Error("Failed to add file to post")
+				t.Logger.WithError(err).WithField(intermediate.EntityKeyField, intermediate.EntityAttachment).
+					Errorf("Failed to add file %s to post", file.Id)
 			}
 		}
 	}

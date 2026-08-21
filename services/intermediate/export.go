@@ -14,6 +14,15 @@ import (
 
 const POST_MAX_ATTACHMENTS = 5
 
+// AttachmentsDirName is the directory name embedded in every attachment path
+// a source Transformer writes into IntermediatePost.Attachments (e.g.
+// "bulk-export-attachments/<id>_<name>"). It must match, byte for byte,
+// wherever a source's attachment-extraction pass builds its own copy of the
+// same path to look up or prune an attachment (see
+// services/rocketchat/attachments.go's ExtractAttachments and
+// PruneAttachments below) — otherwise that matching silently breaks.
+const AttachmentsDirName = "bulk-export-attachments"
+
 // Exporter writes an Intermediate representation to the Mattermost bulk-import
 // JSONL format. Source-specific transformers embed it to gain the Export* methods.
 type Exporter struct {

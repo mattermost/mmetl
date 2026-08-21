@@ -82,24 +82,43 @@ func rolesContainGuest(roles []string) bool {
 	return false
 }
 
-// channelEntity maps an RC room type ("c"/"p"/"d") to the summary's entity
-// key, for tagging Warn/Warnf calls that drop a room/channel. RC's "d" type
-// covers direct (2-member), group (3+ member), and oversized-group-converted-
-// to-private rooms; several drop sites run before that fan-out is decided, so
-// for "d" this defaults to EntityDirectChannel as a best effort — a dropped
-// room that would have become a group channel is still counted, just under
-// the wrong row. Unknown/unsupported types return "" (left untagged, shows
-// only in Notes).
+// channelEntity maps an RC room type ("c"/"p") to the summary's entity key,
+// for tagging Warn/Warnf calls that drop a room/channel. RC's "d" type needs
+// the room itself to classify correctly — see channelEntityForRoom. Unknown/
+// unsupported types return "" (left untagged, shows only in Notes).
 func channelEntity(roomType string) string {
 	switch roomType {
 	case "c":
 		return intermediate.EntityPublicChannel
 	case "p":
 		return intermediate.EntityPrivateChannel
-	case "d":
-		return intermediate.EntityDirectChannel
 	default:
 		return ""
+	}
+}
+
+// channelEntityForRoom maps a room to the summary's entity key, classifying
+// RC's "d" type (which covers direct, group, and oversized-group-converted-
+// to-private rooms) by its member count using the same thresholds as the
+// room's own classification in transformChannels's "d" case below, instead of
+// guessing. Uses room.UIDs/room.Usernames (the original, unfiltered member
+// list) rather than any already-filtered local slice, since drop sites that
+// need this run at various points relative to skipped-member filtering.
+func channelEntityForRoom(room *RocketChatRoom) string {
+	if room.Type != "d" {
+		return channelEntity(room.Type)
+	}
+	n := len(room.UIDs)
+	if len(room.Usernames) > n {
+		n = len(room.Usernames)
+	}
+	switch {
+	case n >= 3 && n <= model.ChannelGroupMaxUsers:
+		return intermediate.EntityGroupChannel
+	case n > model.ChannelGroupMaxUsers:
+		return intermediate.EntityPrivateChannel
+	default: // 0 (malformed/empty), 1 (self-DM), or 2 members
+		return intermediate.EntityDirectChannel
 	}
 }
 
@@ -483,7 +502,7 @@ func (t *Transformer) transformChannels(rooms []RocketChatRoom) {
 		room := &rooms[i]
 
 		if room.Encrypted {
-			t.withEntity(channelEntity(room.Type)).Warnf("Skipping encrypted room: %s", room.Name)
+			t.withEntity(channelEntityForRoom(room)).Warnf("Skipping encrypted room: %s", room.Name)
 			t.skippedRoomIDs[room.ID] = true
 			continue
 		}
@@ -515,7 +534,7 @@ func (t *Transformer) transformChannels(rooms []RocketChatRoom) {
 
 			// If every member was skipped, there is nothing to migrate.
 			if len(uids) == 0 {
-				t.withEntity(channelEntity(room.Type)).Warnf("Skipping direct room %s: all members were skipped users", room.ID)
+				t.withEntity(channelEntityForRoom(room)).Warnf("Skipping direct room %s: all members were skipped users", room.ID)
 				t.skippedRoomIDs[room.ID] = true
 				continue
 			}
@@ -526,7 +545,7 @@ func (t *Transformer) transformChannels(rooms []RocketChatRoom) {
 			// so drop the room rather than risk dangling references or an
 			// out-of-range panic in the self-DM duplication below.
 			if len(uids) != len(usernames) {
-				t.withEntity(channelEntity(room.Type)).Warnf("Skipping direct room %s: mismatched member counts after filtering (%d uids, %d usernames)", room.ID, len(uids), len(usernames))
+				t.withEntity(channelEntityForRoom(room)).Warnf("Skipping direct room %s: mismatched member counts after filtering (%d uids, %d usernames)", room.ID, len(uids), len(usernames))
 				t.skippedRoomIDs[room.ID] = true
 				continue
 			}
@@ -919,7 +938,7 @@ func (t *Transformer) convertMessage(m *RocketChatMessage, uploadsById map[strin
 			// ExtractAttachments, so the path embedded in the JSONL matches the
 			// filename that will be created on disk.
 			sanitizedName := sanitizeFilename(norm.NFC.String(upload.Name))
-			attachPath := fmt.Sprintf("bulk-export-attachments/%s_%s", sanitizeFilename(upload.ID), sanitizedName)
+			attachPath := fmt.Sprintf("%s/%s_%s", intermediate.AttachmentsDirName, sanitizeFilename(upload.ID), sanitizedName)
 			post.Attachments = append(post.Attachments, attachPath)
 		}
 	}
