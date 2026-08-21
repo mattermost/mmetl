@@ -2286,6 +2286,33 @@ func TestTransformPosts(t *testing.T) {
 		require.Equal(t, 1, len(post.Replies[0].Reactions))
 	})
 
+	t.Run("invalid reaction emoji names are sanitized", func(t *testing.T) {
+		slackTransformer := NewTransformer("test", log.New())
+		slackTransformer.Intermediate.UsersById = map[string]*IntermediateUser{"m1": {Username: "m1"}}
+		slackTransformer.Intermediate.PublicChannels = []*IntermediateChannel{
+			{Name: "channel1", OriginalName: "channel1"},
+		}
+
+		slackExport := &SlackExport{
+			Posts: map[string][]SlackPost{
+				"channel1": {{
+					User: "m1", Text: "hello", TimeStamp: "1695219818.000100", Type: "message",
+					Reactions: []*SlackReaction{{Name: "リハテスト", Count: 1, Users: []string{"m1"}}},
+				}},
+			},
+		}
+
+		err := slackTransformer.TransformPosts(slackExport, "", false, false, false)
+		require.NoError(t, err)
+		require.Len(t, slackTransformer.Intermediate.Posts, 1)
+		require.Len(t, slackTransformer.Intermediate.Posts[0].Reactions, 1)
+
+		name := slackTransformer.Intermediate.Posts[0].Reactions[0].EmojiName
+		require.True(t, strings.HasPrefix(name, "emoji_"))
+		require.LessOrEqual(t, len(name), model.EmojiNameMaxLength)
+		require.True(t, model.IsValidAlphaNumHyphenUnderscorePlus(name))
+	})
+
 	t.Run("long posts are split into thread replies", func(t *testing.T) {
 		slackTransformer := NewTransformer("test", log.New())
 		slackTransformer.Intermediate.UsersById = map[string]*IntermediateUser{"m1": {Username: "m1"}}

@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -219,6 +220,46 @@ func TestFindTeamIdFromChannelDir(t *testing.T) {
 		assert.ErrorContains(t, err, "No team ID found")
 		assert.Equal(t, "", teamID)
 	})
+}
+
+// TestFindTeamIDForChannel_ExactMatchOnly reproduces a bug where a channel
+// named "dev" would match a directory named "dev-ops" because the lookup
+// used strings.HasPrefix instead of an exact name comparison. The channel
+// directory name must match exactly, otherwise the channel silently
+// inherits the team ID of an unrelated channel that merely shares a prefix.
+func TestFindTeamIDForChannel_ExactMatchOnly(t *testing.T) {
+	bt := setupGridTransformer(t)
+
+	writeToFileInTestDir(filepath.Join(bt.dirPath, "dev-ops"), "posts.json",
+		marshalJSON([]Post{{Team: "team-devops"}}, t),
+		t,
+	)
+	writeToFileInTestDir(filepath.Join(bt.dirPath, "dev"), "posts.json",
+		marshalJSON([]Post{{Team: "team-dev"}}, t),
+		t,
+	)
+
+	allItems, err := os.ReadDir(bt.dirPath)
+	assert.NoError(t, err)
+
+	byName := make(map[string]fs.DirEntry, len(allItems))
+	for _, item := range allItems {
+		byName[item.Name()] = item
+	}
+
+	// os.ReadDir returns entries sorted by filename, and "dev" always sorts
+	// before "dev-ops" since it's a prefix of it. That would let a prefix
+	// lookup find "dev" first and pass by coincidence, masking the bug this
+	// test guards against. Force "dev-ops" first so a prefix-matching lookup
+	// is provably wrong (it would return "team-devops"), while the
+	// exact-match lookup still finds "dev" and returns "team-dev".
+	itemsInDir := []fs.DirEntry{byName["dev-ops"], byName["dev"]}
+
+	channel := slack.SlackChannel{Id: "c1", Name: "dev"}
+	teamID, err := bt.findTeamIDForChannel(channel, itemsInDir, ChannelFilePublic)
+
+	assert.NoError(t, err)
+	assert.Equal(t, "team-dev", teamID)
 }
 
 func TestAppendChannelToChannelsToMove(t *testing.T) {

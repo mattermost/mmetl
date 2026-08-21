@@ -32,6 +32,17 @@ mmetl check slack --file export.zip
 mmetl transform slack --team myteam --file export.zip --output mm_export.jsonl
 ```
 
+Slack **Enterprise Grid** exports must be split first. `mmetl grid-transform` infers each workspace ID from the `teams/<name>/` folders already in the archive and writes one zip per workspace:
+
+```sh
+mmetl grid-transform --file slackexport.zip
+# then, for each generated zip:
+mmetl check slack --file acme.zip
+mmetl transform slack --team acme --file acme.zip --output acme.jsonl
+```
+
+Pass `--team-map-path teams.json` only if you need to override the inferred mapping. The file is a JSON object: keys are Slack workspace IDs (the `team` field on posts, typically `T...`); values must match an existing folder under `teams/` in the export — they are not Mattermost team names.
+
 The tool is self-documented — run any command with `--help` to see its
 subcommands and options:
 

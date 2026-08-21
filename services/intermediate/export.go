@@ -41,6 +41,9 @@ type Exporter struct {
 	// Intermediate.UsersById.
 	skippedUserIDs   map[string]bool
 	skippedUserNames map[string]string
+
+	// emojiNames is lazy-initialized on first SanitizeEmojiName call.
+	emojiNames *EmojiNameSanitizer
 }
 
 // MarkUserSkipped records a user ID (and username, if known at the call site)

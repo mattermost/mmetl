@@ -3,6 +3,7 @@ package commands_test
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -15,12 +16,20 @@ import (
 
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mmetl/commands"
+	"github.com/mattermost/mmetl/services/slack"
 	"github.com/mattermost/mmetl/testhelper"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// expectedSanitizedEmojiName mirrors intermediate.fallbackEmojiName so e2e tests
+// can assert the deterministic rename for names that cannot be transliterated.
+func expectedSanitizedEmojiName(original string) string {
+	sum := sha256.Sum256([]byte(original))
+	return "emoji_" + hex.EncodeToString(sum[:8])
+}
 
 // resetCobraFlags recursively resets all flags in a command tree to their
 // default values. This prevents flag state from leaking between subtests
@@ -232,6 +241,63 @@ func TestTransformSlackE2E(t *testing.T) {
 			}
 		}
 		assert.True(t, foundCoffee, "should find 'coffee' post in random channel")
+	})
+
+	t.Run("invalid reaction emoji names are sanitized and import", func(t *testing.T) {
+		ctx := context.Background()
+		tempDir := t.TempDir()
+		slackExportPath := filepath.Join(tempDir, "slack_export.zip")
+		mmExportPath := filepath.Join(tempDir, "mattermost_import.jsonl")
+		teamName := uniqueTeamName("rxne")
+		const invalidEmoji = "リハテスト"
+		const postMessage = "post with invalid reaction emoji"
+
+		err := testhelper.SlackBasicExport().
+			AddPost("general", slack.SlackPost{
+				User:      "U001",
+				Text:      postMessage,
+				TimeStamp: "1704067200.000100",
+				Type:      "message",
+				Reactions: []*slack.SlackReaction{{
+					Name:  invalidEmoji,
+					Count: 1,
+					Users: []string{"U002"},
+				}},
+			}).
+			Build(slackExportPath)
+		require.NoError(t, err)
+
+		team := th.CreateTeam(ctx, teamName, "Invalid Reaction Emoji E2E")
+		require.NotNil(t, team)
+
+		c := commands.RootCmd
+		resetCobraFlags(c)
+		c.SetArgs([]string{
+			"transform", "slack",
+			"--team", teamName,
+			"--file", slackExportPath,
+			"--output", mmExportPath,
+			"--skip-attachments",
+		})
+		require.NoError(t, c.Execute())
+
+		th.ValidateImportFileOrFail(ctx, mmExportPath)
+		require.NoError(t, th.ImportBulkData(ctx, mmExportPath))
+
+		jane := th.AssertUserExists(ctx, "jane.smith")
+		general := th.AssertChannelExists(ctx, teamName, "general")
+		posts, err := th.GetChannelPosts(ctx, general.Id, 0, 100)
+		require.NoError(t, err)
+		post := findPostByMessage(posts, postMessage)
+		require.NotNil(t, post)
+
+		reactions, _, err := th.Client.GetReactions(ctx, post.Id)
+		require.NoError(t, err)
+		require.Len(t, reactions, 1)
+		assert.Equal(t, jane.Id, reactions[0].UserId)
+		assert.Equal(t, expectedSanitizedEmojiName(invalidEmoji), reactions[0].EmojiName)
+		assert.NotEqual(t, invalidEmoji, reactions[0].EmojiName)
+		assert.True(t, model.IsValidAlphaNumHyphenUnderscorePlus(reactions[0].EmojiName))
 	})
 
 	t.Run("mentions are correctly converted in export and import", func(t *testing.T) {

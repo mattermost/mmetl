@@ -157,7 +157,10 @@ func TestTransformRocketChatImportE2E(t *testing.T) {
 		rcMessage{
 			ID: "engineering-root", RoomID: "engineering-id", User: rcMsgUser{ID: "alice-id", Username: "alice"},
 			Message: "Morning all! Kicking off the sprint", Timestamp: baseTime,
-			Reactions: map[string]rcReactionInfo{":thumbsup:": {Usernames: []string{"bob"}}},
+			Reactions: map[string]rcReactionInfo{
+				":thumbsup:": {Usernames: []string{"bob"}},
+				":リハテスト:":    {Usernames: []string{"carol"}},
+			},
 		},
 		rcMessage{ID: "engineering-reply", RoomID: "engineering-id", User: rcMsgUser{ID: "bob-id", Username: "bob"}, Message: "I can review the migration PR", Timestamp: baseTime.Add(time.Minute), ThreadID: "engineering-root"},
 		rcMessage{ID: "secret-root", RoomID: "secret-id", User: rcMsgUser{ID: "carol-id", Username: "carol"}, Message: "Confidential prototype update", Timestamp: baseTime.Add(2 * time.Minute)},
@@ -221,9 +224,18 @@ func TestTransformRocketChatImportE2E(t *testing.T) {
 	assert.Equal(t, root.Id, reply.RootId)
 	reactions, _, err := th.Client.GetReactions(ctx, root.Id)
 	require.NoError(t, err)
-	require.Len(t, reactions, 1)
-	assert.Equal(t, bob.Id, reactions[0].UserId)
-	assert.Equal(t, "thumbsup", reactions[0].EmojiName)
+	require.Len(t, reactions, 2)
+	byEmoji := map[string]*model.Reaction{}
+	for _, r := range reactions {
+		byEmoji[r.EmojiName] = r
+	}
+	require.Contains(t, byEmoji, "thumbsup")
+	assert.Equal(t, bob.Id, byEmoji["thumbsup"].UserId)
+
+	sanitized := expectedSanitizedEmojiName("リハテスト")
+	require.Contains(t, byEmoji, sanitized, "CJK reaction should be imported under sanitized emoji name")
+	assert.Equal(t, carol.Id, byEmoji[sanitized].UserId)
+	assert.True(t, model.IsValidAlphaNumHyphenUnderscorePlus(sanitized))
 
 	dm, _, err := th.Client.CreateDirectChannel(ctx, alice.Id, bob.Id)
 	require.NoError(t, err)

@@ -3,6 +3,7 @@ package commands
 import (
 	"archive/zip"
 	"encoding/json"
+	"fmt"
 	"os"
 
 	"github.com/mattermost/mmetl/services/slack"
@@ -14,22 +15,29 @@ import (
 var GridTransformCmd = &cobra.Command{
 	Use:   "grid-transform",
 	Short: "Transforms a slack enterprise grid into multiple workspace export files.",
-	Long:  "Accepts a Slack Enterprise Grid export file and transforms it into multiple workspace export files to be imported separately into Mattermost.",
-	Args:  cobra.NoArgs,
-	RunE:  gridTransformCmdF,
+	Long: `Accepts a Slack Enterprise Grid export and splits it into one zip per workspace, to be transformed separately with mmetl transform slack.
+
+Shared channels at the archive root are moved into the originating workspace folder under teams/. The originating workspace is the Slack team ID on the first post that has a "team" field.
+
+Workspace IDs are inferred from each folder under teams/ already in the export (native members' team_id in users.json, then posts in that folder, then any users including guests). Pass --team-map-path only to override that mapping.
+
+--team-map-path is a path to a JSON file mapping Slack workspace IDs to folder names under teams/:
+
+  { "T0001": "acme", "T0002": "widgets-inc" }
+
+Keys are the Slack workspace ID as it appears in a message's "team" field (typically T...). Values must match an existing folder under teams/ in the export; they are not Mattermost team names. Use --team on transform slack for the Mattermost team.`,
+	Example: "  grid-transform --file slackexport.zip\n  grid-transform --file slackexport.zip --team-map-path teams.json",
+	Args:    cobra.NoArgs,
+	RunE:    gridTransformCmdF,
 }
 
 func init() {
 	GridTransformCmd.Flags().StringP("file", "f", "", "the Slack export file to clean")
-	GridTransformCmd.Flags().StringP("teamMap", "t", "", "The team mapping file to use")
+	GridTransformCmd.Flags().StringP("team-map-path", "t", "", "path to a JSON file mapping Slack workspace IDs to folder names under teams/; inferred from the export when omitted")
 
 	GridTransformCmd.Flags().Bool("debug", false, "Whether to show debug logs or not")
 
 	if err := GridTransformCmd.MarkFlagRequired("file"); err != nil {
-		panic(err)
-	}
-
-	if err := GridTransformCmd.MarkFlagRequired("teamMap"); err != nil {
 		panic(err)
 	}
 
@@ -40,7 +48,7 @@ func init() {
 
 func gridTransformCmdF(cmd *cobra.Command, args []string) error {
 	inputFilePath, _ := cmd.Flags().GetString("file")
-	teamMap, _ := cmd.Flags().GetString("teamMap")
+	teamMapPath, _ := cmd.Flags().GetString("team-map-path")
 
 	debug, _ := cmd.Flags().GetBool("debug")
 
@@ -80,25 +88,33 @@ func gridTransformCmdF(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// we do not need a team name here.
 	slackTransformer := slack_grid.NewGridTransformer(logger)
-	teamMapFile, err := os.Open(teamMap)
-	if err != nil {
-		logger.WithError(err).Error("error opening teams.json")
-		return err
-	}
-	defer teamMapFile.Close()
 
-	teamMapDecoder := json.NewDecoder(teamMapFile)
-	err = teamMapDecoder.Decode(&slackTransformer.Teams)
-	if err != nil {
-		logger.WithError(err).Error("error parsing teams.json")
-		return err
+	if teamMapPath != "" {
+		teamMapFile, openErr := os.Open(teamMapPath)
+		if openErr != nil {
+			logger.WithError(openErr).Error("error opening team map file")
+			return openErr
+		}
+		defer teamMapFile.Close()
+
+		if decodeErr := json.NewDecoder(teamMapFile).Decode(&slackTransformer.Teams); decodeErr != nil {
+			logger.WithError(decodeErr).Error("error parsing team map file")
+			return decodeErr
+		}
+	} else {
+		discovered, discoverErr := slackTransformer.DiscoverTeamMap(zipReader)
+		if discoverErr != nil {
+			logger.WithError(discoverErr).Error("error inferring team mapping from the export")
+			return discoverErr
+		}
+		slackTransformer.Teams = discovered
+		fmt.Printf("Inferred team mapping (override with --team-map-path):\n%s", slack_grid.FormatTeamMap(discovered))
 	}
 
 	valid := slackTransformer.GridPreCheck(zipReader)
 	if !valid {
-		return nil
+		return fmt.Errorf("grid pre-check failed, see %s for details", logFile.Name())
 	}
 
 	err = slackTransformer.ExtractDirectory(zipReader)
