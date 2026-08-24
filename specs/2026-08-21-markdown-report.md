@@ -3,7 +3,7 @@
 | x       | y          |
 | ------- | ---------- |
 | State   | Draft      |
-| Version | 0.2        |
+| Version | 0.4        |
 | Date    | 2026-08-24 |
 
 ## Overview
@@ -151,13 +151,38 @@ type ReportEntityNote struct {
 	EntityName string   `json:"entity_name,omitempty"` // username, channel_name, ... (if available)
 	ReasonCode string   `json:"reason_code"`
 	Args       []string `json:"args,omitempty"` // formatted into Reason.Short
-	Count      int      `json:"count,omitempty"` // >0 only for aggregate notes
 
 	// reason points at the single registry instance for ReasonCode. The prose
 	// is never copied per note.
 	reason *Reason
 }
 ```
+
+### Entity identity
+
+Every note names an individual entity. There are no aggregate, count-only notes: a line
+saying "17 posts were dropped" tells a sysadmin nothing they can act on, because they
+cannot go back to the source export and find those 17 posts. Whatever we skip, we name.
+
+`EntityID` must therefore be sufficient to locate the entity **in the source export**,
+which for some kinds means a composite key:
+
+| Entity kind                     | EntityID                                     | EntityName                  |
+| ------------------------------- | -------------------------------------------- | --------------------------- |
+| user, bot                       | source user ID (`U004`)                      | username                    |
+| public channel, private channel | source channel ID                            | channel name                |
+| group channel, direct channel   | source channel ID                            | channel name, or members    |
+| channel membership              | `{channel_id}/{user_id}`                     | `{channel_name}/{username}` |
+| post                            | `{channel_name}/{post_ts}`                   | author username             |
+| thread                          | `{channel_name}/{thread_ts}`                 | author username             |
+| reaction                        | `{channel_name}/{post_ts}/{user_id}/{emoji}` | —                           |
+| file                            | source file ID                               | filename                    |
+| emoji                           | original emoji name                          | sanitized name              |
+| subscription (RocketChat)       | `{room_id}/{user_id}`                        | username                    |
+| upload (RocketChat)             | upload ID                                    | filename                    |
+
+Slack post timestamps are unique only within a channel, which is why the channel is part
+of the post, thread and reaction keys.
 
 ### Reasons
 
@@ -221,12 +246,10 @@ func (r *Report) Posts() *EntityReport
 // source collection; it is what Transformed is derived from.
 func (e *EntityReport) Seen(n int)
 
-// Skip records that one entity was not transformed, and why.
+// Skip records that one entity was not transformed, and why. There is no
+// aggregate variant: every skipped entity is named individually, so id must
+// always identify the entity in the source export (see Entity identity).
 func (e *EntityReport) Skip(id, name string, reason *Reason, args ...string)
-
-// SkipN records that n entities with no individually meaningful ID were not
-// transformed (channel memberships, reactions). Produces one aggregate note.
-func (e *EntityReport) SkipN(n int, reason *Reason, args ...string)
 
 // Note records something that happened to an entity that WAS transformed
 // (split, merged, renamed, truncated). Does not touch the counters.
@@ -251,10 +274,17 @@ omitted is the point of the report, so truncation is deliberately not implemente
 cost is bounded in practice because a note holds only IDs and a pointer to a shared
 `Reason`; the prose is stored once per reason, not once per entity.
 
-The one place this could still be large is per-post reasons on a multi-million-post
-export (e.g. `post_no_user`, which fires from roughly ten call sites in
-`services/slack/intermediate.go:969-1080`). Those reasons are marked `Quiet` so they do
-not also multiply the log file, but their notes are retained.
+This applies to the high-cardinality kinds too — dropped posts, memberships and
+reactions are each named, not rolled up into a count. The worst cases are
+`post_no_user` (roughly ten call sites in `services/slack/intermediate.go:969-1080`),
+`post_skipped_author` and `reaction_skipped_user` on a large export with many skipped
+users. Those reasons are marked `Quiet` so they do not also multiply the log file, but
+their notes are retained in full.
+
+A note is a handful of short strings plus a pointer, so the cost is on the order of a
+hundred bytes per skipped entity: a run that skips a million posts spends tens of
+megabytes on the report, against an `Intermediate` that already holds every post in
+memory. That is an acceptable trade for a report that can actually be acted on.
 
 ## Report file example
 
@@ -289,30 +319,52 @@ point of failure.
 | [Users](#users)                     | 3           | 1       |
 | [Public channels](#public-channels) | 12          | 0       |
 | [Group channels](#group-channels)   | 4           | 1       |
-| [Posts](#posts)                     | 8231        | 17      |
+| [Posts](#posts)                     | 8231        | 3       |
 | [Threads](#threads)                 | 106         | 1       |
 
 ## Details
 
 ### Users
 
-- **U004** (`channelless.guest`): has no public or private channel membership in the Slack export[^guest_no_channel]
-- **U009** (`long.name`): position exceeded the maximum length and was truncated[^position_truncated]
+#### 1 skipped: has no public or private channel membership in the Slack export[^guest_no_channel]
+
+- **U004** (`channelless.guest`)
+
+#### 1 note: position exceeded the maximum length and was truncated[^position_truncated]
+
+- **U009** (`long.name`)
 
 ### Group channels
 
-- **G002** (`mpdm-ana--bob--cy-1`): merged into `mpdm-ana--bob--cy` because both have the same members[^mpim_merged]
+#### 1 skipped: a direct or group channel needs at least two members[^dm_single_member]
+
+- **G007** (`mpdm-ana--bob`)
+
+#### 1 note: merged into another channel with the same members[^mpim_merged]
+
+- **G002** (`mpdm-ana--bob--cy-1`) — merged into `mpdm-ana--bob--cy`
 
 ### Posts
 
-- **1704067260.000200**: split into 3 posts in a thread because it exceeded the maximum message length[^post_split]
-- **17 posts**: the author was a skipped user[^post_skipped_author]
+#### 3 skipped: the author was a skipped user[^post_skipped_author]
+
+- **general/1704067260.000300** (`channelless.guest`)
+- **general/1704067265.000700** (`channelless.guest`)
+- **random/1704069102.000100** (`channelless.guest`)
+
+#### 1 note: split into a thread because it exceeded the maximum message length[^post_split]
+
+- **general/1704067260.000200** (`ana`) — split into 3 posts
 
 ### Threads
 
-- **1704067260.000200** (`g001`): the thread root was not imported[^thread_root_missing]
+#### 1 skipped: the thread root was not imported[^thread_root_missing]
+
+- **g001/1704067260.000200** (`channelless.guest`)
 
 [^guest_no_channel]: Mattermost cannot scope a guest's access without at least one public or private channel membership, so this user (and their memberships and posts) is skipped. Use `--guest-handling=user` to import them as a regular member instead.
+
+[^dm_single_member]: The Mattermost bulk import cannot express a direct or group channel with fewer than two members, so the channel is skipped. This usually means every other member was skipped first.
 
 [^position_truncated]: Mattermost limits the position field length; the value was truncated to fit and the user can update it after logging in.
 
@@ -330,9 +382,17 @@ Rendering rules:
 - Section anchors are GitHub-flavored Markdown: lowercased, spaces to hyphens, so
   `## Public channels` is linked as `#public-channels`. (v0.1 used `#Users` /
   `#Public+Channels`, which do not resolve.)
-- A note line is `- **{EntityID}** (`{EntityName}`): {Short}[^{Code}]`, with the
-  `({EntityName})` part omitted when the name is unknown.
-- An aggregate note (from `SkipN`) renders as `- **{Count} {plural kind}**: {Short}[^{Code}]`.
+- Notes inside an entity section are grouped by reason. Each group gets an `####`
+  heading, `{count} {skipped|note[s]}: {Short}[^{Code}]`, followed by one bullet per
+  entity. Grouping keeps a section with thousands of entries scannable while still
+  naming every entity, and it puts the count and the footnote reference in one place
+  instead of repeating them on every line.
+- A note bullet is `- **{EntityID}** (`{EntityName}`)`, with the `({EntityName})` part
+  omitted when the name is unknown, and an optional ` — {detail}` suffix built from the
+  note's `Args` when the reason has per-entity specifics (what a post was split into,
+  which channel a duplicate merged into).
+- Groups are ordered by descending entity count, then by reason code, so the largest
+  problems are at the top of each section.
 - Entity IDs and names are escaped for Markdown; channel and user names from a source
   export can contain backticks, pipes and brackets.
 - A footnote block is emitted once per distinct reason actually used in the run, in
@@ -344,7 +404,8 @@ Rendering rules:
 ### Ordering and determinism
 
 Notes are sorted before rendering, by `(ReasonCode, EntityID)`, and the same order is
-used in the JSON. Without this the report is non-deterministic: users are iterated from
+used in the JSON. Reason groups within a section are ordered by descending count, with
+the reason code breaking ties so equal-sized groups do not swap places between runs. Without this the report is non-deterministic: users are iterated from
 `Intermediate.UsersById`, a Go map whose iteration order is randomized per run, so two
 transforms of the same export would emit the same notes in a different order. That makes
 two reports impossible to diff and makes golden-file tests flaky.
@@ -360,23 +421,43 @@ view, diff two runs, or assert on a report in a test without parsing Markdown.
 
 ## CLI surface
 
-One new flag on each transform command:
+**No new flag.** The report is written next to the bulk import file, in the directory
+`--output` points at, and it cannot be disabled — it is always produced, on success and
+on failure.
 
-```
---report-path string   Path to write the transform report (default "transform-report.md").
-                       The JSON report is written alongside it with a .json extension.
-                       Set to an empty string to disable the report.
-```
+| Artifact         | Location                                   |
+| ---------------- | ------------------------------------------ |
+| Bulk import file | `--output` (default `bulk-export.jsonl`)   |
+| Markdown report  | `{dir(--output)}/transform-report.md`      |
+| JSON report      | `{dir(--output)}/transform-report.json`    |
+| Transform log    | `{dir(--output)}/transform-{provider}.log` |
 
-Given `--report-path out/report.md`, mmetl writes `out/report.md` and `out/report.json`.
-If the path has no extension, `.json` is appended for the JSON file.
+Rules:
+
+- `dir(--output)` is `filepath.Dir` of the resolved output path, so
+  `--output out/mm.jsonl` writes `out/transform-report.md`, and the default
+  `bulk-export.jsonl` keeps the report in the working directory.
+- The output directory already has to exist or be creatable for the import file itself,
+  so the report adds no new directory handling.
+- The transform log moves with the report. It is currently hardcoded to the process
+  working directory (`commands/transform.go:129`,
+  `commands/transform_rocketchat.go:84`); co-locating it means one migration run leaves
+  one self-contained directory of artifacts. This is the only behaviour change for
+  existing invocations, and it is a no-op whenever `--output` is left at its default.
+- Report filenames are fixed, not derived from the output basename. Two runs writing
+  into the same directory overwrite each other's report — exactly as they already
+  overwrite each other's log, which is opened with `O_TRUNC`.
+- `--attachments-dir` is untouched.
+- `grid-transform` and the `check` commands keep their current log handling; they are
+  out of scope for v1.
 
 A short summary (the contents of the `## Summary` table, plus the report path) is also
 printed to stdout at the end of the run, so an operator who never opens the file still
 sees the counts.
 
-Adding a flag requires regenerating CLI docs: run `make docs` and commit the resulting
-`docs/cli/*.md`. CI enforces this through `make docs-check`.
+No flags are added or removed, so `docs/cli/` only changes if the `--output` help text
+is reworded to mention the report. If it is, run `make docs` and commit the regenerated
+`docs/cli/*.md`; CI enforces this through `make docs-check`.
 
 ## Errors
 
@@ -385,22 +466,36 @@ how far the run got. The command wires the write through a `defer`, and stores t
 message in `Report.Error`, which renders as the `## Stopped because of an error` section
 at the top of the Markdown file.
 
-One path bypasses `defer`: `IntermediateUser.Sanitise` calls `ExitFunc(1)` — i.e.
-`os.Exit` — when a user has no email and neither `--skip-empty-emails` nor
-`--default-email-domain` was given (`services/intermediate/types.go:217`). Recommended
-fix, lowest risk: the transform commands install a wrapper before running,
+One path currently bypasses that `defer`: `IntermediateUser.Sanitise` calls
+`ExitFunc(1)` — i.e. `os.Exit` — when a user has no email and neither
+`--skip-empty-emails` nor `--default-email-domain` was given
+(`services/intermediate/types.go:217`). It is the only hard exit left in the transform
+path, and it is also one of the errors operators hit most often, so it is changed to
+return an error like every other failure in the codebase.
 
-```go
-inner := intermediate.ExitFunc
-intermediate.ExitFunc = func(code int) {
-	writeReport(report, reportPath, errors.New("..."))
-	inner(code)
-}
-```
+The signature changes and their call chain:
 
-which keeps the existing `ExitFunc` test seam intact. The alternative — making
-`Sanitise` return an error and propagating it — is cleaner but changes behaviour on a
-path that several tests depend on; leave it as a follow-up.
+| Function                                | Now                                           | After           |
+| --------------------------------------- | --------------------------------------------- | --------------- |
+| `IntermediateUser.Sanitise`             | `types.go:199`, void, calls `ExitFunc(1)`     | returns `error` |
+| `slack.Transformer.TransformUsers`      | `slack/intermediate.go:120`, void             | returns `error` |
+| `slack.Transformer.Transform`           | `slack/intermediate.go:1193`, returns `error` | unchanged       |
+| `rocketchat.Transformer.transformUsers` | `rocketchat/transformer.go:136`, void         | returns `error` |
+| `rocketchat.Transformer.Transform`      | `rocketchat/transformer.go:112`, **void**     | returns `error` |
+
+Callers to update: `commands/transform_rocketchat.go:104` and
+`commands/check_rocketchat.go:72`, which today ignore a void `Transform`. The Slack side
+already propagates through `Transform`, so only `TransformUsers` needs threading.
+
+`Sanitise` also drops its `fmt.Println`; the message becomes the returned error and
+cobra prints it, which preserves what the operator sees (message on stderr, exit
+code 1) while making the path testable and letting the deferred report write run.
+
+With that gone `ExitFunc` has no callers left, so it is deleted along with its
+declaration at `types.go:21-23`. The tests that override it
+(`services/slack/intermediate_test.go:575`, `:594`, `:625`, `:645`) become plain
+`require.Error` assertions on `Sanitise`. `NowFunc` stays. `AGENTS.md:28` names both as
+test seams and must be updated in the same change.
 
 ## Plumbing changes required
 
@@ -409,7 +504,8 @@ receiver) threaded through them:
 
 - `rocketchat.ExtractAttachments(...)` — `services/rocketchat/attachments.go:21`.
   Exported, takes a `logger`, and owns six distinct upload-skip reasons.
-- `IntermediateUser.Sanitise(logger, ...)` — `services/intermediate/types.go:199`.
+- `IntermediateUser.Sanitise(logger, ...)` — `services/intermediate/types.go:199`. Also
+  changes to return `error` instead of calling `ExitFunc`; see [Errors](#errors).
 - `IntermediateChannel.SanitiseWithPrefix(logger, ...)` — `services/intermediate/types.go:137`.
 - `slack.SplitChannelsByMemberSize` — `services/slack/export.go:47`. Uses the **stdlib**
   `log`, so its single-member-DM drop is not even in `transform-slack.log` today. The
@@ -499,14 +595,20 @@ RocketChat:
 
 ## Implementation phases
 
-1. **Core.** `report.go`, `reasons.go`, `report_markdown.go` in `services/intermediate`;
+1. **Error propagation.** Make `Sanitise` return an error, thread it through
+   `TransformUsers` / `transformUsers` / RocketChat's `Transform`, update the two
+   RocketChat command callers, delete `ExitFunc`, and update `AGENTS.md`. Independent of
+   the report itself, and worth landing first so the report's deferred write is
+   reachable on every failure path.
+2. **Core.** `report.go`, `reasons.go`, `report_markdown.go` in `services/intermediate`;
    `Report` field on `Exporter`; nil-safe recording API; Markdown and JSON renderers with
    golden-file unit tests.
-2. **Slack.** Migrate every Slack reason, thread `*Report` through the free functions,
-   remove the superseded counters, wire `--report-path` into `transform slack`, run
-   `make docs`.
-3. **RocketChat.** Same for the RocketChat transformer and `ExtractAttachments`.
-4. **Verification.** Extend the guest-handling e2e tests
+3. **Slack.** Migrate every Slack reason, thread `*Report` through the free functions,
+   remove the superseded counters, and write the report alongside `--output` in
+   `transform slack`.
+4. **RocketChat.** Same for the RocketChat transformer and `ExtractAttachments`, and
+   the same report wiring in `transform rocketchat`.
+5. **Verification.** Extend the guest-handling e2e tests
    (`TestTransformSlackE2EGuestSkip`, `TestTransformSlackE2EChannellessGuestMpimThread`,
    `TestTransformRocketChatE2EGuestImport`) to assert on the JSON report, which is a
    stronger and more readable assertion than the current output-file inspection.
@@ -516,7 +618,9 @@ also requires `make docs` with the regenerated `docs/cli/*.md` committed.
 
 ## Changelog
 
-| Date       | Note                                                                                                                                                                                                                                                                          |
-| ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 2026-08-22 | Initial definition of the proposal on how the data is stored and how the report should look like.                                                                                                                                                                             |
-| 2026-08-24 | v0.2: two outcomes only (no Failed); source-entity counting with derived Transformed; shared Reason registry with Markdown footnotes; generic EntityReport; JSON + Markdown output; report on error; GFM anchors; determinism rules; full reason inventory and plumbing list. |
+| Date       | Note                                                                                                                                                                                                                                                                                                                                   |
+| ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-08-22 | Initial definition of the proposal on how the data is stored and how the report should look like.                                                                                                                                                                                                                                      |
+| 2026-08-24 | v0.2: two outcomes only (no Failed); source-entity counting with derived Transformed; shared Reason registry with Markdown footnotes; generic EntityReport; JSON + Markdown output; report on error; GFM anchors; determinism rules; full reason inventory and plumbing list.                                                          |
+| 2026-08-24 | v0.3: every skipped entity is named individually (no aggregate notes), with composite entity IDs and reason-grouped rendering; `--report-path` replaced by `--output-path`, a directory holding every artifact, and the report can no longer be disabled; `Sanitise` returns an error instead of calling `ExitFunc`, which is deleted. |
+| 2026-08-24 | v0.4: no new CLI flag — the report is written next to the bulk import file, in the directory `--output` points at, and the transform log moves there with it.                                                                                                                                                                          |
