@@ -8,7 +8,6 @@ import (
 	"unicode"
 
 	"github.com/mattermost/mattermost/server/public/model"
-	log "github.com/sirupsen/logrus"
 	"golang.org/x/text/unicode/norm"
 )
 
@@ -16,16 +15,16 @@ import (
 // ([a-zA-Z0-9\-+_], non-empty, ≤ 64 bytes). The same original always maps to the
 // same sanitized name within a transform run.
 type EmojiNameSanitizer struct {
-	logger log.FieldLogger
+	entity *EntityReport
 	mapped map[string]string // original → sanitized
 	usedBy map[string]string // sanitized → original that claimed it
 }
 
-// NewEmojiNameSanitizer creates a sanitizer that logs each original→sanitized
-// rename once.
-func NewEmojiNameSanitizer(logger log.FieldLogger) *EmojiNameSanitizer {
+// NewEmojiNameSanitizer creates a sanitizer that records each original→sanitized
+// rename against entity, once per distinct source name.
+func NewEmojiNameSanitizer(entity *EntityReport) *EmojiNameSanitizer {
 	return &EmojiNameSanitizer{
-		logger: logger,
+		entity: entity,
 		mapped: make(map[string]string),
 		usedBy: make(map[string]string),
 	}
@@ -58,8 +57,11 @@ func (s *EmojiNameSanitizer) Sanitize(original string) string {
 	s.mapped[original] = sanitized
 	s.usedBy[sanitized] = original
 
-	if sanitized != original && s.logger != nil {
-		s.logger.Warnf("Emoji name %q is not valid for Mattermost; renaming to %q", original, sanitized)
+	// One source emoji name is one source entity, counted the first time it is
+	// seen rather than once per reaction that uses it.
+	s.entity.Seen(1)
+	if sanitized != original {
+		s.entity.Note(original, sanitized, ReasonEmojiRenamed, sanitized)
 	}
 	return sanitized
 }
@@ -168,7 +170,7 @@ func fallbackEmojiName(original string) string {
 // form, using a per-Exporter sanitizer so mappings stay consistent for the run.
 func (e *Exporter) SanitizeEmojiName(name string) string {
 	if e.emojiNames == nil {
-		e.emojiNames = NewEmojiNameSanitizer(e.Logger)
+		e.emojiNames = NewEmojiNameSanitizer(e.Report.Emoji())
 	}
 	return e.emojiNames.Sanitize(name)
 }

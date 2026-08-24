@@ -13,7 +13,9 @@ Pipeline is **Parse → Transform → Export** around a source-agnostic core:
 - `services/<provider>/` — provider-specific Parse + Transform (`slack`,
   `rocketchat`, `slack_grid`).
 - `services/intermediate/` — the source-agnostic core. `types.go` defines the
-  `Intermediate` model; `export.go` defines `Exporter`, which emits the JSONL.
+  `Intermediate` model; `export.go` defines `Exporter`, which emits the JSONL;
+  `report.go` / `reasons.go` / `report_markdown.go` define the transform report
+  that `Exporter` carries.
   **Each provider's `Transformer` embeds `intermediate.Exporter`** — so adding a
   provider means writing a parser + transformer that fill the Intermediate
   model; the export side is shared.
@@ -25,8 +27,15 @@ Pipeline is **Parse → Transform → Export** around a source-agnostic core:
 - Any bot user in the source requires `--bot-owner`, or the transform errors.
 - Empty emails are invalid by default; relax with `--skip-empty-emails` or
   `--default-email-domain`.
-- `intermediate.ExitFunc` / `NowFunc` are test seams for determinism — reuse
-  them rather than adding new globals.
+- `intermediate.NowFunc` is the test seam for determinism — reuse it rather
+  than adding new globals. Nothing in the transform path calls `os.Exit`;
+  failures are returned as errors so the transform report still gets written.
+- Every transform run writes a `Report` (`services/intermediate/report.go`)
+  alongside the bulk import file. When a code path skips a source entity or
+  changes it on the way in, record it: declare a `Reason` in `reasons.go` (the
+  shared one, or the provider's) and call `Skip`/`Note` on the entity's section
+  of `t.Report` instead of logging directly — recording is what emits the log
+  line.
 
 ## After making code changes
 

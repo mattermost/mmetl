@@ -42,7 +42,7 @@ func TestTransformUsers(t *testing.T) {
 			},
 		}
 
-		tr.transformUsers(users, false, "", GuestHandlingUser)
+		require.NoError(t, tr.transformUsers(users, false, "", GuestHandlingUser))
 
 		require.Len(t, tr.Intermediate.UsersById, 1)
 		u := tr.Intermediate.UsersById["u1"]
@@ -60,7 +60,7 @@ func TestTransformUsers(t *testing.T) {
 		users := []RocketChatUser{
 			{ID: "u1", Username: "bob", Name: "Bob James Smith", Emails: []RCEmail{{Address: "b@b.com"}}, Active: true, Type: "user"},
 		}
-		tr.transformUsers(users, false, "", GuestHandlingUser)
+		require.NoError(t, tr.transformUsers(users, false, "", GuestHandlingUser))
 		u := tr.Intermediate.UsersById["u1"]
 		require.NotNil(t, u)
 		assert.Equal(t, "Bob", u.FirstName)
@@ -72,7 +72,7 @@ func TestTransformUsers(t *testing.T) {
 		users := []RocketChatUser{
 			{ID: "u1", Username: "admin", Name: "Admin User", Emails: []RCEmail{{Address: "admin@example.com"}}, Active: true, Roles: []string{"admin"}, Type: "user"},
 		}
-		tr.transformUsers(users, false, "", GuestHandlingUser)
+		require.NoError(t, tr.transformUsers(users, false, "", GuestHandlingUser))
 		// User should be transformed (role mapping is informational — not stored in IntermediateUser itself)
 		require.NotNil(t, tr.Intermediate.UsersById["u1"])
 	})
@@ -82,7 +82,7 @@ func TestTransformUsers(t *testing.T) {
 		users := []RocketChatUser{
 			{ID: "u1", Username: "inactive", Name: "Inactive User", Emails: []RCEmail{{Address: "i@i.com"}}, Active: false, Type: "user"},
 		}
-		tr.transformUsers(users, false, "", GuestHandlingUser)
+		require.NoError(t, tr.transformUsers(users, false, "", GuestHandlingUser))
 		u := tr.Intermediate.UsersById["u1"]
 		require.NotNil(t, u)
 		assert.NotZero(t, u.DeleteAt)
@@ -93,7 +93,7 @@ func TestTransformUsers(t *testing.T) {
 		users := []RocketChatUser{
 			{ID: "u1", Username: "noemail", Name: "No Email", Emails: nil, Active: true, Type: "user"},
 		}
-		tr.transformUsers(users, false, "example.org", GuestHandlingUser)
+		require.NoError(t, tr.transformUsers(users, false, "example.org", GuestHandlingUser))
 		u := tr.Intermediate.UsersById["u1"]
 		require.NotNil(t, u)
 		assert.Equal(t, "noemail@example.org", u.Email)
@@ -104,7 +104,7 @@ func TestTransformUsers(t *testing.T) {
 		users := []RocketChatUser{
 			{ID: "u1", Username: "noemail", Name: "No Email", Emails: nil, Active: true, Type: "user"},
 		}
-		tr.transformUsers(users, true, "", GuestHandlingUser)
+		require.NoError(t, tr.transformUsers(users, true, "", GuestHandlingUser))
 		u := tr.Intermediate.UsersById["u1"]
 		require.NotNil(t, u)
 		assert.Equal(t, "", u.Email)
@@ -116,7 +116,7 @@ func TestTransformUsers(t *testing.T) {
 			{ID: "b1", Username: "bot", Name: "My Bot", Type: "bot", Active: true},
 			{ID: "u1", Username: "human", Name: "Human User", Emails: []RCEmail{{Address: "h@h.com"}}, Active: true, Type: "user"},
 		}
-		tr.transformUsers(users, false, "", GuestHandlingUser)
+		require.NoError(t, tr.transformUsers(users, false, "", GuestHandlingUser))
 		assert.Len(t, tr.Intermediate.UsersById, 2)
 
 		bot := tr.Intermediate.UsersById["b1"]
@@ -138,7 +138,7 @@ func TestTransformUsers(t *testing.T) {
 		users := []RocketChatUser{
 			{ID: "b1", Username: "bot", Name: "My Bot", Type: "bot", Active: false},
 		}
-		tr.transformUsers(users, false, "", GuestHandlingUser)
+		require.NoError(t, tr.transformUsers(users, false, "", GuestHandlingUser))
 		bot := tr.Intermediate.UsersById["b1"]
 		require.NotNil(t, bot)
 		assert.True(t, bot.IsBot)
@@ -151,7 +151,7 @@ func TestTransformUsers(t *testing.T) {
 			{ID: "app1", Username: "rocket.cat", Name: "Rocket Cat", Type: "app", Active: true},
 			{ID: "u1", Username: "alice", Name: "Alice", Emails: []RCEmail{{Address: "a@a.com"}}, Active: true, Type: "user"},
 		}
-		tr.transformUsers(users, false, "", GuestHandlingUser)
+		require.NoError(t, tr.transformUsers(users, false, "", GuestHandlingUser))
 		require.Len(t, tr.Intermediate.UsersById, 1)
 		assert.Nil(t, tr.Intermediate.UsersById["app1"])
 		assert.NotNil(t, tr.Intermediate.UsersById["u1"])
@@ -166,7 +166,7 @@ func TestTransformUsers(t *testing.T) {
 			{ID: "x2", Username: "blank", Name: "Blank", Type: "", Active: true},
 			{ID: "u1", Username: "alice", Name: "Alice", Emails: []RCEmail{{Address: "a@a.com"}}, Active: true, Type: "user"},
 		}
-		tr.transformUsers(users, false, "", GuestHandlingUser)
+		require.NoError(t, tr.transformUsers(users, false, "", GuestHandlingUser))
 		require.Len(t, tr.Intermediate.UsersById, 1)
 		assert.NotNil(t, tr.Intermediate.UsersById["u1"])
 		assert.True(t, tr.skippedUserIDs["x1"])
@@ -178,7 +178,7 @@ func TestTransformUsers(t *testing.T) {
 		users := []RocketChatUser{
 			{ID: "g1", Username: "guesty", Name: "Guest User", Emails: []RCEmail{{Address: "g@g.com"}}, Active: true, Roles: []string{"user", "guest"}, Type: "user"},
 		}
-		tr.transformUsers(users, false, "", GuestHandlingGuest)
+		require.NoError(t, tr.transformUsers(users, false, "", GuestHandlingGuest))
 		u := tr.Intermediate.UsersById["g1"]
 		require.NotNil(t, u)
 		assert.True(t, u.IsGuest)
@@ -190,7 +190,7 @@ func TestTransformUsers(t *testing.T) {
 		users := []RocketChatUser{
 			{ID: "g1", Username: "guesty", Name: "Guest User", Emails: []RCEmail{{Address: "g@g.com"}}, Active: true, Roles: []string{"Guest"}, Type: "user"},
 		}
-		tr.transformUsers(users, false, "", GuestHandlingGuest)
+		require.NoError(t, tr.transformUsers(users, false, "", GuestHandlingGuest))
 		u := tr.Intermediate.UsersById["g1"]
 		require.NotNil(t, u)
 		assert.True(t, u.IsGuest)
@@ -201,7 +201,7 @@ func TestTransformUsers(t *testing.T) {
 		users := []RocketChatUser{
 			{ID: "u1", Username: "alice", Name: "Alice", Emails: []RCEmail{{Address: "a@a.com"}}, Active: true, Roles: []string{"user", "admin"}, Type: "user"},
 		}
-		tr.transformUsers(users, false, "", GuestHandlingGuest)
+		require.NoError(t, tr.transformUsers(users, false, "", GuestHandlingGuest))
 		u := tr.Intermediate.UsersById["u1"]
 		require.NotNil(t, u)
 		assert.False(t, u.IsGuest)
@@ -212,7 +212,7 @@ func TestTransformUsers(t *testing.T) {
 		users := []RocketChatUser{
 			{ID: "b1", Username: "bot", Name: "My Bot", Type: "bot", Active: true, Roles: []string{"guest"}},
 		}
-		tr.transformUsers(users, false, "", GuestHandlingGuest)
+		require.NoError(t, tr.transformUsers(users, false, "", GuestHandlingGuest))
 		bot := tr.Intermediate.UsersById["b1"]
 		require.NotNil(t, bot)
 		assert.True(t, bot.IsBot)
@@ -225,7 +225,7 @@ func TestTransformUsers(t *testing.T) {
 			{ID: "g1", Username: "guesty", Name: "Guest User", Emails: []RCEmail{{Address: "g@g.com"}}, Active: true, Roles: []string{"guest"}, Type: "user"},
 			{ID: "u1", Username: "alice", Name: "Alice", Emails: []RCEmail{{Address: "a@a.com"}}, Active: true, Type: "user"},
 		}
-		tr.transformUsers(users, false, "", GuestHandlingSkip)
+		require.NoError(t, tr.transformUsers(users, false, "", GuestHandlingSkip))
 		require.Len(t, tr.Intermediate.UsersById, 1)
 		assert.Nil(t, tr.Intermediate.UsersById["g1"])
 		assert.NotNil(t, tr.Intermediate.UsersById["u1"])
@@ -238,7 +238,7 @@ func TestTransformUsers(t *testing.T) {
 		users := []RocketChatUser{
 			{ID: "g1", Username: "guesty", Name: "Guest User", Emails: []RCEmail{{Address: "g@g.com"}}, Active: true, Roles: []string{"guest"}, Type: "user"},
 		}
-		tr.transformUsers(users, false, "", GuestHandlingUser)
+		require.NoError(t, tr.transformUsers(users, false, "", GuestHandlingUser))
 		u := tr.Intermediate.UsersById["g1"]
 		require.NotNil(t, u)
 		// IsGuest reflects detection regardless of mode; the export mode decides
@@ -587,11 +587,12 @@ func TestTransformMessages(t *testing.T) {
 		}
 		tr.transformMessages([]RocketChatMessage{root, reply1, reply2}, nil)
 
-		// The whole thread is dropped, but the lost replies must be counted so
-		// the loss is visible in the end-of-transform summary: 1 root (skipped
-		// user) + 2 orphaned replies.
+		// The whole thread is dropped, but every lost reply must be named in the
+		// report so the loss is visible: 1 root (skipped user) + 2 orphaned
+		// replies, plus the thread itself.
 		assert.Empty(t, tr.Intermediate.Posts)
-		assert.Equal(t, 3, tr.droppedPostRefs)
+		assert.Equal(t, 3, tr.Report.Posts().Skipped)
+		assert.Equal(t, 1, tr.Report.Threads().Skipped)
 	})
 
 	t.Run("reaction conversion - colon stripping", func(t *testing.T) {
@@ -989,7 +990,7 @@ func exportUserRoles(t *testing.T, mode string) (systemRole, teamRole, channelRo
 			{RoomID: "r1", User: RCMessageUser{ID: "g1", Username: "guesty"}},
 		},
 	}
-	tr.Transform(parsed, true, false, "", mode)
+	require.NoError(t, tr.Transform(parsed, true, false, "", mode))
 
 	var buf bytes.Buffer
 	require.NoError(t, tr.ExportUsers(&buf, ""))
@@ -1212,7 +1213,7 @@ func TestChannellessGuestEndToEnd(t *testing.T) {
 
 	t.Run("guest mode drops the channel-less guest and their DM post", func(t *testing.T) {
 		tr := NewTransformer("myteam", newLogger())
-		tr.Transform(newDump(), true, false, "", GuestHandlingGuest)
+		require.NoError(t, tr.Transform(newDump(), true, false, "", GuestHandlingGuest))
 
 		assert.Nil(t, tr.Intermediate.UsersById["g1"], "channel-less guest dropped")
 		require.NotNil(t, tr.Intermediate.UsersById["k1"], "guest with a channel membership kept")
@@ -1238,7 +1239,7 @@ func TestChannellessGuestEndToEnd(t *testing.T) {
 
 	t.Run("user mode keeps the channel-less guest as a regular member", func(t *testing.T) {
 		tr := NewTransformer("myteam", newLogger())
-		tr.Transform(newDump(), true, false, "", GuestHandlingUser)
+		require.NoError(t, tr.Transform(newDump(), true, false, "", GuestHandlingUser))
 
 		require.NotNil(t, tr.Intermediate.UsersById["g1"], "in user mode channel-less guests are kept")
 	})
@@ -1272,7 +1273,7 @@ func TestSkippedUsersReferentialIntegrity(t *testing.T) {
 	}
 
 	tr := NewTransformer("myteam", newLogger())
-	tr.Transform(newDump(), true, false, "", GuestHandlingUser)
+	require.NoError(t, tr.Transform(newDump(), true, false, "", GuestHandlingUser))
 
 	// rocket.cat must not be exported, not even as a placeholder.
 	assert.Nil(t, tr.Intermediate.UsersById["app1"])
@@ -1296,7 +1297,7 @@ func TestSkippedUsersReferentialIntegrity(t *testing.T) {
 	for _, r := range tr.Intermediate.Posts[0].Reactions {
 		assert.NotEqual(t, "rocket.cat", r.User)
 	}
-	assert.Positive(t, tr.droppedPostRefs)
+	assert.Positive(t, tr.Report.Posts().Skipped)
 }
 
 func TestGuestSkipReferentialIntegrity(t *testing.T) {
@@ -1320,7 +1321,7 @@ func TestGuestSkipReferentialIntegrity(t *testing.T) {
 	}
 
 	tr := NewTransformer("myteam", newLogger())
-	tr.Transform(parsed, true, false, "", GuestHandlingSkip)
+	require.NoError(t, tr.Transform(parsed, true, false, "", GuestHandlingSkip))
 
 	// The guest is dropped along with its post and membership.
 	assert.Nil(t, tr.Intermediate.UsersById["g1"])
@@ -1328,6 +1329,58 @@ func TestGuestSkipReferentialIntegrity(t *testing.T) {
 	assert.NotContains(t, tr.Intermediate.PublicChannels[0].Members, "g1")
 	require.Len(t, tr.Intermediate.Posts, 1)
 	assert.Equal(t, "alice", tr.Intermediate.Posts[0].User)
-	assert.Positive(t, tr.droppedPostRefs)
-	assert.Positive(t, tr.droppedMembershipRefs)
+	assert.Positive(t, tr.Report.Posts().Skipped)
+	assert.Positive(t, tr.Report.Subscriptions().Skipped)
+}
+
+// TestOversizedDirectRoomReportedUnderOneKind pins the rule that a room is
+// reported as what it was in the dump. An oversized group DM is imported as a
+// private channel, and its notes used to split across two sections — with the
+// private-channel section receiving notes it had no Seen count for.
+func TestOversizedDirectRoomReportedUnderOneKind(t *testing.T) {
+	uids := make([]string, 0, model.ChannelGroupMaxUsers+2)
+	usernames := make([]string, 0, model.ChannelGroupMaxUsers+2)
+	users := make([]RocketChatUser, 0, model.ChannelGroupMaxUsers+2)
+	for i := range model.ChannelGroupMaxUsers + 2 {
+		id := fmt.Sprintf("u%02d", i)
+		uids = append(uids, id)
+		usernames = append(usernames, id)
+		users = append(users, RocketChatUser{
+			ID: id, Username: id, Name: "User " + id, Active: true, Type: "user",
+			Emails: []RCEmail{{Address: id + "@example.com"}},
+		})
+	}
+
+	tr := NewTransformer("test", newLogger())
+	require.NoError(t, tr.Transform(&ParsedData{
+		Users: users,
+		// An over-long display name so SanitiseWithPrefix records a truncation
+		// too: that is the note that used to be filed under private_channel
+		// while the conversion note went to group_channel.
+		Rooms: []RocketChatRoom{{
+			ID: "big-dm", Type: "d", UIDs: uids, Usernames: usernames,
+			Name:  "big-group-dm",
+			FName: strings.Repeat("n", model.ChannelDisplayNameMaxRunes+10),
+		}},
+	}, true, false, "", GuestHandlingUser))
+	tr.Report.Finish(nil)
+
+	// It is imported as a private channel...
+	require.Len(t, tr.Intermediate.PrivateChannels, 1)
+
+	// ...but reported as the group channel it was in the dump.
+	groups := tr.Report.GroupChannels()
+	assert.Equal(t, 1, groups.Transformed, "the room is counted once, as a group channel")
+	codes := []string{}
+	for _, note := range groups.Notes {
+		codes = append(codes, note.ReasonCode)
+	}
+	assert.Contains(t, codes, "mpim_converted_to_private")
+	assert.Contains(t, codes, "channel_display_truncated")
+
+	// Nothing leaks into the private-channel section, which has no Seen count
+	// for this room and would report a negative-turned-zero Transformed.
+	privates := tr.Report.PrivateChannels()
+	assert.Empty(t, privates.Notes, "notes about one room must not split across sections")
+	assert.Zero(t, privates.Transformed)
 }

@@ -3,7 +3,6 @@ package slack
 import (
 	"bytes"
 	"fmt"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -31,7 +30,7 @@ func TestIntermediateChannelSanitise(t *testing.T) {
 		expectedPurpose := strings.Repeat("c", 250)
 		expectedHeader := strings.Repeat("d", 1024)
 
-		channel.SanitiseWithPrefix(log.New(), "slack-channel-")
+		channel.SanitiseWithPrefix(intermediate.NewReport(log.New()).PublicChannels(), "slack-channel-")
 
 		assert.Equal(t, expectedName, channel.Name)
 		assert.Equal(t, expectedDisplayName, channel.DisplayName)
@@ -45,7 +44,7 @@ func TestIntermediateChannelSanitise(t *testing.T) {
 			DisplayName: "-display_name--",
 		}
 
-		channel.SanitiseWithPrefix(log.New(), "slack-channel-")
+		channel.SanitiseWithPrefix(intermediate.NewReport(log.New()).PublicChannels(), "slack-channel-")
 
 		assert.Equal(t, "channel--name", channel.Name)
 		assert.Equal(t, "display_name", channel.DisplayName)
@@ -57,7 +56,7 @@ func TestIntermediateChannelSanitise(t *testing.T) {
 			DisplayName: "-_---_--b----",
 		}
 
-		channel.SanitiseWithPrefix(log.New(), "slack-channel-")
+		channel.SanitiseWithPrefix(intermediate.NewReport(log.New()).PublicChannels(), "slack-channel-")
 
 		assert.Equal(t, "slack-channel-a", channel.Name)
 		assert.Equal(t, "slack-channel-b", channel.DisplayName)
@@ -70,7 +69,7 @@ func TestIntermediateChannelSanitise(t *testing.T) {
 			DisplayName: "-døsplay_name--",
 		}
 
-		channel.SanitiseWithPrefix(log.New(), "slack-channel-")
+		channel.SanitiseWithPrefix(intermediate.NewReport(log.New()).PublicChannels(), "slack-channel-")
 
 		assert.Equal(t, "channelid1", channel.Name)
 		assert.Equal(t, "døsplay_name", channel.DisplayName)
@@ -169,7 +168,7 @@ func TestTransformPublicChannels(t *testing.T) {
 		},
 	}
 
-	result := slackTransformer.TransformChannels(publicChannels)
+	result := slackTransformer.TransformChannels(publicChannels, intermediate.EntityPublicChannel)
 	require.Len(t, result, len(publicChannels))
 
 	expectedCreated := []int64{1704067200, 1704070800, 1704074400}
@@ -230,7 +229,7 @@ func TestTransformPublicChannelsWithAnInvalidMember(t *testing.T) {
 		},
 	}
 
-	result := slackTransformer.TransformChannels(publicChannels)
+	result := slackTransformer.TransformChannels(publicChannels, intermediate.EntityPublicChannel)
 	require.Len(t, result, len(publicChannels))
 
 	for i := range result {
@@ -289,7 +288,7 @@ func TestTransformPrivateChannels(t *testing.T) {
 		},
 	}
 
-	result := slackTransformer.TransformChannels(privateChannels)
+	result := slackTransformer.TransformChannels(privateChannels, intermediate.EntityPrivateChannel)
 	require.Len(t, result, len(privateChannels))
 
 	for i := range result {
@@ -335,7 +334,7 @@ func TestTransformChannelsPreservesDisplayName(t *testing.T) {
 		},
 	}
 
-	result := slackTransformer.TransformChannels(channels)
+	result := slackTransformer.TransformChannels(channels, intermediate.EntityPublicChannel)
 	require.Len(t, result, len(channels))
 
 	// First channel - verify display name preserves original with special chars
@@ -407,7 +406,7 @@ func TestTransformBigGroupChannels(t *testing.T) {
 		},
 	}
 
-	result := slackTransformer.TransformChannels(bigGroupChannels)
+	result := slackTransformer.TransformChannels(bigGroupChannels, intermediate.EntityGroupChannel)
 	require.Len(t, result, len(bigGroupChannels))
 
 	for i := range result {
@@ -467,7 +466,7 @@ func TestTransformRegularGroupChannels(t *testing.T) {
 		},
 	}
 
-	result := slackTransformer.TransformChannels(regularGroupChannels)
+	result := slackTransformer.TransformChannels(regularGroupChannels, intermediate.EntityGroupChannel)
 	require.Len(t, result, len(regularGroupChannels))
 
 	for i := range result {
@@ -505,7 +504,7 @@ func TestTransformDirectChannels(t *testing.T) {
 		},
 	}
 
-	result := slackTransformer.TransformChannels(directChannels)
+	result := slackTransformer.TransformChannels(directChannels, intermediate.EntityDirectChannel)
 	require.Len(t, result, len(directChannels))
 
 	for i := range result {
@@ -528,7 +527,7 @@ func TestTransformChannelWithOneValidMember(t *testing.T) {
 			},
 		}
 
-		result := slackTransformer.TransformChannels(directChannels)
+		result := slackTransformer.TransformChannels(directChannels, intermediate.EntityDirectChannel)
 		// With the new behavior, missing members (m2, m3) are created as deleted users,
 		// so the channel now has 3 members and will be transformed
 		require.Len(t, result, 1)
@@ -550,11 +549,17 @@ func TestTransformChannelWithOneValidMember(t *testing.T) {
 			},
 		}
 
-		result := slackTransformer.TransformChannels(groupChannels)
+		result := slackTransformer.TransformChannels(groupChannels, intermediate.EntityGroupChannel)
 		// With the new behavior, missing members (m2, m3) are created as deleted users,
 		// so the channel now has 3 members and will be transformed
 		require.Len(t, result, 1)
 	})
+}
+
+// newUserReport returns the users section of a throwaway report, which is what
+// Sanitise records its notes against.
+func newUserReport() *intermediate.EntityReport {
+	return intermediate.NewReport(log.New()).Users()
 }
 
 func assertUserFieldsWithinLimits(t *testing.T, user *IntermediateUser) {
@@ -565,23 +570,16 @@ func assertUserFieldsWithinLimits(t *testing.T, user *IntermediateUser) {
 }
 
 func TestIntermediateUserSanitise(t *testing.T) {
-	t.Run("If there is no email, and --default-email-domain and --skip-empty-emails flags are not provided, we should exit the program.", func(t *testing.T) {
+	t.Run("If there is no email, and --default-email-domain and --skip-empty-emails flags are not provided, we should return an error.", func(t *testing.T) {
 		user := &IntermediateUser{
 			Username: "test-username",
 			Email:    "",
 		}
 
-		exitCode := -1
-		intermediate.ExitFunc = func(code int) {
-			exitCode = code
-		}
-		defer func() {
-			intermediate.ExitFunc = os.Exit
-		}()
+		err := user.Sanitise(newUserReport(), "", false)
 
-		user.Sanitise(log.New(), "", false)
-
-		require.Equal(t, 1, exitCode)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "test-username")
 	})
 
 	t.Run("If there is no email, and --default-email-domain flag is provided, use domain to create an email address.", func(t *testing.T) {
@@ -590,29 +588,12 @@ func TestIntermediateUserSanitise(t *testing.T) {
 			Email:    "",
 		}
 
-		exitCode := -1
-		intermediate.ExitFunc = func(code int) {
-			exitCode = code
-		}
-		defer func() {
-			intermediate.ExitFunc = os.Exit
-		}()
-
-		logger := log.New()
-		logOutput := logger.Out
-		buf := &bytes.Buffer{}
-		log.SetOutput(buf)
-		defer func() {
-			log.SetOutput(logOutput)
-		}()
-
 		defaultEmailDomain := "testdomain.com"
 		skipEmptyEmails := false
-		user.Sanitise(logger, defaultEmailDomain, skipEmptyEmails)
+		require.NoError(t, user.Sanitise(newUserReport(), defaultEmailDomain, skipEmptyEmails))
 
 		expectedEmail := "test-username@testdomain.com"
 		require.Equal(t, expectedEmail, user.Email)
-		require.Equal(t, -1, exitCode)
 	})
 
 	t.Run("If there is no email, and --skip-empty-emails flag is provided, set email to blank.", func(t *testing.T) {
@@ -621,18 +602,9 @@ func TestIntermediateUserSanitise(t *testing.T) {
 			Email:    "",
 		}
 
-		exitCode := -1
-		intermediate.ExitFunc = func(code int) {
-			exitCode = code
-		}
-		defer func() {
-			intermediate.ExitFunc = os.Exit
-		}()
-
-		user.Sanitise(log.New(), "", true)
+		require.NoError(t, user.Sanitise(newUserReport(), "", true))
 
 		require.Equal(t, "", user.Email)
-		require.Equal(t, -1, exitCode)
 	})
 
 	t.Run("If there is an email, program should continue with no error logged.", func(t *testing.T) {
@@ -641,19 +613,10 @@ func TestIntermediateUserSanitise(t *testing.T) {
 			Email:    "test-email@otherdomain.com",
 		}
 
-		exitCode := -1
-		intermediate.ExitFunc = func(code int) {
-			exitCode = code
-		}
-		defer func() {
-			intermediate.ExitFunc = os.Exit
-		}()
-
-		user.Sanitise(log.New(), "", false)
+		require.NoError(t, user.Sanitise(newUserReport(), "", false))
 
 		expectedEmail := "test-email@otherdomain.com"
 		require.Equal(t, expectedEmail, user.Email)
-		require.Equal(t, -1, exitCode)
 	})
 
 	t.Run("Properties should respect the max length", func(t *testing.T) {
@@ -669,7 +632,7 @@ func TestIntermediateUserSanitise(t *testing.T) {
 		expectedLastName := strings.Repeat("b", model.UserLastNameMaxRunes)
 		expectedPosition := strings.Repeat("c", model.UserPositionMaxRunes)
 
-		user.Sanitise(log.New(), "", false)
+		require.NoError(t, user.Sanitise(newUserReport(), "", false))
 
 		// Verify fields are not greater than max allowed runes
 		assertUserFieldsWithinLimits(t, user)
@@ -693,7 +656,7 @@ func TestIntermediateUserSanitise(t *testing.T) {
 		expectedLastName := "Doe"
 		expectedPosition := "Software Engineer"
 
-		user.Sanitise(log.New(), "", false)
+		require.NoError(t, user.Sanitise(newUserReport(), "", false))
 
 		// Verify fields are not greater than max allowed runes
 		assertUserFieldsWithinLimits(t, user)
@@ -716,7 +679,7 @@ func TestIntermediateUserSanitise(t *testing.T) {
 		expectedLastName := strings.Repeat("b", model.UserLastNameMaxRunes)
 		expectedPosition := strings.Repeat("c", model.UserPositionMaxRunes)
 
-		user.Sanitise(log.New(), "", false)
+		require.NoError(t, user.Sanitise(newUserReport(), "", false))
 
 		// Verify fields are not greater than max allowed runes
 		assertUserFieldsWithinLimits(t, user)
@@ -737,7 +700,7 @@ func TestIntermediateUserSanitise(t *testing.T) {
 			Position:  strings.Repeat("🎯", model.UserPositionMaxRunes+3),
 		}
 
-		user.Sanitise(log.New(), "", false)
+		require.NoError(t, user.Sanitise(newUserReport(), "", false))
 
 		// Verify fields are not greater than max allowed runes
 		assertUserFieldsWithinLimits(t, user)
@@ -796,7 +759,7 @@ func TestTransformUsers(t *testing.T) {
 
 	defaultEmailDomain := ""
 	skipEmptyEmails := false
-	slackTransformer.TransformUsers(users, skipEmptyEmails, defaultEmailDomain, GuestHandlingGuest)
+	require.NoError(t, slackTransformer.TransformUsers(users, skipEmptyEmails, defaultEmailDomain, GuestHandlingGuest))
 	require.Len(t, slackTransformer.Intermediate.UsersById, len(users))
 
 	for i, id := range []string{id1, id2, id3} {
@@ -860,7 +823,7 @@ func TestTransformUsersGuests(t *testing.T) {
 
 	t.Run("guest-handling=guest flags guests but does not drop them", func(t *testing.T) {
 		slackTransformer := NewTransformer("test", log.New())
-		slackTransformer.TransformUsers(guestUsers(), false, "", GuestHandlingGuest)
+		require.NoError(t, slackTransformer.TransformUsers(guestUsers(), false, "", GuestHandlingGuest))
 
 		require.Len(t, slackTransformer.Intermediate.UsersById, 4)
 		assert.True(t, slackTransformer.Intermediate.UsersById[multiChannelGuestId].IsGuest)
@@ -871,7 +834,7 @@ func TestTransformUsersGuests(t *testing.T) {
 
 	t.Run("guest-handling=user flags guests but does not drop them", func(t *testing.T) {
 		slackTransformer := NewTransformer("test", log.New())
-		slackTransformer.TransformUsers(guestUsers(), false, "", GuestHandlingUser)
+		require.NoError(t, slackTransformer.TransformUsers(guestUsers(), false, "", GuestHandlingUser))
 
 		require.Len(t, slackTransformer.Intermediate.UsersById, 4)
 		// IsGuest reflects detection regardless of mode; the export mode
@@ -882,7 +845,7 @@ func TestTransformUsersGuests(t *testing.T) {
 
 	t.Run("guest-handling=skip drops guests entirely", func(t *testing.T) {
 		slackTransformer := NewTransformer("test", log.New())
-		slackTransformer.TransformUsers(guestUsers(), false, "", GuestHandlingSkip)
+		require.NoError(t, slackTransformer.TransformUsers(guestUsers(), false, "", GuestHandlingSkip))
 
 		require.Len(t, slackTransformer.Intermediate.UsersById, 2)
 		assert.Nil(t, slackTransformer.Intermediate.UsersById[multiChannelGuestId])
@@ -923,6 +886,14 @@ func TestDropChannellessGuests(t *testing.T) {
 		assert.NotNil(t, slackTransformer.Intermediate.UsersById["U001"], "regular user must be kept")
 		assert.True(t, slackTransformer.skippedUserIDs["U002"])
 		assert.Empty(t, slackTransformer.Intermediate.DirectChannels, "DM must be dropped once it collapses to a single member")
+
+		// Both memberships of the dropped DM are named as skipped. Transformed
+		// is derived as seen-minus-skipped, so a survivor left uncounted here
+		// would be reported as having reached the import file.
+		slackTransformer.Report.Finish(nil)
+		memberships := slackTransformer.Report.ChannelMemberships()
+		assert.Equal(t, 2, memberships.Skipped, "the guest's membership and the one left behind with it")
+		assert.Zero(t, memberships.Transformed, "the DM never reached the import file")
 	})
 
 	t.Run("a group channel survives without the guest, and the guest's post is dropped", func(t *testing.T) {
@@ -999,10 +970,13 @@ func TestDropChannellessGuests(t *testing.T) {
 
 		// Guest root dropped at the skipped-user gate + non-guest reply dropped
 		// because its root was never imported.
-		assert.Equal(t, 2, slackTransformer.droppedPostRefs)
+		assert.Equal(t, 2, slackTransformer.Report.Posts().Skipped)
 
-		assert.Contains(t, buf.String(), "1704067260.000200", "warn should name the dropped thread")
-		assert.Contains(t, buf.String(), "root post was not imported", "warn should explain why the thread was dropped")
+		threads := slackTransformer.Report.Threads()
+		require.Equal(t, 1, threads.Skipped, "the dropped thread must be named once, not once per reply")
+		require.Len(t, threads.Notes, 1)
+		assert.Contains(t, threads.Notes[0].EntityID, "1704067260.000200", "the report should name the dropped thread")
+		assert.Equal(t, "thread_root_missing", threads.Notes[0].ReasonCode)
 	})
 
 	t.Run("guest-handling=user does not drop channelless guests", func(t *testing.T) {
@@ -1085,7 +1059,7 @@ func TestDeleteAt(t *testing.T) {
 
 	defaultEmailDomain := ""
 	skipEmptyEmails := false
-	slackTransformer.TransformUsers(users, skipEmptyEmails, defaultEmailDomain, GuestHandlingGuest)
+	require.NoError(t, slackTransformer.TransformUsers(users, skipEmptyEmails, defaultEmailDomain, GuestHandlingGuest))
 	require.Zero(t, slackTransformer.Intermediate.UsersById[activeUsers[0].Id].DeleteAt)
 	require.Zero(t, slackTransformer.Intermediate.UsersById[activeUsers[1].Id].DeleteAt)
 	require.NotZero(t, slackTransformer.Intermediate.UsersById[inactiveUsers[0].Id].DeleteAt)
@@ -1889,7 +1863,7 @@ func TestTransformBotUsers(t *testing.T) {
 			},
 		}
 
-		slackTransformer.TransformUsers(users, false, "", GuestHandlingGuest)
+		require.NoError(t, slackTransformer.TransformUsers(users, false, "", GuestHandlingGuest))
 
 		// Regular user
 		regularUser := slackTransformer.Intermediate.UsersById["U001"]
@@ -1924,7 +1898,7 @@ func TestTransformBotUsers(t *testing.T) {
 
 		// This should NOT panic or exit even though the bot has no email
 		// and no --default-email-domain or --skip-empty-emails is set
-		slackTransformer.TransformUsers(users, false, "", GuestHandlingGuest)
+		require.NoError(t, slackTransformer.TransformUsers(users, false, "", GuestHandlingGuest))
 
 		botUser := slackTransformer.Intermediate.UsersById["B001"]
 		require.NotNil(t, botUser)
@@ -1947,7 +1921,7 @@ func TestTransformBotUsers(t *testing.T) {
 			},
 		}
 
-		slackTransformer.TransformUsers(users, false, "", GuestHandlingGuest)
+		require.NoError(t, slackTransformer.TransformUsers(users, false, "", GuestHandlingGuest))
 
 		botUser := slackTransformer.Intermediate.UsersById["B002"]
 		require.NotNil(t, botUser)
@@ -1969,7 +1943,7 @@ func TestTransformBotUsers(t *testing.T) {
 			},
 		}
 
-		slackTransformer.TransformUsers(users, false, "", GuestHandlingGuest)
+		require.NoError(t, slackTransformer.TransformUsers(users, false, "", GuestHandlingGuest))
 
 		// Should be stored under user ID, not empty string
 		botUser := slackTransformer.Intermediate.UsersById["U003"]
@@ -2755,7 +2729,7 @@ func TestTransformArchivedChannels(t *testing.T) {
 			},
 		}
 
-		result := slackTransformer.TransformChannels(channels)
+		result := slackTransformer.TransformChannels(channels, intermediate.EntityPublicChannel)
 		require.Len(t, result, 1)
 		assert.Equal(t, int64(0), result[0].DeleteAt)
 	})
@@ -2774,7 +2748,7 @@ func TestTransformArchivedChannels(t *testing.T) {
 			},
 		}
 
-		result := slackTransformer.TransformChannels(channels)
+		result := slackTransformer.TransformChannels(channels, intermediate.EntityPublicChannel)
 		require.Len(t, result, 1)
 		assert.Equal(t, int64(1620000000000), result[0].DeleteAt)
 	})
@@ -2794,7 +2768,7 @@ func TestTransformArchivedChannels(t *testing.T) {
 			},
 		}
 
-		result := slackTransformer.TransformChannels(channels)
+		result := slackTransformer.TransformChannels(channels, intermediate.EntityPublicChannel)
 		after := model.GetMillis()
 
 		require.Len(t, result, 1)
@@ -2816,7 +2790,7 @@ func TestTransformArchivedChannels(t *testing.T) {
 			},
 		}
 
-		result := slackTransformer.TransformChannels(channels)
+		result := slackTransformer.TransformChannels(channels, intermediate.EntityPublicChannel)
 		require.Len(t, result, 1)
 		assert.Equal(t, int64(1630000000000), result[0].DeleteAt)
 		assert.Equal(t, model.ChannelTypePrivate, result[0].Type)
@@ -2847,7 +2821,7 @@ func TestTransformArchivedChannels(t *testing.T) {
 			},
 		}
 
-		result := bigTransformer.TransformChannels(channels)
+		result := bigTransformer.TransformChannels(channels, intermediate.EntityPublicChannel)
 		require.Len(t, result, 1)
 		assert.Equal(t, model.ChannelTypePrivate, result[0].Type, "oversized MPIM should be rewritten to private")
 		assert.Equal(t, int64(1620000000000), result[0].DeleteAt, "rewritten MPIM should retain DeleteAt")
@@ -2871,11 +2845,11 @@ func TestTransformArchivedChannels(t *testing.T) {
 			Type:       model.ChannelTypeGroup,
 		}
 
-		dmResult := slackTransformer.TransformChannels([]SlackChannel{directChannel})
+		dmResult := slackTransformer.TransformChannels([]SlackChannel{directChannel}, intermediate.EntityDirectChannel)
 		require.Len(t, dmResult, 1, "direct channel with 2 valid members should be transformed")
 		assert.Equal(t, int64(0), dmResult[0].DeleteAt, "direct channels should not have DeleteAt set")
 
-		groupResult := slackTransformer.TransformChannels([]SlackChannel{groupChannel})
+		groupResult := slackTransformer.TransformChannels([]SlackChannel{groupChannel}, intermediate.EntityGroupChannel)
 		require.Len(t, groupResult, 1, "group channel with 3 valid members should be transformed")
 		assert.Equal(t, int64(0), groupResult[0].DeleteAt, "group channels should not have DeleteAt set")
 	})

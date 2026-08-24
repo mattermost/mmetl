@@ -21,6 +21,12 @@ type Exporter struct {
 	Intermediate *Intermediate
 	Logger       log.FieldLogger
 
+	// Report records, for every source entity, whether it reached the import
+	// file and why not. It is shared by every provider because it hangs off the
+	// Exporter they all embed. A nil Report is valid and inert, so an Exporter
+	// built as a struct literal (as several tests do) needs no report.
+	Report *Report
+
 	// EmitGuestRoles controls whether users flagged with IsGuest are exported
 	// with Mattermost guest roles (system_guest / team_guest / channel_guest).
 	// It is true only when guest handling is set to "guest"; in "user" mode
@@ -381,7 +387,8 @@ func (e *Exporter) ExportDirectChannels(channels []*IntermediateChannel, writer 
 	guestUsernames := e.effectiveGuestUsernames()
 	for _, channel := range channels {
 		if channel.LastPostAt == 0 && channel.Created <= 0 {
-			e.Logger.Warnf("Direct/group channel %s has no valid creation timestamp; using current time for LastViewedAt", channel.Name)
+			channel.ReportEntity(e.Report).
+				Note(channel.ReportID(), channel.ReportName(), ReasonChannelNoCreatedTimestamp)
 		}
 		line := GetImportLineFromDirectChannel(e.TeamName, channel, guestUsernames)
 		if err := ExportWriteLine(writer, line); err != nil {
@@ -419,7 +426,7 @@ func (e *Exporter) ExportUsers(writer io.Writer, botOwner string) error {
 		// RocketChat these are dropped upstream in the transformer, so this only
 		// fires as a safety net for any that slip through.
 		if e.EmitGuestRoles && user.IsGuest && len(user.Memberships) == 0 {
-			e.Logger.Warnf("Guest user %s has no channel memberships; importing as a regular member instead, since Mattermost requires guests to have at least one channel", user.Username)
+			e.Report.Users().Note(user.Id, user.Username, ReasonGuestDemotedToUser)
 		}
 		line := GetImportLineFromUser(user, e.TeamName, e.EmitGuestRoles)
 		if err := ExportWriteLine(writer, line); err != nil {

@@ -6,6 +6,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/mattermost/mmetl/services/intermediate"
 )
 
 // The intermediate representation and the bulk-import Exporter now live in the
@@ -44,10 +46,27 @@ func SlackConvertChannelName(channelName string, channelId string) string {
 	return strings.ToLower(channelId)
 }
 
-func SplitChannelsByMemberSize(channels []SlackChannel, limit int) (regularChannels, bigChannels []SlackChannel) {
+// SplitChannelsByMemberSize partitions group channels into those small enough
+// to import as Mattermost group channels and those that have to become private
+// channels, dropping the ones with a single member. It runs before
+// filterValidMembers, so a channel dropped here is the one place a source
+// membership would otherwise never be counted at all — hence the Seen/Skip pair.
+// report may be nil, in which case the drops go unrecorded.
+func SplitChannelsByMemberSize(channels []SlackChannel, limit int, report *intermediate.Report) (regularChannels, bigChannels []SlackChannel) {
 	for _, channel := range channels {
 		if len(channel.Members) == 1 {
-			log.Println("Bulk export for direct channels containing a single member is not supported. Not importing channel " + channel.Name)
+			originalName := getOriginalName(channel)
+			report.GroupChannels().Skip(channel.Id, originalName, ReasonDMSingleMember)
+
+			memberships := report.ChannelMemberships()
+			memberships.Seen(len(channel.Members))
+			for _, member := range channel.Members {
+				memberships.Skip(
+					intermediate.MembershipID(channel.Id, member),
+					intermediate.MembershipID(originalName, ""),
+					intermediate.ReasonMembershipChannelSkipped,
+				)
+			}
 		} else if len(channel.Members) > limit {
 			bigChannels = append(bigChannels, channel)
 		} else {

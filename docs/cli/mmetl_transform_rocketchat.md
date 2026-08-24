@@ -42,7 +42,7 @@ mmetl transform rocketchat [flags]
                                         "user"  - migrate them as regular Mattermost users. Works everywhere, but grants guests full user permissions.
                                         "skip"  - drop guest users entirely, along with their memberships and authored posts. (default "guest")
   -h, --help                          help for rocketchat
-  -o, --output string                 the output path (default "bulk-export.jsonl")
+  -o, --output string                 the output path for the bulk import file. The transform report and log are written to the same directory. (default "bulk-export.jsonl")
   -a, --skip-attachments              Skips extracting file attachments
       --skip-empty-emails             Ignore empty email addresses from the import file. Note that this results in invalid data.
   -t, --team string                   an existing team in Mattermost to import the data into
