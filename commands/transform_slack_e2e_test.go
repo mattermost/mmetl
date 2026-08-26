@@ -50,12 +50,8 @@ const transformLogFile = "transform-slack.log"
 // transformReport is the JSON transform report, decoded far enough for a test
 // to assert on the outcome of every source entity without parsing Markdown.
 type transformReport struct {
-	Metadata struct {
-		Provider string `json:"provider"`
-		Team     string `json:"team"`
-		Output   string `json:"output"`
-	} `json:"metadata"`
-	Error    string `json:"error,omitempty"`
+	Metadata intermediate.Info `json:"metadata"`
+	Error    string            `json:"error,omitempty"`
 	Entities map[string]struct {
 		Transformed int `json:"transformed"`
 		Skipped     int `json:"skipped"`
@@ -1679,7 +1675,8 @@ func TestTransformSlackE2EGuestSkip(t *testing.T) {
 	// The report names every dropped entity, which is a stronger assertion than
 	// the absence checks above: it says why each one went missing.
 	report := readTransformReport(t, mmExportPath, "# Slack Transform Report")
-	assert.Equal(t, teamName, report.Metadata.Team)
+	require.NotNil(t, report.Metadata.Additional)
+	assert.Equal(t, teamName, report.Metadata.Additional.Target.Team)
 	assert.Empty(t, report.Error, "a successful run must not record an error")
 
 	assert.ElementsMatch(t, []string{"multi.guest", "single.guest"},
