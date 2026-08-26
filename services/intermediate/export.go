@@ -1,6 +1,7 @@
 package intermediate
 
 import (
+	"bytes"
 	"encoding/json"
 	stderrors "errors"
 	"io"
@@ -382,14 +383,104 @@ func ExportWriteLine(writer io.Writer, line *imports.LineImportData) error {
 	return nil
 }
 
+// VersionLineSize is the exact number of bytes line 1 of the import file
+// occupies, newline included.
+//
+// The bulk import format requires the version line to be line 1, but the run's
+// finish time is only known once every other line has been written. So the line
+// is padded to a fixed width on the way out and rewritten in place at the end
+// (see RewriteVersion) — which only works if the second rendering cannot outgrow
+// the first. Trailing whitespace inside the line is what buys that: encoding/json
+// skips it and both the server and mmctl split lines on the newline alone.
+//
+// 4 KB is several times the largest line this produces, well under the
+// importer's 16 MB per-line scanner budget.
+const VersionLineSize = 4096
+
+// ExportVersion writes line 1 of the import file: the version line, carrying
+// this run's metadata in the `info` slot the format reserves for it. `type` stays
+// "version" and `version` stays 1 — the server fails the whole import on a line
+// type it does not recognise, and ignores `info` entirely.
 func (e *Exporter) ExportVersion(writer io.Writer) error {
+	e.stampExportInfo()
+
+	line, err := e.versionLine()
+	if err != nil {
+		return err
+	}
+	if _, err := writer.Write(line); err != nil {
+		return errors.Wrap(err, "An error occurred writing the export data.")
+	}
+	return nil
+}
+
+// RewriteVersion stamps the run's finish time and produced counts, then
+// rewrites line 1 in place so the import file records the whole run rather
+// than only its beginning.
+//
+// Rewriting is a single WriteAt at offset 0 of a fixed-width line: no data is
+// moved and nothing after line 1 is touched. A line that somehow no longer fits
+// the reservation is left alone — the already-written line is valid, and a
+// finish time is not worth risking the file over.
+func (e *Exporter) RewriteVersion(file io.WriterAt) error {
+	if e.Report == nil {
+		return nil
+	}
+	if e.Report.Metadata.Additional == nil {
+		e.Report.Metadata.Additional = &Additional{}
+	}
+	e.Report.Metadata.Additional.Run.Finished = NowFunc().UTC()
+	e.Report.Metadata.Additional.Counts = e.Intermediate.Counts()
+
+	line, err := e.versionLine()
+	if err != nil {
+		e.Logger.WithError(err).Warn("Could not re-render the version line; leaving line 1 without a finish time. The import file is unaffected.")
+		return nil
+	}
+
+	if _, err := file.WriteAt(line, 0); err != nil {
+		return errors.Wrap(err, "An error occurred rewriting the version line.")
+	}
+	return nil
+}
+
+// versionLine renders line 1: the version line JSON, padded with spaces to
+// exactly VersionLineSize bytes including its trailing newline.
+func (e *Exporter) versionLine() ([]byte, error) {
 	version := 1
 	versionLine := &imports.LineImportData{
 		Type:    "version",
 		Version: &version,
 	}
 
-	return ExportWriteLine(writer, versionLine)
+	// The run's metadata lives on the report, so an Exporter without one writes
+	// the bare version line the format requires and nothing more.
+	if e.Report != nil {
+		info := e.Report.Metadata
+		if additional, err := json.Marshal(info.Additional); err != nil {
+			e.Logger.WithError(err).Warn("Could not encode the import metadata; writing the version line without it. The transform is unaffected.")
+		} else {
+			versionLine.Info = &imports.VersionInfoImportData{
+				Generator:  info.Generator,
+				Version:    info.VersionString(),
+				Created:    info.Created,
+				Additional: additional,
+			}
+		}
+	}
+
+	encoded, err := json.Marshal(versionLine)
+	if err != nil {
+		return nil, errors.Wrap(err, "An error occurred marshalling the JSON data for export.")
+	}
+	if len(encoded)+1 > VersionLineSize {
+		return nil, errors.Errorf("the version line needs %d bytes but only %d are reserved", len(encoded)+1, VersionLineSize)
+	}
+
+	line := bytes.Repeat([]byte{' '}, VersionLineSize)
+	copy(line, encoded)
+	line[VersionLineSize-1] = '\n'
+	return line, nil
 }
 
 // ExportChannels is valid for open or private channels, as they export with no members.
@@ -528,5 +619,5 @@ func (e *Exporter) Export(outputFilePath string, botOwner string) (err error) {
 		return err
 	}
 
-	return nil
+	return e.RewriteVersion(outputFile)
 }

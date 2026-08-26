@@ -38,8 +38,9 @@ func (r *Report) Markdown() string {
 
 	var b strings.Builder
 
-	title := providerTitle(r.Metadata.Provider)
-	if r.Metadata.Provider != "" {
+	provider := r.Metadata.details().Source.Platform
+	title := providerTitle(provider)
+	if provider != "" {
 		title += " Transform Report"
 	}
 	fmt.Fprintf(&b, "# %s\n", title)
@@ -112,6 +113,12 @@ func (r *Report) Markdown() string {
 		b.WriteString(renderTable([]string{"Entity", "Transformed", "Skipped"}, summaryRows))
 	}
 
+	if producedRows := r.producedRows(); len(producedRows) > 0 {
+		b.WriteString("\n## Produced\n\n")
+		b.WriteString("Lines written to the bulk import file.\n\n")
+		b.WriteString(renderTable([]string{"Line", "Count"}, producedRows))
+	}
+
 	if len(detailSections) > 0 {
 		b.WriteString("\n## Details\n")
 		for _, section := range detailSections {
@@ -141,22 +148,54 @@ func (r *Report) runRows() [][]string {
 		}
 	}
 
-	add("Provider", r.Metadata.Provider)
-	add("mmetl", r.Metadata.Version)
-	add("Input", r.Metadata.Input)
-	add("Team", r.Metadata.Team)
-	add("Output", r.Metadata.Output)
-	if !r.Metadata.Started.IsZero() {
-		add("Started", r.Metadata.Started.UTC().Format(time.RFC3339))
+	details := r.Metadata.details()
+	run := details.Run
+
+	add("Provider", details.Source.Platform)
+	add("mmetl", r.Metadata.VersionString())
+	add("Input", details.Source.File)
+	add("Team", details.Target.Team)
+	add("Output", details.Target.Output)
+	if !run.Started.IsZero() {
+		add("Started", run.Started.UTC().Format(time.RFC3339))
 	}
-	if !r.Metadata.Finished.IsZero() {
-		add("Finished", r.Metadata.Finished.UTC().Format(time.RFC3339))
+	if !run.Finished.IsZero() {
+		add("Finished", run.Finished.UTC().Format(time.RFC3339))
 	}
-	if !r.Metadata.Started.IsZero() && !r.Metadata.Finished.IsZero() {
-		add("Duration", r.Metadata.Duration().String())
+	if !run.Started.IsZero() && !run.Finished.IsZero() {
+		add("Duration", run.Duration().String())
 	}
-	if r.Metadata.Flags != "" {
-		add("Flags", mdCode(r.Metadata.Flags))
+	if run.Flags != "" {
+		add("Flags", mdCode(run.Flags))
+	}
+
+	return rows
+}
+
+// producedRows builds the ## Produced table from Counts.
+// Zero counts are omitted so unused channel kinds do not render.
+func (r *Report) producedRows() [][]string {
+	counts := r.Metadata.details().Counts
+
+	rows := [][]string{}
+	for _, row := range []struct {
+		label string
+		count int
+	}{
+		{"Users", counts.Users},
+		{"Bots", counts.Bots},
+		{"Public channels", counts.PublicChannels},
+		{"Private channels", counts.PrivateChannels},
+		{"Group channels", counts.GroupChannels},
+		{"Direct channels", counts.DirectChannels},
+		{"Posts", counts.Posts},
+		{"Replies", counts.Replies},
+		{"Reactions", counts.Reactions},
+		{"Attachments", counts.Attachments},
+	} {
+		if row.count > 0 {
+			rows = append(rows, []string{row.label, fmt.Sprintf("%d", row.count)})
+		}
 	}
 
 	return rows
