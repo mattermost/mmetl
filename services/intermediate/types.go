@@ -7,7 +7,6 @@ package intermediate
 
 import (
 	"fmt"
-	"os"
 	"regexp"
 	"sort"
 	"strings"
@@ -15,15 +14,11 @@ import (
 	"unicode/utf8"
 
 	"github.com/mattermost/mattermost/server/public/model"
-	log "github.com/sirupsen/logrus"
 )
 
-// ExitFunc is the function called for fatal errors. Tests can override it to
-// avoid terminating the process.
-var ExitFunc func(code int) = os.Exit
-
-// NowFunc is used by CreatedMillis for the fallback timestamp. Tests can
-// override this for deterministic output.
+// NowFunc is used by CreatedMillis for the fallback timestamp and by the
+// transform report for its run timestamps. Tests can override this for
+// deterministic output.
 var NowFunc = time.Now
 
 var isValidChannelNameCharacters = regexp.MustCompile(`^[a-zA-Z0-9\-_]+$`).MatchString
@@ -117,6 +112,15 @@ type IntermediateChannel struct {
 	MsgCount         int64             `json:"msg_count"`
 	MsgCountRoot     int64             `json:"msg_count_root"`
 	LastPostAt       int64             `json:"last_post_at"` // milliseconds, computed from posts
+
+	// ReportKind is the section of the transform report this channel belongs
+	// to. It is decided once, where the channel's source collection is counted,
+	// and then carried — because a channel can change type on the way in (an
+	// oversized group DM is imported as a private channel) and the report counts
+	// it as what it was in the source. Re-deriving the kind from Type at each
+	// note site would scatter one channel's notes across two sections and leave
+	// the second section with notes it has no Seen count for.
+	ReportKind EntityKind `json:"-"`
 }
 
 // CreatedMillis returns the channel creation time in milliseconds. Created holds
@@ -131,17 +135,76 @@ func (c *IntermediateChannel) CreatedMillis() int64 {
 	return NowFunc().UnixMilli()
 }
 
+// ReportID identifies the channel in the source export, falling back to its
+// original name for sources (such as Slack) that do not always carry an ID.
+func (c *IntermediateChannel) ReportID() string {
+	if c.Id != "" {
+		return c.Id
+	}
+	return c.OriginalName
+}
+
+// ReportName is the channel's human-readable name for the transform report.
+func (c *IntermediateChannel) ReportName() string {
+	if c.DisplayName != "" {
+		return c.DisplayName
+	}
+	// A direct or group channel usually carries no name of its own, and the
+	// slug it gets instead is just its ID again — which the report already
+	// shows. Its members are what identifies it to a person reading the report.
+	if c.Type == model.ChannelTypeDirect || c.Type == model.ChannelTypeGroup {
+		if len(c.MembersUsernames) > 0 {
+			return strings.Join(c.MembersUsernames, ", ")
+		}
+	}
+	if c.Name != "" {
+		return c.Name
+	}
+	return c.OriginalName
+}
+
+// ReportEntity returns the report section this channel's notes belong in.
+// Channels built without a ReportKind — as several tests do — fall back to
+// their current Mattermost type.
+func (c *IntermediateChannel) ReportEntity(report *Report) *EntityReport {
+	if c.ReportKind != "" {
+		return report.For(c.ReportKind)
+	}
+	return report.For(EntityKindForChannelType(c.Type))
+}
+
+// EntityKindForChannelType maps a Mattermost channel type to the report entity
+// kind it is counted under. Prefer IntermediateChannel.ReportEntity, which
+// honours the kind the channel was counted as in the source.
+func EntityKindForChannelType(channelType model.ChannelType) EntityKind {
+	switch channelType {
+	case model.ChannelTypePrivate:
+		return EntityPrivateChannel
+	case model.ChannelTypeGroup:
+		return EntityGroupChannel
+	case model.ChannelTypeDirect:
+		return EntityDirectChannel
+	default:
+		return EntityPublicChannel
+	}
+}
+
 // SanitiseWithPrefix validates and truncates channel fields to Mattermost model
-// limits. The fallbackPrefix is prepended to single-character channel/display
-// names; callers supply a source-specific value (e.g. "slack-channel-").
-func (c *IntermediateChannel) SanitiseWithPrefix(logger log.FieldLogger, fallbackPrefix string) {
+// limits, recording each change as a note against entity. The fallbackPrefix is
+// prepended to single-character channel/display names; callers supply a
+// source-specific value (e.g. "slack-channel-").
+func (c *IntermediateChannel) SanitiseWithPrefix(entity *EntityReport, fallbackPrefix string) {
 	if c.Type == model.ChannelTypeDirect {
 		return
 	}
 
+	// Capture the identity up front: the fields the report names the channel by
+	// are the same ones being truncated below.
+	id, name := c.ReportID(), c.ReportName()
+
 	c.Name = strings.Trim(c.Name, "_-")
 	if len(c.Name) > model.ChannelNameMaxLength {
-		logger.Warnf("Channel %s handle exceeds the maximum length. It will be truncated when imported.", c.DisplayName)
+		entity.Note(id, name, ReasonChannelNameTruncated)
 		c.Name = c.Name[0:model.ChannelNameMaxLength]
 	}
 	if len(c.Name) == 1 {
@@ -149,11 +212,12 @@ func (c *IntermediateChannel) SanitiseWithPrefix(logger log.FieldLogger, fallbac
 	}
 	if !isValidChannelNameCharacters(c.Name) {
 		c.Name = strings.ToLower(c.Id)
+		entity.Note(id, name, ReasonChannelNameInvalidChars, c.Name)
 	}
 
 	c.DisplayName = strings.Trim(c.DisplayName, "_-")
 	if utf8.RuneCountInString(c.DisplayName) > model.ChannelDisplayNameMaxRunes {
-		logger.Warnf("Channel %s display name exceeds the maximum length. It will be truncated when imported.", c.DisplayName)
+		entity.Note(id, name, ReasonChannelDisplayTruncated)
 		c.DisplayName = truncateRunes(c.DisplayName, model.ChannelDisplayNameMaxRunes)
 	}
 	if len(c.DisplayName) == 1 {
@@ -161,12 +225,12 @@ func (c *IntermediateChannel) SanitiseWithPrefix(logger log.FieldLogger, fallbac
 	}
 
 	if utf8.RuneCountInString(c.Purpose) > model.ChannelPurposeMaxRunes {
-		logger.Warnf("Channel %s purpose exceeds the maximum length. It will be truncated when imported.", c.DisplayName)
+		entity.Note(id, name, ReasonChannelPurposeTruncated)
 		c.Purpose = truncateRunes(c.Purpose, model.ChannelPurposeMaxRunes)
 	}
 
 	if utf8.RuneCountInString(c.Header) > model.ChannelHeaderMaxRunes {
-		logger.Warnf("Channel %s header exceeds the maximum length. It will be truncated when imported.", c.DisplayName)
+		entity.Note(id, name, ReasonChannelHeaderTruncated)
 		c.Header = truncateRunes(c.Header, model.ChannelHeaderMaxRunes)
 	}
 }
@@ -196,42 +260,47 @@ type IntermediateUser struct {
 	DisplayName string                   `json:"display_name"`
 }
 
-func (u *IntermediateUser) Sanitise(logger log.FieldLogger, defaultEmailDomain string, skipEmptyEmails bool) {
-	// Log only non-sensitive identifiers; the full struct includes Email and
-	// Password, which must not be written to logs even at debug level.
-	logger.Debugf("TransformUsers: Sanitise: IntermediateUser Username=%s Id=%s", u.Username, u.Id)
+// Sanitise validates and truncates user fields to Mattermost model limits,
+// recording each change as a note against entity. It returns an error when the
+// user has no email address and neither --skip-empty-emails nor
+// --default-email-domain was given, so the caller can abort the run through the
+// normal error path — and still write the transform report.
+func (u *IntermediateUser) Sanitise(entity *EntityReport, defaultEmailDomain string, skipEmptyEmails bool) error {
+	if logger := entity.Logger(); logger != nil {
+		// Log only non-sensitive identifiers; the full struct includes Email and
+		// Password, which must not be written to logs even at debug level.
+		logger.Debugf("TransformUsers: Sanitise: IntermediateUser Username=%s Id=%s", u.Username, u.Id)
+	}
 
 	if u.Email == "" {
-		if skipEmptyEmails {
-			logger.Warnf("User %s does not have an email address in the export. Using blank email address due to --skip-empty-emails flag.", u.Username)
-			return
-		}
-
-		if defaultEmailDomain != "" {
+		switch {
+		case skipEmptyEmails:
+			entity.Note(u.Id, u.Username, ReasonEmailBlank)
+			return nil
+		case defaultEmailDomain != "":
 			u.Email = u.Username + "@" + defaultEmailDomain
-			logger.Warnf("User %s does not have an email address in the export. Used %s as a placeholder. The user should update their email address once logged in to the system.", u.Username, u.Email)
-		} else {
-			msg := fmt.Sprintf("User %s does not have an email address in the export. Please provide an email domain through the --default-email-domain flag, to assign this user's email address. Alternatively, use the --skip-empty-emails flag to set the user's email to an empty string.", u.Username)
-			logger.Error(msg)
-			fmt.Println(msg)
-			ExitFunc(1)
+			entity.Note(u.Id, u.Username, ReasonEmailPlaceholder, u.Email)
+		default:
+			return fmt.Errorf("user %s does not have an email address in the export. Please provide an email domain through the --default-email-domain flag, to assign this user's email address. Alternatively, use the --skip-empty-emails flag to set the user's email to an empty string", u.Username)
 		}
 	}
 
 	if utf8.RuneCountInString(u.FirstName) > model.UserFirstNameMaxRunes {
-		logger.Warnf("User %s first name exceeds the maximum length. It will be truncated when imported.", u.Username)
+		entity.Note(u.Id, u.Username, ReasonFirstNameTruncated)
 		u.FirstName = truncateRunes(u.FirstName, model.UserFirstNameMaxRunes)
 	}
 
 	if utf8.RuneCountInString(u.LastName) > model.UserLastNameMaxRunes {
-		logger.Warnf("User %s last name exceeds the maximum length. It will be truncated when imported.", u.Username)
+		entity.Note(u.Id, u.Username, ReasonLastNameTruncated)
 		u.LastName = truncateRunes(u.LastName, model.UserLastNameMaxRunes)
 	}
 
 	if utf8.RuneCountInString(u.Position) > model.UserPositionMaxRunes {
-		logger.Warnf("User %s position exceeds the maximum length. It will be truncated when imported.", u.Username)
+		entity.Note(u.Id, u.Username, ReasonPositionTruncated)
 		u.Position = truncateRunes(u.Position, model.UserPositionMaxRunes)
 	}
+
+	return nil
 }
 
 type IntermediateReaction struct {
@@ -277,11 +346,13 @@ type Intermediate struct {
 // SplitPostIntoThread splits a post's message if it exceeds the maximum rune
 // limit. The first chunk becomes/remains the main post, and additional chunks
 // are added as replies. Reactions and attachments are kept only on the first
-// chunk.
-func SplitPostIntoThread(post *IntermediatePost) {
+// chunk. It returns how many posts the message ended up as, so the caller can
+// record the split against the post in the transform report; 1 means the post
+// was left alone.
+func SplitPostIntoThread(post *IntermediatePost) int {
 	if utf8.RuneCountInString(post.Message) <= model.PostMessageMaxRunesV2 {
 		// No splitting needed
-		return
+		return 1
 	}
 
 	chunks := SplitTextIntoChunks(post.Message, model.PostMessageMaxRunesV2)
@@ -302,14 +373,19 @@ func SplitPostIntoThread(post *IntermediatePost) {
 		}
 		post.Replies = append(post.Replies, reply)
 	}
+
+	return len(chunks)
 }
 
 // SplitOversizedReplies splits any replies that exceed the maximum rune limit
 // into sibling replies, deduplicates timestamps, and sorts all replies by
-// CreateAt.
-func SplitOversizedReplies(post *IntermediatePost) {
+// CreateAt. It returns how many replies had to be split, so the caller can
+// record the splits against the post in the transform report; 0 means every
+// reply was left alone.
+func SplitOversizedReplies(post *IntermediatePost) int {
 	originalReplies := post.Replies
 	post.Replies = []*IntermediatePost{}
+	split := 0
 
 	// Build a set of used timestamps from existing replies to avoid duplicates
 	usedTimestamps := make(map[int64]bool)
@@ -325,6 +401,7 @@ func SplitOversizedReplies(post *IntermediatePost) {
 
 		// Reply needs splitting - add all chunks as siblings
 		chunks := SplitTextIntoChunks(reply.Message, model.PostMessageMaxRunesV2)
+		split++
 
 		// First chunk: update the original reply
 		reply.Message = chunks[0]
@@ -357,4 +434,6 @@ func SplitOversizedReplies(post *IntermediatePost) {
 	sort.Slice(post.Replies, func(i, j int) bool {
 		return post.Replies[i].CreateAt < post.Replies[j].CreateAt
 	})
+
+	return split
 }

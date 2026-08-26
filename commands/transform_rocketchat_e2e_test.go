@@ -337,6 +337,19 @@ func TestTransformRocketChatE2EGuestImport(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotNil(t, findPostByMessage(dmPosts, "guest DM hello"))
 	assert.Nil(t, findPostByMessage(dmPosts, "should be dropped"))
+
+	// The report names carol and everything dropped with her, which is what an
+	// operator would otherwise have to reconstruct from the log.
+	report := readTransformReport(t, outputPath, "# RocketChat Transform Report")
+	assert.Empty(t, report.Error, "a successful run must not record an error")
+	assert.Equal(t, []string{"carol"}, report.skippedNames("user", "guest_no_channel"))
+	assert.Equal(t, 1, report.Entities["user"].Skipped)
+	assert.Equal(t, 2, report.Entities["user"].Transformed, "alice and bob reach the import file")
+	assert.NotEmpty(t, report.skippedNames("post", "post_skipped_author"),
+		"carol's DM post must be named as skipped")
+	assert.NotEmpty(t, report.Entities["direct_channel"].Notes,
+		"the DM that lost all its guests must be accounted for")
+	assert.Contains(t, report.Reasons["guest_no_channel"].Detail, "--guest-handling=user")
 }
 
 func TestTransformRocketChatE2EBotImport(t *testing.T) {

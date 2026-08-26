@@ -16,6 +16,7 @@ import (
 
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mmetl/commands"
+	"github.com/mattermost/mmetl/services/intermediate"
 	"github.com/mattermost/mmetl/services/slack"
 	"github.com/mattermost/mmetl/testhelper"
 	"github.com/spf13/cobra"
@@ -45,6 +46,61 @@ func resetCobraFlags(cmd *cobra.Command) {
 }
 
 const transformLogFile = "transform-slack.log"
+
+// transformReport is the JSON transform report, decoded far enough for a test
+// to assert on the outcome of every source entity without parsing Markdown.
+type transformReport struct {
+	Metadata intermediate.Info `json:"metadata"`
+	Error    string            `json:"error,omitempty"`
+	Entities map[string]struct {
+		Transformed int `json:"transformed"`
+		Skipped     int `json:"skipped"`
+		Notes       []struct {
+			EntityID   string   `json:"entity_id"`
+			EntityName string   `json:"entity_name"`
+			ReasonCode string   `json:"reason_code"`
+			Args       []string `json:"args"`
+		} `json:"notes"`
+	} `json:"entities"`
+	Reasons map[string]struct {
+		Code   string `json:"code"`
+		Short  string `json:"short"`
+		Detail string `json:"detail"`
+		Skip   bool   `json:"skip"`
+	} `json:"reasons"`
+}
+
+// skippedNames returns the names of every entity of a kind skipped for a given
+// reason, so a test can assert on exactly who was dropped and why.
+func (r transformReport) skippedNames(kind, reasonCode string) []string {
+	names := []string{}
+	for _, note := range r.Entities[kind].Notes {
+		if note.ReasonCode == reasonCode {
+			names = append(names, note.EntityName)
+		}
+	}
+	return names
+}
+
+// readTransformReport loads the JSON report written next to the bulk import
+// file, and checks the Markdown report was written beside it under the given
+// title.
+func readTransformReport(t *testing.T, outputPath, title string) transformReport {
+	t.Helper()
+
+	dir := filepath.Dir(outputPath)
+	raw, err := os.ReadFile(filepath.Join(dir, intermediate.ReportJSONFilename))
+	require.NoError(t, err, "the transform must write a JSON report next to the bulk import file")
+
+	var report transformReport
+	require.NoError(t, json.Unmarshal(raw, &report))
+
+	markdown, err := os.ReadFile(filepath.Join(dir, intermediate.ReportMarkdownFilename))
+	require.NoError(t, err, "the transform must write a Markdown report next to the bulk import file")
+	require.Contains(t, string(markdown), title)
+
+	return report
+}
 
 // uniqueTeamName generates a unique team name for testing to avoid conflicts.
 // Uses crypto/rand for sufficient entropy to prevent collisions in parallel CI,
@@ -1615,6 +1671,36 @@ func TestTransformSlackE2EGuestSkip(t *testing.T) {
 		"guest-authored thread root should be dropped in skip mode")
 	assert.False(t, anyPostContains(posts, "Regular user reply in guest thread"),
 		"non-guest reply to a skipped guest's thread root should be dropped with the whole thread")
+
+	// The report names every dropped entity, which is a stronger assertion than
+	// the absence checks above: it says why each one went missing.
+	report := readTransformReport(t, mmExportPath, "# Slack Transform Report")
+	require.NotNil(t, report.Metadata.Additional)
+	assert.Equal(t, teamName, report.Metadata.Additional.Target.Team)
+	assert.Empty(t, report.Error, "a successful run must not record an error")
+
+	assert.ElementsMatch(t, []string{"multi.guest", "single.guest"},
+		report.skippedNames("user", "guest_skip_mode"))
+	assert.Equal(t, 2, report.Entities["user"].Skipped)
+	assert.Equal(t, 1, report.Entities["user"].Transformed, "only regular.user reaches the import file")
+
+	assert.NotEmpty(t, report.skippedNames("post", "post_skipped_author"),
+		"the guests' own posts must be named as skipped")
+	assert.NotEmpty(t, report.skippedNames("post", "thread_root_missing"),
+		"the non-guest reply must be named as dropped with its thread")
+	assert.Equal(t, 1, report.Entities["thread"].Skipped,
+		"the guest-rooted thread is named once, not once per reply")
+
+	// Every reason a note points at is in the dictionary, with the prose the
+	// Markdown footnotes are built from.
+	for kind := range report.Entities {
+		for _, note := range report.Entities[kind].Notes {
+			reason, ok := report.Reasons[note.ReasonCode]
+			require.True(t, ok, "reason %q is missing from the report dictionary", note.ReasonCode)
+			assert.NotEmpty(t, reason.Detail)
+			assert.NotEmpty(t, note.EntityID, "every note must name its entity")
+		}
+	}
 }
 
 // TestTransformSlackE2EGuestUserMode verifies that --guest-handling=user
@@ -1783,6 +1869,22 @@ func TestTransformSlackE2EChannellessGuestMpimThread(t *testing.T) {
 		"the channel-less guest's thread root should be dropped")
 	assert.False(t, anyPostContains(posts, "Regular reply in guest mpim thread"),
 		"the non-guest reply should be dropped along with the skipped guest's thread")
+
+	// The report says which guest was dropped and why, and names the content
+	// that went with them — the whole point of producing it.
+	report := readTransformReport(t, mmExportPath, "# Slack Transform Report")
+	assert.Equal(t, []string{"channelless.guest"}, report.skippedNames("user", "guest_no_channel"))
+	assert.NotEmpty(t, report.skippedNames("post", "post_skipped_author"),
+		"the guest's thread root must be named as skipped")
+	assert.NotEmpty(t, report.skippedNames("post", "thread_root_missing"),
+		"the non-guest reply must be named as dropped with its thread")
+	assert.Equal(t, 1, report.Entities["thread"].Skipped)
+	assert.NotEmpty(t, report.skippedNames("channel_membership", "membership_skipped_user"),
+		"the guest's MPIM membership must be named as dropped")
+
+	// The guest_no_channel reason carries the remediation hint an operator
+	// reading the report needs.
+	assert.Contains(t, report.Reasons["guest_no_channel"].Detail, "--guest-handling=user")
 }
 
 // joinSorted returns a deterministic comma-joined key from the given strings.

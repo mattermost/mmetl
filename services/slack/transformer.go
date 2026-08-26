@@ -19,19 +19,23 @@ type Transformer struct {
 	// and posts referencing them, leaving no dangling references in the export.
 	skippedUserIDs map[string]bool
 
-	// droppedPostRefs / droppedReactionRefs / droppedMembershipRefs count
-	// references removed because they pointed at a skipped user, for the
-	// end-of-transform summary log. Reactions are tracked separately from
-	// posts so the summary doesn't overstate the number of dropped posts.
-	droppedPostRefs       int
-	droppedReactionRefs   int
-	droppedMembershipRefs int
+	// skippedUsernames maps a skipped user ID to the username it had, so the
+	// report can name the user behind a dropped membership, post or reaction
+	// after the IntermediateUser itself is gone.
+	skippedUsernames map[string]string
 
-	// warnedDroppedThreads records channel+thread keys already warned about when
-	// a thread was dropped because its root was never imported (e.g. a skipped
-	// guest started it), so a thread with many replies emits one WARN, not one
-	// per reply. droppedPostRefs still counts every dropped reply.
-	warnedDroppedThreads map[string]bool
+	// reportedThreads records the channel+thread keys already accounted for in
+	// the report, so a thread with many replies is counted (and, when its root
+	// was never imported, skipped) exactly once instead of once per reply.
+	// Every dropped reply is still named individually under posts.
+	reportedThreads map[string]bool
+
+	// droppedRootAuthors maps a channel+thread key to the username of the post
+	// that would have been its root, for roots that were dropped. Posts are
+	// processed in timestamp order, so a root is always recorded before the
+	// replies that go looking for it — which is what lets a dropped thread name
+	// the author responsible for the loss rather than one of its replies.
+	droppedRootAuthors map[string]string
 }
 
 // Guest handling modes for the --guest-handling flag.
@@ -62,8 +66,12 @@ func NewTransformer(teamName string, logger log.FieldLogger) *Transformer {
 			TeamName:     teamName,
 			Intermediate: &intermediate.Intermediate{},
 			Logger:       logger,
+			Report:       intermediate.NewReport(logger),
 		},
-		skippedUserIDs: make(map[string]bool),
+		skippedUserIDs:     make(map[string]bool),
+		skippedUsernames:   make(map[string]string),
+		reportedThreads:    make(map[string]bool),
+		droppedRootAuthors: make(map[string]string),
 	}
 }
 
@@ -74,9 +82,30 @@ func (t *Transformer) isSkippedUser(id string) bool {
 }
 
 // markUserSkipped records a user ID as skipped so downstream stages can drop
-// memberships and posts that reference it.
-func (t *Transformer) markUserSkipped(id string) {
-	if id != "" {
-		t.skippedUserIDs[id] = true
+// memberships and posts that reference it, remembering the username so the
+// report can still name the user once the IntermediateUser is gone.
+func (t *Transformer) markUserSkipped(id, username string) {
+	if id == "" {
+		return
 	}
+	t.skippedUserIDs[id] = true
+	if username != "" {
+		if t.skippedUsernames == nil {
+			t.skippedUsernames = map[string]string{}
+		}
+		t.skippedUsernames[id] = username
+	}
+}
+
+// usernameFor resolves a Slack user ID to the username the report should name
+// them by: the one remembered when they were skipped, else the one on the
+// transformed user, else "" — in which case the report names them by ID alone.
+func (t *Transformer) usernameFor(id string) string {
+	if username, ok := t.skippedUsernames[id]; ok {
+		return username
+	}
+	if user, ok := t.Intermediate.UsersById[id]; ok {
+		return user.Username
+	}
+	return ""
 }

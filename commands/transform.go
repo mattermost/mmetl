@@ -3,15 +3,20 @@ package commands
 import (
 	"archive/zip"
 	"fmt"
+	"io/fs"
 	"os"
 	"path"
+	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 
+	"github.com/mattermost/mmetl/services/intermediate"
 	"github.com/mattermost/mmetl/services/slack"
 )
 
@@ -40,7 +45,7 @@ func init() {
 	if err := TransformSlackCmd.MarkFlagRequired("file"); err != nil {
 		panic(err)
 	}
-	TransformSlackCmd.Flags().StringP("output", "o", "bulk-export.jsonl", "the output path")
+	TransformSlackCmd.Flags().StringP("output", "o", "bulk-export.jsonl", "the output path for the bulk import file. The transform report and log are written to the same directory.")
 	TransformSlackCmd.Flags().StringP("attachments-dir", "d", "data", "the path for the attachments directory")
 	TransformSlackCmd.Flags().BoolP("skip-convert-posts", "c", false, "Skips converting mentions and post markup. Only for testing purposes")
 	TransformSlackCmd.Flags().BoolP("skip-attachments", "a", false, "Skips copying the attachments from the import file")
@@ -64,7 +69,9 @@ func init() {
 	)
 }
 
-func transformSlackCmdF(cmd *cobra.Command, args []string) error {
+// The named return is what the deferred report write reads, so a run that
+// aborts still leaves a report explaining how far it got.
+func transformSlackCmdF(cmd *cobra.Command, args []string) (runErr error) {
 	team, _ := cmd.Flags().GetString("team")
 	inputFilePath, _ := cmd.Flags().GetString("file")
 	outputFilePath, _ := cmd.Flags().GetString("output")
@@ -93,16 +100,34 @@ func transformSlackCmdF(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("output file \"%s\" is a directory", outputFilePath)
 	}
 
+	// Every artifact of a run lands next to the bulk import file, so one
+	// migration leaves one self-contained directory. Set the log and the report
+	// up before the remaining validation, so anything that fails from here on is
+	// explained by a report rather than only by the message cobra prints.
+	artifactsDir := filepath.Dir(outputFilePath)
+	logger, logFile, err := newTransformLogger(artifactsDir, "slack", debug)
+	if err != nil {
+		return err
+	}
+	defer logFile.Close()
+
+	slackTransformer := slack.NewTransformer(team, logger)
+	report := slackTransformer.Report
+	startTransformReport(cmd, report, "slack", inputFilePath, team, outputFilePath)
+	// The flag validation and output-path checks above run before there is
+	// anywhere to write, so they are the only failures that leave no report.
+	defer writeTransformReport(report, artifactsDir, &runErr)
+
 	// attachments dir
 	attachmentsFullDir := path.Join(attachmentsDir, attachmentsInternal)
 
 	if !skipAttachments {
-		if fileInfo, err := os.Stat(attachmentsFullDir); os.IsNotExist(err) {
+		if fileInfo, statErr := os.Stat(attachmentsFullDir); os.IsNotExist(statErr) {
 			if createErr := os.MkdirAll(attachmentsFullDir, 0755); createErr != nil {
 				return createErr
 			}
-		} else if err != nil {
-			return err
+		} else if statErr != nil {
+			return statErr
 		} else if !fileInfo.IsDir() {
 			return fmt.Errorf("file \"%s\" is not a directory", attachmentsDir)
 		}
@@ -121,25 +146,16 @@ func transformSlackCmdF(cmd *cobra.Command, args []string) error {
 	}
 
 	zipReader, err := zip.NewReader(fileReader, zipFileInfo.Size())
-	if err != nil || zipReader.File == nil {
-		return err
-	}
-
-	logger := log.New()
-	logFile, err := os.OpenFile("transform-slack.log", os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0666)
 	if err != nil {
 		return err
 	}
-	defer logFile.Close()
-	logger.SetOutput(logFile)
-	logger.SetFormatter(customLogFormatter)
-	logger.SetReportCaller(true)
-
-	if debug {
-		logger.Level = log.DebugLevel
-		logger.Info("Debug mode enabled")
+	// An archive that opens but holds nothing is not something to transform.
+	// This used to return a nil error, exiting 0 with no import file and no
+	// explanation. len, not a nil check: archive/zip returns a non-nil empty
+	// File slice for a valid empty archive.
+	if len(zipReader.File) == 0 {
+		return fmt.Errorf("the Slack export %q contains no files", inputFilePath)
 	}
-	slackTransformer := slack.NewTransformer(team, logger)
 
 	slackExport, err := slackTransformer.ParseSlackExportFile(zipReader, skipConvertPosts)
 	if err != nil {
@@ -178,4 +194,142 @@ var customLogFormatter = &log.JSONFormatter{
 		fileName := path.Base(frame.File) + ":" + strconv.Itoa(frame.Line)
 		return "", fileName
 	},
+}
+
+// newTransformLogger opens transform-<provider>.log inside dir, which is the
+// directory the bulk import file and the report are written to, so a run leaves
+// every artifact in one place. The caller owns closing the returned file.
+func newTransformLogger(dir, provider string, debug bool) (*log.Logger, *os.File, error) {
+	if dir == "" {
+		dir = "."
+	}
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return nil, nil, fmt.Errorf("creating output directory %s: %w", dir, err)
+	}
+
+	logPath := filepath.Join(dir, "transform-"+provider+".log")
+	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0666)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	logger := log.New()
+	logger.SetOutput(logFile)
+	logger.SetFormatter(customLogFormatter)
+	logger.SetReportCaller(true)
+	if debug {
+		logger.Level = log.DebugLevel
+		logger.Info("Debug mode enabled")
+	}
+
+	return logger, logFile, nil
+}
+
+// startTransformReport stamps the run's metadata onto its report: what produced
+// it, and when the clock started. The same Info also goes onto the version line
+// of the bulk import file, so only ship-safe values go in here.
+func startTransformReport(cmd *cobra.Command, report *intermediate.Report, provider, input, team, output string) {
+	report.Metadata.Additional = &intermediate.Additional{
+		Source: intermediate.SourceInfo{
+			Platform:  provider,
+			File:      filepath.Base(input),
+			SizeBytes: inputSizeBytes(input),
+		},
+		Target: intermediate.TargetInfo{
+			Team:   team,
+			Output: filepath.Base(output),
+		},
+		Run: intermediate.RunInfo{
+			Version:   getVersion(),
+			BuildHash: getBuildHash(),
+			Command:   cmd.CommandPath(),
+			Flags:     formatChangedFlags(cmd),
+			Started:   intermediate.NowFunc().UTC(),
+		},
+	}
+
+	// The report and the import file carry base names only, so this is the one
+	// place the operator's actual paths are recorded. The log sits in the same
+	// directory and is unambiguously local.
+	if logger := report.Logger(); logger != nil {
+		logger.WithFields(log.Fields{
+			"input":  input,
+			"output": output,
+		}).Info("Starting transform")
+	}
+}
+
+// inputSizeBytes is the size of the export being transformed: the file size for
+// a Slack zip, or the total of the regular files under RocketChat's dump
+// directory. Returns 0 on any error — a transform must never fail because a
+// size could not be read.
+func inputSizeBytes(path string) int64 {
+	info, err := os.Stat(path)
+	if err != nil {
+		return 0
+	}
+	if !info.IsDir() {
+		return info.Size()
+	}
+
+	var total int64
+	_ = filepath.WalkDir(path, func(_ string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil || entry.IsDir() {
+			return nil //nolint:nilerr // an unreadable subtree is a 0, not a failed transform
+		}
+		if entryInfo, statErr := entry.Info(); statErr == nil {
+			total += entryInfo.Size()
+		}
+		return nil
+	})
+	return total
+}
+
+// writeTransformReport closes the report and writes it next to the bulk import
+// file. It runs from a defer, on success and on failure alike, and takes the
+// command's named error by pointer so an aborted run is recorded in the report
+// rather than losing the work that was already accounted for.
+//
+// A failure to write the report replaces a nil command error, but never masks
+// the error that stopped the transform.
+func writeTransformReport(report *intermediate.Report, dir string, runErr *error) {
+	report.Finish(*runErr)
+
+	markdownPath, jsonPath, writeErr := report.Write(dir)
+	if writeErr != nil {
+		if *runErr == nil {
+			*runErr = writeErr
+		} else if logger := report.Logger(); logger != nil {
+			logger.WithError(writeErr).Error("Failed to write the transform report")
+		}
+		return
+	}
+
+	fmt.Print(report.SummaryText(markdownPath, jsonPath))
+}
+
+// pathFlags are filesystem-path flags. Values are reduced to a base name
+// because the flag string is written into the import file.
+var pathFlags = map[string]bool{
+	"file":            true,
+	"output":          true,
+	"dump-dir":        true,
+	"attachments-dir": true,
+	"uploads-dir":     true,
+	"team-map-path":   true,
+}
+
+// formatChangedFlags renders the flags the operator actually set, so the report
+// records what produced it without listing every default.
+func formatChangedFlags(cmd *cobra.Command) string {
+	changed := []string{}
+	cmd.Flags().Visit(func(flag *pflag.Flag) {
+		value := flag.Value.String()
+		if pathFlags[flag.Name] && value != "" {
+			value = filepath.Base(value)
+		}
+		changed = append(changed, "--"+flag.Name+"="+value)
+	})
+	sort.Strings(changed)
+	return strings.Join(changed, " ")
 }

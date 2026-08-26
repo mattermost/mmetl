@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"path/filepath"
 	"strings"
 
-	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 
 	"github.com/mattermost/mmetl/services/rocketchat"
@@ -37,7 +37,7 @@ func init() {
 	if err := TransformRocketChatCmd.MarkFlagRequired("dump-dir"); err != nil {
 		panic(err)
 	}
-	TransformRocketChatCmd.Flags().StringP("output", "o", "bulk-export.jsonl", "the output path")
+	TransformRocketChatCmd.Flags().StringP("output", "o", "bulk-export.jsonl", "the output path for the bulk import file. The transform report and log are written to the same directory.")
 	TransformRocketChatCmd.Flags().String("attachments-dir", "data", "the path for the attachments directory")
 	TransformRocketChatCmd.Flags().String("uploads-dir", "", "path to RocketChat FileSystem uploads directory (if not using GridFS)")
 	TransformRocketChatCmd.Flags().BoolP("skip-attachments", "a", false, "Skips extracting file attachments")
@@ -53,7 +53,9 @@ func init() {
 	TransformCmd.AddCommand(TransformRocketChatCmd)
 }
 
-func transformRocketChatCmdF(cmd *cobra.Command, args []string) error {
+// The named return is what the deferred report write reads, so a run that
+// aborts still leaves a report explaining how far it got.
+func transformRocketChatCmdF(cmd *cobra.Command, args []string) (runErr error) {
 	team, _ := cmd.Flags().GetString("team")
 	dumpDir, _ := cmd.Flags().GetString("dump-dir")
 	outputFilePath, _ := cmd.Flags().GetString("output")
@@ -80,28 +82,30 @@ func transformRocketChatCmdF(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("output file %q is a directory", outputFilePath)
 	}
 
-	logger := log.New()
-	logFile, err := os.OpenFile("transform-rocketchat.log", os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	// Every artifact of a run lands next to the bulk import file, so one
+	// migration leaves one self-contained directory.
+	artifactsDir := filepath.Dir(outputFilePath)
+	logger, logFile, err := newTransformLogger(artifactsDir, "rocketchat", debug)
 	if err != nil {
 		return err
 	}
 	defer logFile.Close()
-	logger.SetOutput(logFile)
-	logger.SetFormatter(customLogFormatter)
-	logger.SetReportCaller(true)
 
-	if debug {
-		logger.Level = log.DebugLevel
-		logger.Info("Debug mode enabled")
-	}
+	transformer := rocketchat.NewTransformer(team, logger)
+	report := transformer.Report
+	startTransformReport(cmd, report, "rocketchat", dumpDir, team, outputFilePath)
+	// The flag validation and output-path checks above run before there is
+	// anywhere to write, so they are the only failures that leave no report.
+	defer writeTransformReport(report, artifactsDir, &runErr)
 
 	parsed, err := rocketchat.ParseDump(dumpDir, logger)
 	if err != nil {
 		return err
 	}
 
-	transformer := rocketchat.NewTransformer(team, logger)
-	transformer.Transform(parsed, skipAttachments, skipEmptyEmails, defaultEmailDomain, guestHandling)
+	if err := transformer.Transform(parsed, skipAttachments, skipEmptyEmails, defaultEmailDomain, guestHandling); err != nil {
+		return err
+	}
 
 	// Validate that --bot-owner is provided if there are bot users.
 	// Do this before attachment extraction so we fail fast without doing
@@ -132,7 +136,7 @@ func transformRocketChatCmdF(cmd *cobra.Command, args []string) error {
 		}
 
 		attachmentsOutput := path.Join(attachmentsDir, "bulk-export-attachments")
-		if err := rocketchat.ExtractAttachments(parsed.UploadsByID, gridfsIndex, attachmentsOutput, uploadsDir, logger); err != nil {
+		if err := rocketchat.ExtractAttachments(parsed.UploadsByID, gridfsIndex, attachmentsOutput, uploadsDir, report); err != nil {
 			return err
 		}
 	}
@@ -141,12 +145,7 @@ func transformRocketChatCmdF(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	logger.Infof("Transformation succeeded! Users: %d, Public channels: %d, Private channels: %d, Posts: %d",
-		len(transformer.Intermediate.UsersById),
-		len(transformer.Intermediate.PublicChannels),
-		len(transformer.Intermediate.PrivateChannels),
-		len(transformer.Intermediate.Posts),
-	)
+	logger.Info("Transformation succeeded!")
 
 	return nil
 }

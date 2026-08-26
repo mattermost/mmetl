@@ -7,8 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	log "github.com/sirupsen/logrus"
 	"golang.org/x/text/unicode/norm"
+
+	"github.com/mattermost/mmetl/services/intermediate"
 )
 
 // ExtractAttachments extracts all complete uploads into outputDir.
@@ -17,17 +18,22 @@ import (
 // chunks file). For FileSystem uploads, files are copied from uploadsDir (the
 // path provided by the user via --uploads-dir).
 //
-// Skips uploads that are incomplete or whose source cannot be found.
+// Uploads that are incomplete or whose source cannot be found are skipped and
+// named individually in report, which may be nil.
 func ExtractAttachments(
 	uploads map[string]*RocketChatUpload,
 	gridfsIndex *GridFSIndex,
 	outputDir string,
 	uploadsDir string,
-	logger log.FieldLogger,
+	report *intermediate.Report,
 ) error {
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
 		return fmt.Errorf("creating attachments directory %s: %w", outputDir, err)
 	}
+
+	entity := report.Uploads()
+	entity.Seen(len(uploads))
+	logger := report.Logger()
 
 	// Open the GridFS chunks file once and share it across all GridFS uploads for
 	// random-access reads, rather than re-opening it for every attachment.
@@ -42,15 +48,14 @@ func ExtractAttachments(
 	}
 
 	done := 0
-	skipped := 0
 	for _, upload := range uploads {
 		if !upload.Complete {
-			skipped++
+			entity.Skip(upload.ID, upload.Name, ReasonUploadIncomplete)
 			continue
 		}
 
 		if upload.TypeGroup == "thumb" {
-			skipped++
+			entity.Skip(upload.ID, upload.Name, ReasonUploadThumbnail)
 			continue
 		}
 
@@ -76,15 +81,13 @@ func ExtractAttachments(
 				// an empty attachment even when the chunks file is absent.
 				extractErr = createEmptyFile(destPath)
 			default:
-				logger.Warnf("GridFS chunks not found for upload %s (%s), skipping", upload.ID, upload.Name)
-				skipped++
+				entity.Skip(upload.ID, upload.Name, ReasonUploadGridFSMissing)
 				continue
 			}
 
 		case upload.Store == "FileSystem":
 			if uploadsDir == "" {
-				logger.Warnf("FileSystem upload %s (%s) skipped: --uploads-dir not provided", upload.ID, upload.Name)
-				skipped++
+				entity.Skip(upload.ID, upload.Name, ReasonUploadNoUploadsDir)
 				continue
 			}
 			// The path field is a URL path like "/file-upload/{id}/{name}".
@@ -94,37 +97,36 @@ func ExtractAttachments(
 			// element, so "." and ".." are the only escape vectors that remain.
 			srcFilename := sanitizeFilename(filepath.Base(upload.Path))
 			if srcFilename == "" || srcFilename == "." || srcFilename == ".." {
-				logger.Warnf("FileSystem upload %s (%s) skipped: unsafe source path %q", upload.ID, upload.Name, upload.Path)
-				skipped++
+				entity.Skip(upload.ID, upload.Name, ReasonUploadUnsafePath, upload.Path)
 				continue
 			}
 			srcPath := filepath.Join(uploadsDir, srcFilename)
 			extractErr = copyFile(srcPath, destPath)
 
 		default:
-			logger.Warnf("Unknown upload store %q for %s (%s), skipping", upload.Store, upload.ID, upload.Name)
-			skipped++
+			entity.Skip(upload.ID, upload.Name, ReasonUploadUnknownStore, upload.Store)
 			continue
 		}
 
 		if extractErr != nil {
 			// Remove any partial file left by a failed write so it cannot be
 			// imported later as a corrupt attachment.
-			if removeErr := os.Remove(destPath); removeErr != nil && !os.IsNotExist(removeErr) {
+			if removeErr := os.Remove(destPath); removeErr != nil && !os.IsNotExist(removeErr) && logger != nil {
 				logger.Warnf("Failed to clean up partial attachment %s: %v", destPath, removeErr)
 			}
-			logger.Warnf("Failed to extract upload %s (%s): %v", upload.ID, upload.Name, extractErr)
-			skipped++
+			entity.Skip(upload.ID, upload.Name, ReasonUploadExtractFailed, extractErr.Error())
 			continue
 		}
 
 		done++
-		if done%100 == 0 {
+		if done%100 == 0 && logger != nil {
 			logger.Infof("Extracted %d attachments so far...", done)
 		}
 	}
 
-	logger.Infof("Extracted %d attachments, skipped %d", done, skipped)
+	if logger != nil {
+		logger.Infof("Extracted %d attachments, skipped %d", done, entity.Skipped)
+	}
 	return nil
 }
 
