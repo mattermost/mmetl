@@ -208,15 +208,16 @@ func TestReportDeterminism(t *testing.T) {
 func TestReportMarkdown(t *testing.T) {
 	started := time.Date(2026, 8, 24, 10, 14, 3, 0, time.UTC)
 	report := NewReport(nil)
-	report.Metadata = RunMetadata{
-		Provider: "slack",
-		Version:  "v0.5.1 (721d761)",
-		Input:    "my_export.zip",
-		Team:     "myteam",
-		Output:   "mm_export.jsonl",
-		Flags:    "--guest-handling=guest",
-		Started:  started,
-		Finished: started.Add(2*time.Minute + 38*time.Second),
+	report.Metadata.Additional = &Additional{
+		Source: SourceInfo{Platform: "slack", File: "my_export.zip"},
+		Target: TargetInfo{Team: "myteam", Output: "mm_export.jsonl"},
+		Run: RunInfo{
+			Version:   "v0.5.1",
+			BuildHash: "721d761",
+			Flags:     "--guest-handling=guest",
+			Started:   started,
+			Finished:  started.Add(2*time.Minute + 38*time.Second),
+		},
 	}
 	report.Users().Seen(4)
 	report.Users().Skip("U004", "channelless.guest", testReasonSkip)
@@ -366,7 +367,7 @@ func TestReportJSON(t *testing.T) {
 
 func TestReportWrite(t *testing.T) {
 	report := NewReport(nil)
-	report.Metadata.Provider = "slack"
+	report.Metadata.Additional.Source.Platform = "slack"
 	report.Users().Seen(1)
 	report.Finish(nil)
 
