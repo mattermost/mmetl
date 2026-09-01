@@ -260,7 +260,11 @@ func TestSelectPageMetadata(t *testing.T) {
 	selection, err := SelectPageMetadata(archive, space, descriptor)
 	require.NoError(t, err)
 
-	require.Equal(t, 8, selection.PagesDiscovered, "discovery counts every page and blog post in the file")
+	// Discovery is scoped to the selected space, so discovered equals emitted
+	// plus skipped. The fixture holds 8 page objects; 5 of them are this
+	// space's canonical content.
+	require.Equal(t, 5, selection.PagesDiscovered)
+	require.Equal(t, 8, selection.ObjectsScanned)
 	require.Equal(t, 4, selection.PagesEmitted)
 	require.Equal(t, 1, selection.BlogPostsEmitted)
 	require.Equal(t, 0, selection.PagesFlattened)

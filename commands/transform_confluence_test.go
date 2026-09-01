@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/mattermost/mmetl/commands"
+	"github.com/mattermost/mmetl/services/confluence"
 )
 
 const testDescriptor = `#Tue Sep 01 10:52:44 UTC 2026
@@ -46,6 +47,35 @@ const testEntities = `<?xml version="1.0" encoding="UTF-8"?>
 <object class="Page" package="com.atlassian.confluence.pages">
 <id name="id">26542273</id>
 <property name="title"><![CDATA[Secret page title]]></property>
+<property name="creationDate">2025-11-14 16:53:35.571</property>
+<property name="lastModificationDate">2025-11-14 16:53:35.795</property>
+<property name="originalVersionId"/><property name="contentStatus"><![CDATA[current]]></property>
+<property name="creator" class="ConfluenceUserImpl" package="com.atlassian.confluence.user"><id name="key"><![CDATA[5adea181]]></id>
+</property>
+<property name="space" class="Space" package="com.atlassian.confluence.spaces"><id name="id">26542084</id>
+</property>
+<collection name="bodyContents" class="java.util.Collection"><element class="BodyContent" package="com.atlassian.confluence.core"><id name="id">26542274</id>
+</element>
+</collection>
+</object>
+<object class="BodyContent" package="com.atlassian.confluence.core">
+<id name="id">26542274</id>
+<property name="body"><![CDATA[<p>Hello from <strong>Confluence</strong>.</p>]]></property>
+</object>
+<object class="ConfluenceUserImpl" package="com.atlassian.confluence.user">
+<id name="key"><![CDATA[5adea181]]></id>
+<property name="name"><![CDATA[dylan@example.com]]></property>
+<property name="lowerName"><![CDATA[dylan@example.com]]></property>
+<property name="atlassianAccountId"><![CDATA[5adea181]]></property>
+</object>
+<object class="InternalUser" package="com.atlassian.crowd.model.user">
+<id name="id">5</id>
+<property name="name"><![CDATA[dylan@example.com]]></property>
+<property name="lowerName"><![CDATA[dylan@example.com]]></property>
+<property name="active">true</property>
+<property name="displayName"><![CDATA[Dylan Haussermann]]></property>
+<property name="emailAddress"><![CDATA[dylan@example.com]]></property>
+<property name="externalId"><![CDATA[5adea181]]></property>
 </object>
 </hibernate-generic>
 `
@@ -134,11 +164,149 @@ func TestTransformConfluenceListSpacesErrors(t *testing.T) {
 		_, err := runTransformConfluence(t, "--file", export, "--list-spaces")
 		require.ErrorContains(t, err, "contains no spaces")
 	})
+}
 
-	t.Run("without --list-spaces the command explains what is implemented", func(t *testing.T) {
-		export := writeConfluenceExport(t, testEntities)
+// TestTransformConfluenceEndToEnd runs the whole exporter and checks the bundle
+// it produces, which is the only test that exercises every pass together.
+func TestTransformConfluenceEndToEnd(t *testing.T) {
+	export := writeConfluenceExport(t, testEntities)
+	output := filepath.Join(t.TempDir(), "bundle.zip")
 
-		_, err := runTransformConfluence(t, "--file", export)
-		require.ErrorContains(t, err, "only --list-spaces is implemented")
-	})
+	out, err := runTransformConfluence(t,
+		"--file", export,
+		"--space", "dkhspace",
+		"--organization-id", "https://example.atlassian.net",
+		"--team", "Engineering",
+		"--output", output,
+	)
+	require.NoError(t, err)
+	require.Contains(t, out, "Wrote "+output)
+
+	manifest, lines := readBundle(t, output)
+
+	require.Equal(t, "2", manifest.Version)
+	require.Equal(t, "https://example.atlassian.net", manifest.Source.OrganizationID)
+	require.Equal(t, "26542084", manifest.Source.SpaceID)
+	require.Equal(t, "dkhspace", manifest.Source.SpaceKey)
+	require.Equal(t, "engineering", manifest.Target.Team, "the team is lowercased, as the other transforms do")
+	require.Empty(t, manifest.Errors)
+
+	require.Equal(t, confluence.LineTypeVersion, lines[0].Type)
+	require.Equal(t, confluence.LineTypeSpace, lines[1].Type)
+	require.Equal(t, confluence.LineTypeResolveSpacePlaceholders, lines[len(lines)-1].Type)
+
+	require.Equal(t, 1, manifest.Counts.PagesEmitted)
+	require.Equal(t, "Secret page title", lines[2].Page.Title)
+}
+
+// --validate-only must run the whole transform and write nothing.
+func TestTransformConfluenceValidateOnly(t *testing.T) {
+	export := writeConfluenceExport(t, testEntities)
+	output := filepath.Join(t.TempDir(), "bundle.zip")
+
+	out, err := runTransformConfluence(t,
+		"--file", export,
+		"--space", "dkhspace",
+		"--organization-id", "https://example.atlassian.net",
+		"--team", "engineering",
+		"--output", output,
+		"--validate-only",
+	)
+	require.NoError(t, err)
+	require.Contains(t, out, "Validation succeeded")
+
+	_, statErr := os.Stat(output)
+	require.True(t, os.IsNotExist(statErr), "--validate-only must not write a bundle")
+}
+
+func TestTransformConfluenceFlagErrors(t *testing.T) {
+	export := writeConfluenceExport(t, testEntities)
+
+	tests := []struct {
+		name    string
+		args    []string
+		wantErr string
+	}{
+		{
+			name:    "missing space",
+			args:    []string{"--organization-id", "x", "--team", "t"},
+			wantErr: "--space is required",
+		},
+		{
+			name:    "missing organization id",
+			args:    []string{"--space", "dkhspace", "--team", "t"},
+			wantErr: "--organization-id is required",
+		},
+		{
+			name:    "missing team",
+			args:    []string{"--space", "dkhspace", "--organization-id", "x"},
+			wantErr: "--team is required",
+		},
+		{
+			name:    "organization id too long",
+			args:    []string{"--space", "dkhspace", "--team", "t", "--organization-id", strings.Repeat("x", 1025)},
+			wantErr: "over the 1024 byte limit",
+		},
+		// Listing is a read-only inspection. Accepting transform flags would let
+		// an operator believe an export ran when nothing was written.
+		{
+			name:    "list-spaces with a transform flag",
+			args:    []string{"--list-spaces", "--team", "t"},
+			wantErr: "--list-spaces cannot be combined with --team",
+		},
+		{
+			name:    "list-spaces with several transform flags",
+			args:    []string{"--list-spaces", "--space", "x", "--output", "y"},
+			wantErr: "--list-spaces cannot be combined with --space, --output",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := runTransformConfluence(t, append([]string{"--file", export}, test.args...)...)
+			require.ErrorContains(t, err, test.wantErr)
+		})
+	}
+}
+
+// An unusable --space prints the valid spaces, so the operator can fix it
+// without running a second command.
+func TestTransformConfluenceUnknownSpaceListsTheOptions(t *testing.T) {
+	export := writeConfluenceExport(t, testEntities)
+
+	out, err := runTransformConfluence(t,
+		"--file", export,
+		"--space", "nope",
+		"--organization-id", "x",
+		"--team", "t",
+	)
+	require.ErrorContains(t, err, `no space matches "nope"`)
+	require.Contains(t, out, "Available spaces:")
+	require.Contains(t, out, "dkhspace")
+}
+
+func TestTransformConfluenceDefaultOutputName(t *testing.T) {
+	require.Equal(t, "dkhspace-confluence-docs.zip",
+		confluence.DefaultOutputPath(confluence.Space{SpaceKey: "dkhspace"}))
+
+	// A personal space key starts with "~", which is not a good filename.
+	require.Equal(t, "5d3eaa4376cb3e0d9d31cf8e-confluence-docs.zip",
+		confluence.DefaultOutputPath(confluence.Space{SpaceKey: "~5d3eaa4376cb3e0d9d31cf8e"}))
+
+	require.Equal(t, "26542084-confluence-docs.zip",
+		confluence.DefaultOutputPath(confluence.Space{SourceID: "26542084"}))
+}
+
+// readBundle opens a written bundle and returns its manifest and lines.
+func readBundle(t *testing.T, path string) (*confluence.Manifest, []confluence.Line) {
+	t.Helper()
+
+	reader, err := zip.OpenReader(path)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, reader.Close()) })
+
+	manifest, lines, err := confluence.ValidateBundleFS(reader)
+	require.NoError(t, err, "the exporter must produce a bundle that passes the shared validation")
+
+	return manifest, lines
 }

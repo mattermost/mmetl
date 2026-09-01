@@ -11,6 +11,7 @@ ready to be imported with `mmctl import`.
 | Slack | export `.zip` | `mmetl transform slack` |
 | Slack Enterprise Grid | export `.zip` | `mmetl grid-transform` |
 | RocketChat | `mongodump` directory | `mmetl transform rocketchat` |
+| Confluence Cloud | XML backup `.zip` | `mmetl transform confluence` |
 
 ## Installation
 
@@ -54,6 +55,69 @@ subcommands and options:
 ```sh
 mmetl --help
 ```
+
+### Confluence Cloud
+
+Confluence is different from the other providers: it does not produce a
+Mattermost bulk-import file. It produces an import bundle for the Mattermost
+Docs plugin, which imports it through the plugin's own API.
+
+The input is the ZIP from Confluence's **XML backup** (the one containing
+`entities.xml` and `exportDescriptor.properties`), not a space export or a PDF
+export. Each invocation exports exactly one space.
+
+```sh
+# 1. See which spaces the backup contains
+mmetl transform confluence --file Confluence-export.zip --list-spaces
+
+# 2. Check a space converts cleanly, writing nothing
+mmetl transform confluence --file Confluence-export.zip --space ENG \
+  --organization-id https://example.atlassian.net --team engineering --validate-only
+
+# 3. Produce the bundle
+mmetl transform confluence --file Confluence-export.zip --space ENG \
+  --organization-id https://example.atlassian.net --team engineering
+```
+
+`--space` accepts the space's numeric source ID, its key, or its name; an
+ambiguous or unknown value fails and prints the valid spaces.
+
+`--organization-id` identifies the Confluence site. **Use the same value for
+every export from the same site.** It scopes every source identifier in the
+bundle, so changing it makes a re-export look like a different site: the
+importer will create everything again instead of updating what is already
+there. Any stable string works; the site URL is the obvious choice.
+
+The bundle is self-validating. It is written to a temporary file, checked
+against the same rules the importer applies, and only then moved into place, so
+a bundle that exists is a bundle that passed. Its bytes are reproducible: the
+same export produces the same file, which makes two runs directly comparable.
+
+Read `import-manifest.json` inside the bundle before importing. It records what
+was emitted, what was skipped and why, and states plainly what this iteration
+does not do — page restrictions are preserved as metadata but never enforced,
+and labels are stored without any search or UI behaviour.
+
+#### Users
+
+Only users referenced by the exported content are included, never the whole
+site directory. Each is proposed a Mattermost username, derived from their
+Confluence username, their email's local part, or their display name, in that
+order. Confluence often has no email for an account; those get a deterministic
+placeholder address under `users.invalid`, which the importer never uses to
+match an existing user.
+
+To choose usernames yourself, pass `--user-mapping`. It overrides every derived
+proposal and its header is exact:
+
+```csv
+confluence_account_id,confluence_user_key,confluence_username,confluence_email,mattermost_username
+557058:abc,,,,alice
+,,,bob@example.com,bob
+```
+
+Each row needs `mattermost_username` and at least one selector. Account IDs and
+user keys match exactly; usernames and emails match case-insensitively.
 
 ### RocketChat guest users
 

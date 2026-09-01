@@ -241,9 +241,12 @@ func TestSelectDependencies(t *testing.T) {
 	selection := dependencyFixture(t, false)
 
 	t.Run("comments", func(t *testing.T) {
-		require.Equal(t, 3, selection.CommentsDiscovered)
+		// Only one of the three comment objects is a candidate for this space:
+		// one hangs off a page that was not emitted and one is deleted.
+		require.Equal(t, 1, selection.CommentsDiscovered)
 		require.Equal(t, 1, selection.CommentsEmitted)
-		require.Equal(t, 2, selection.CommentsSkipped)
+		require.Zero(t, selection.CommentsSkipped)
+		require.Equal(t, 4, selection.ObjectsScanned)
 
 		comment := selection.Comments[0]
 		require.Equal(t, "33226755", comment.SourceID)

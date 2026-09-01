@@ -189,6 +189,11 @@ type DependencySelection struct {
 
 	Warnings []Warning
 
+	// The discovered counts are scoped to the selected space: they count the
+	// comments and attachments that were candidates for this export, so
+	// discovered always equals emitted plus skipped. Counting every Comment and
+	// Attachment object in the file instead would report another space's
+	// content as if this export had passed it over.
 	CommentsDiscovered int
 	CommentsEmitted    int
 	CommentsSkipped    int
@@ -196,6 +201,10 @@ type DependencySelection struct {
 	AttachmentsDiscovered int
 	AttachmentsEmitted    int
 	AttachmentsSkipped    int
+
+	// ObjectsScanned counts every comment and attachment object read, for
+	// logging.
+	ObjectsScanned int
 }
 
 // SelectDependencies performs pass 3: with the emitted page set known, it reads
@@ -244,14 +253,19 @@ func SelectDependencies(
 			return nil, err
 		}
 
+		selection.ObjectsScanned++
 		switch {
 		case object.Is(ClassComment):
-			selection.CommentsDiscovered++
 			commentCandidates = append(commentCandidates, commentFromObject(object, descriptor.Location))
 
 		case object.Is(ClassAttachment):
-			selection.AttachmentsDiscovered++
 			attachmentCandidates = append(attachmentCandidates, attachmentFromObject(object, descriptor.Location))
+		}
+	}
+
+	for _, candidate := range commentCandidates {
+		if candidate.IsInitiallyEligible(content.ByID) {
+			selection.CommentsDiscovered++
 		}
 	}
 
@@ -285,28 +299,32 @@ func (s *DependencySelection) collectAttachments(
 	content *ContentSelection,
 	skipAttachments bool,
 ) error {
+	// Eligibility is evaluated even when the flag is set, so the counts describe
+	// what this space actually holds rather than what the whole file holds.
+	var eligible []*Attachment
+	for _, candidate := range candidates {
+		if candidate.IsEligible(content.ByID, space.DescriptionKey) {
+			eligible = append(eligible, candidate.Attachment)
+		}
+	}
+	s.AttachmentsDiscovered = len(eligible)
+
 	if skipAttachments {
 		// The flag suppresses metadata as well as bytes, so a bundle produced
 		// with it never claims attachments the importer cannot find.
-		if len(candidates) > 0 {
-			s.AttachmentsSkipped = len(candidates)
+		if len(eligible) > 0 {
+			s.AttachmentsSkipped = len(eligible)
 			s.Warnings = append(s.Warnings, Warning{
 				Code:       WarnAttachmentSkippedByFlag,
 				EntityType: "attachment",
 				Message: TruncateMessage(fmt.Sprintf(
-					"--skip-attachments was set; %d attachment(s) were not exported", len(candidates))),
+					"--skip-attachments was set; %d attachment(s) were not exported", len(eligible))),
 			})
 		}
 		return nil
 	}
 
-	for _, candidate := range candidates {
-		attachment := candidate.Attachment
-		if !candidate.IsEligible(content.ByID, space.DescriptionKey) {
-			s.AttachmentsSkipped++
-			continue
-		}
-
+	for _, attachment := range eligible {
 		pageSourceID, warning := resolveDestination(attachment, space, content.ByID)
 		if warning != nil {
 			s.Warnings = append(s.Warnings, *warning)

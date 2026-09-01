@@ -126,7 +126,15 @@ type ContentSelection struct {
 
 	Warnings []Warning
 
-	PagesDiscovered  int
+	// PagesDiscovered counts the canonical pages and blog posts of the selected
+	// space, so discovered always equals emitted plus skipped. Counting every
+	// Page object in the file instead would report the historical versions and
+	// the other spaces' pages as if this export had passed them over.
+	PagesDiscovered int
+
+	// ObjectsScanned is every page and blog post object read, for logging.
+	ObjectsScanned int
+
 	PagesEmitted     int
 	BlogPostsEmitted int
 	PagesFlattened   int
@@ -152,7 +160,7 @@ func SelectPageMetadata(archive *SourceArchive, space Space, descriptor Descript
 
 	index := newKeyIndex()
 	var candidates []ContentCandidate
-	discovered := 0
+	scanned := 0
 
 	for {
 		object, err := decoder.Next()
@@ -166,7 +174,7 @@ func SelectPageMetadata(archive *SourceArchive, space Space, descriptor Descript
 			return nil, err
 		}
 
-		discovered++
+		scanned++
 		candidates = append(candidates, contentCandidate(object, space, descriptor.Location))
 	}
 
@@ -178,7 +186,8 @@ func SelectPageMetadata(archive *SourceArchive, space Space, descriptor Descript
 	selection := &ContentSelection{
 		SpaceSourceID:   space.SourceID,
 		ByID:            make(map[string]*Page, len(pages)),
-		PagesDiscovered: discovered,
+		PagesDiscovered: len(pages),
+		ObjectsScanned:  scanned,
 	}
 	for _, page := range pages {
 		selection.ByID[page.SourceID] = page
