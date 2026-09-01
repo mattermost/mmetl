@@ -77,12 +77,66 @@ type Page struct {
 	BodyContentKeys     []EntityKey
 	ContentPropertyKeys []EntityKey
 
+	// Labels are the Confluence labels applied to this page, in a stable order.
+	Labels []Label
+
+	// Restrictions is always empty in this iteration; see the Restrictions doc
+	// comment for why.
+	Restrictions Restrictions
+
 	// Children is the output hierarchy, in emission order.
 	Children []*Page
 }
 
 // IsBlogPost reports whether the page came from a Confluence blog post.
 func (p *Page) IsBlogPost() bool { return p.ContentType == ContentTypeBlogPost }
+
+// Label is one Confluence label applied to a page.
+//
+// Namespace matters and is preserved. Confluence's "my" namespace holds one
+// user's private favourites rather than shared content metadata, and the
+// discovery sample is 10 of those to 1 real team label, so a consumer that
+// ignored the namespace would present someone's private bookmark as a property
+// of the page.
+type Label struct {
+	Name      string
+	Namespace string
+
+	// OwnerKey is the user who applied the label, which for a personal-namespace
+	// label is the only person it means anything to.
+	OwnerKey EntityKey
+}
+
+// Restrictions is the page-restriction shape the contract carries.
+//
+// Extraction is unverified: the discovery sample contains no page-restriction
+// object at all, only space-level SpacePermission rows, which this iteration
+// does not import. The type and its plumbing exist so the importer can store
+// restrictions the day a real restricted-page fixture proves how Confluence
+// spells them; until then every export reports the restriction fidelity as
+// unverified and no bundle claims to have found any.
+type Restrictions struct {
+	ViewUsers  []string `json:"view_users"`
+	ViewGroups []string `json:"view_groups"`
+	EditUsers  []string `json:"edit_users"`
+	EditGroups []string `json:"edit_groups"`
+}
+
+// IsEmpty reports whether no restriction was recognized.
+func (r Restrictions) IsEmpty() bool {
+	return len(r.ViewUsers) == 0 && len(r.ViewGroups) == 0 &&
+		len(r.EditUsers) == 0 && len(r.EditGroups) == 0
+}
+
+// Label and Labelling property names.
+const (
+	labelPropName          = "name"
+	labelPropNamespace     = "namespace"
+	labelPropOwningUser    = "owningUser"
+	labellingPropLabel     = "label"
+	labellingPropContent   = "content"
+	labelNamespacePersonal = "my"
+)
 
 // Comment is one Confluence comment selected for export. It becomes a
 // Mattermost post in the destination Space's backing channel.

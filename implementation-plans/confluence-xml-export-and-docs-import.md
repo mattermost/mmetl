@@ -1494,6 +1494,84 @@ Repository: `mmetl`.
 
 Implement labels from real sample structures. Implement synthetic restriction mapping only. Mark restriction extraction unverified. Do not infer undocumented XML classes.
 
+### E2-E9 execution record
+
+Delivered in order, each gated on the private sample at
+`/Users/willyfrog/Downloads/Confluence-export.zip` and on `make check-style`,
+`make test`, `make docs` and `make docs-check`.
+
+A standing deviation, recorded once: source files follow section 13's file map
+exactly. Test files are split for readability where a single file would become
+unreadable, so the package also carries `validation_test.go`, `comments_test.go`
+and `labels_test.go`, and comment logic lives in `content_filter.go` as section
+6 requires rather than in a file of its own.
+
+#### Facts the sample settled, which the plan did not state
+
+1. Composite keys are a `<composite-id>` element whose parts are `<property>`
+   children, not repeated `<id>` elements. The sample has 97 of them
+   (`BucketPropertySetItem`), so the first streaming run failed outright until
+   the decoder handled the real shape.
+2. Attachment media type and byte size are not attachment scalars. They are
+   separate `ContentProperty` objects named `MEDIA_TYPE` and `FILESIZE`,
+   resolved in their own pass over only the referenced ids.
+3. An attachment's archive path is keyed by its **container**, not by the page
+   it is emitted against: `attachments/<container-id>/<attachment-id>/<version>`.
+   The sample's only attachment hangs off a `SpaceDescription`, so this and the
+   home-page remap are the exercised path, not an edge case.
+4. A space can have no home page. The sample contains one.
+5. `ConfluenceUserImpl.name` is the user's **email** for directory-backed
+   accounts and their account ID otherwise. Only 35 of 348 directory rows carry
+   an email, so placeholder addresses are the common case.
+6. The sample's `entities.xml` is 4.6 MB holding 5,922 objects across 31
+   classes, of which this exporter reads 10. Streaming it end to end moves the
+   retained heap by roughly zero bytes.
+
+#### Open findings for review
+
+1. **All labels in the sample are space-level.** Every one of the 11
+   `Labelling` objects targets a `SpaceDescription`, and 10 of the 11 `Label`
+   objects are personal `my`-namespace favourites rather than shared content
+   metadata. This iteration carries **page labels only**, so the sample exports
+   zero labels. Carrying space labels would mean either remapping them onto the
+   home page, as attachments are remapped, or adding a key to space props;
+   both are contract decisions, so neither was invented here.
+2. **Personal-namespace labels are preserved as-is.** When a page does carry a
+   `my`-namespace label it is one user's private favourite. Section 22 stores
+   labels as inert metadata with no UI, search or access behaviour, and the
+   namespace travels with each label, so a future consumer can distinguish
+   them. Worth an explicit decision before any label UI ships.
+3. **No page-restriction object exists in the sample**, only space-level
+   `SpacePermission` rows this iteration does not import. Stop condition 7
+   therefore still stands: restriction extraction is unverified, no bundle
+   claims to have found any, and every export emits
+   `restriction_extraction_unverified` whether or not anything was found.
+4. **No comment-resolution marker exists in the sample.** `is_resolved` is
+   always false until a fixture proves how Confluence spells it.
+
+#### Interpretations recorded
+
+1. Section 6.3's attachment predicate deliberately omits the
+   `originalVersionId` test that section 6.1 applies to pages. The text is
+   followed exactly; adding the stricter test would silently drop attachments
+   in exports that spell the marker the other way.
+2. "More than one canonical object for the same logical source content" is read
+   as the version group: an object's logical ID is its `originalVersionId` when
+   set and its own ID otherwise.
+3. Historical membership is resolved against objects that already satisfy the
+   other four conditions of section 6.1, because resolving it against every
+   object is circular.
+4. "Valid Confluence username" in section 9 means already valid as a Mattermost
+   username. Confluence usernames are email addresses for directory-backed
+   accounts, and mangling one into `j.smith-example.com` would be worse than
+   the local part the next rule produces.
+5. Two explicit mapping rows claiming one `mattermost_username` is a hard
+   error, not a suffix: renaming a name the operator asked for would silently
+   disobey them.
+6. Skipped comment threads warn once per root cause plus one aggregate for the
+   descendants, satisfying "one structured warning per skipped root cause, not
+   one per descendant" while still using both stable codes.
+
 ## E10 — Storage-format converter core
 
 Repository: `mmetl`.

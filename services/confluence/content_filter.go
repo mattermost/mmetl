@@ -117,6 +117,9 @@ func checkSingleCanonical(byLogicalID map[string][]ContentCandidate) error {
 // ContentSelection is the result of pass 2: the canonical pages of the selected
 // space, in emission order, with the hierarchy already resolved.
 type ContentSelection struct {
+	// SpaceSourceID is the selected space, which space-scoped warnings name.
+	SpaceSourceID string
+
 	// Pages is parent-first emission order.
 	Pages []*Page
 	ByID  map[string]*Page
@@ -173,6 +176,7 @@ func SelectPageMetadata(archive *SourceArchive, space Space, descriptor Descript
 	}
 
 	selection := &ContentSelection{
+		SpaceSourceID:   space.SourceID,
 		ByID:            make(map[string]*Page, len(pages)),
 		PagesDiscovered: discovered,
 	}
@@ -511,4 +515,193 @@ func sortComments(comments []*Comment) {
 		}
 		return lessNumericThenLexical(a.SourceID, b.SourceID)
 	})
+}
+
+// LabelSelection is the result of the label pass.
+type LabelSelection struct {
+	// LabelsPreserved counts the page labels attached to emitted pages.
+	LabelsPreserved int
+
+	// RestrictedPagesPreserved is always zero in this iteration.
+	RestrictedPagesPreserved int
+
+	Warnings []Warning
+}
+
+// SelectLabels reads Labelling and Label objects and attaches the labels of
+// emitted pages to those pages.
+//
+// It also emits the standing restriction-fidelity warning. Restrictions are not
+// read at all: the discovery sample contains no page-restriction object, only
+// space-level SpacePermission rows, and guessing at an undocumented class would
+// produce access metadata nobody could trust.
+func SelectLabels(archive *SourceArchive, content *ContentSelection, refs *UserRefs) (*LabelSelection, error) {
+	labellings, err := readLabellings(archive, content)
+	if err != nil {
+		return nil, err
+	}
+
+	selection := &LabelSelection{}
+	if len(labellings) > 0 {
+		if err := applyLabels(archive, labellings, content, refs, selection); err != nil {
+			return nil, err
+		}
+	}
+
+	// Reported on every export, not only when something is found. A report that
+	// stayed silent here would read as "this space has no restricted pages"
+	// when it actually means "restrictions were never looked for".
+	selection.Warnings = append(selection.Warnings, Warning{
+		Code:       WarnRestrictionUnverified,
+		EntityType: "space",
+		SourceID:   content.SpaceSourceID,
+		Message: "page restrictions were not extracted; Confluence's page-restriction format is " +
+			"unverified against a real export, so access remains Space-level",
+	})
+
+	SortWarnings(selection.Warnings)
+	return selection, nil
+}
+
+// labelling links one label to one emitted page.
+type labelling struct {
+	labelKey EntityKey
+	pageID   string
+	ownerKey EntityKey
+}
+
+func readLabellings(archive *SourceArchive, content *ContentSelection) ([]labelling, error) {
+	entities, err := archive.OpenEntities()
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = entities.Close() }()
+
+	decoder := NewObjectDecoder(entities)
+	decoder.SetAccept(func(class ClassRef) bool { return class == ClassLabelling })
+
+	var labellings []labelling
+	for {
+		object, err := decoder.Next()
+		if errors.Is(err, io.EOF) {
+			return labellings, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+
+		contentKey, ok := object.Reference(labellingPropContent)
+		if !ok || !isContentContainer(contentKey) {
+			// Space-description labellings land here. Every label in the
+			// discovery sample is one of those, so this is the common case, not
+			// an edge case: this iteration carries page labels only.
+			continue
+		}
+		if _, emitted := content.ByID[contentKey.ID]; !emitted {
+			continue
+		}
+
+		labelKey, ok := object.Reference(labellingPropLabel)
+		if !ok {
+			continue
+		}
+		owner, _ := object.Reference(labelPropOwningUser)
+		labellings = append(labellings, labelling{labelKey: labelKey, pageID: contentKey.ID, ownerKey: owner})
+	}
+}
+
+func applyLabels(
+	archive *SourceArchive,
+	labellings []labelling,
+	content *ContentSelection,
+	refs *UserRefs,
+	selection *LabelSelection,
+) error {
+	wanted := map[string][]labelling{}
+	for _, link := range labellings {
+		wanted[link.labelKey.ID] = append(wanted[link.labelKey.ID], link)
+	}
+
+	entities, err := archive.OpenEntities()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = entities.Close() }()
+
+	decoder := NewObjectDecoder(entities)
+	decoder.SetAccept(func(class ClassRef) bool { return class == ClassLabel })
+
+	for {
+		object, err := decoder.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return err
+		}
+
+		links, ok := wanted[object.Key.ID]
+		if !ok {
+			continue
+		}
+
+		name := strings.TrimSpace(object.ScalarValue(labelPropName))
+		if name == "" {
+			continue
+		}
+		namespace := strings.TrimSpace(object.ScalarValue(labelPropNamespace))
+		labelOwner, _ := object.Reference(labelPropOwningUser)
+
+		for _, link := range links {
+			page, emitted := content.ByID[link.pageID]
+			if !emitted {
+				continue
+			}
+
+			owner := link.ownerKey
+			if owner.IsZero() {
+				owner = labelOwner
+			}
+			page.Labels = append(page.Labels, Label{Name: name, Namespace: namespace, OwnerKey: owner})
+			refs.Add(owner)
+			selection.LabelsPreserved++
+		}
+	}
+
+	for _, page := range content.Pages {
+		sortLabels(page.Labels)
+	}
+	return nil
+}
+
+// sortLabels orders labels by namespace then name, and drops exact duplicates,
+// so the same source produces the same page props on every run.
+func sortLabels(labels []Label) {
+	sort.SliceStable(labels, func(i, j int) bool {
+		if labels[i].Namespace != labels[j].Namespace {
+			return labels[i].Namespace < labels[j].Namespace
+		}
+		return labels[i].Name < labels[j].Name
+	})
+}
+
+// LabelNames is the flat label list the bundle carries as import_labels.
+//
+// Every namespace is included, personal ones too. Section 22 stores labels as
+// inert metadata with no UI, search, or access behaviour, and the structured
+// list beside it keeps the namespace, so a future consumer can tell a shared
+// team label from one person's private favourite. Filtering here would lose
+// that distinction rather than record it.
+func LabelNames(labels []Label) []string {
+	names := make([]string, 0, len(labels))
+	seen := map[string]bool{}
+	for _, label := range labels {
+		if seen[label.Name] {
+			continue
+		}
+		seen[label.Name] = true
+		names = append(names, label.Name)
+	}
+	sort.Strings(names)
+	return names
 }
