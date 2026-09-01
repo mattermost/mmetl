@@ -1613,6 +1613,83 @@ make check-style
 make test
 ```
 
+### E10-E14 execution record
+
+The exporter is complete. `mmetl transform confluence` produces a bundle the
+Docs importer validates, and the private sample exports end to end.
+
+#### Facts the sample settled
+
+1. Go's stock `xml.HTMLAutoClose` matches on local name alone, so it treats
+   Confluence's own `<ac:link>` as the HTML void element `<link>`. It closed the
+   tag immediately and then failed on the real `</ac:link>`, aborting a real
+   page. Left unfixed it would have silently destroyed every page and
+   attachment link once E11 read them. The exporter uses its own auto-close
+   list without `link`; no other Confluence element name collides with it.
+2. Confluence indents its storage format, so whitespace between block elements
+   was becoming paragraphs of spaces between every real paragraph.
+3. `ri:userkey` carries the account ID in a Cloud export, not a separate legacy
+   key. All 223 mention references in the sample resolve once both indexes are
+   tried; before that, all 223 fell back to text.
+4. Every image in the sample is an external `ri:url`, not an attachment.
+5. `ac:emoticon` carries the emoji character itself in `emoji-fallback`.
+6. Confluence puts images, task lists and block macros inside `<p>`, which a
+   TipTap paragraph cannot hold, so such a paragraph splits around them.
+7. The sample's macro mix is status (27), recently-updated (18), blog-posts
+   (17), panel (8), info (4), roadmap (2), contributors (1).
+
+#### Interpretations recorded
+
+1. `panel` is converted to a callout although section 10 does not list it. That
+   matrix is a stated **minimum**, `panel` is Confluence's generic callout, and
+   rendering one as an unsupported-macro marker above its own body would be
+   visibly worse. It is 8 of the sample's macros.
+2. The `children`/`pagetree` macro becomes a frozen list of real child links.
+   The macro is live in Confluence and the destination has no equivalent, so a
+   snapshot is closer to what the reader saw than a marker; with no children to
+   list it falls back to the marker.
+3. Discovery counts are scoped to the selected space, so `discovered` always
+   equals `emitted` plus `skipped`. Counting every object in the file instead
+   reported another space's content and the historical versions as if this
+   export had passed them over: the sample's 4-page space claimed 78 pages and
+   15 comments discovered. Emitted totals are counted from the emitted lines,
+   not from the selection, because pages can still fail conversion.
+4. `--validate-only` runs the whole transform including the attachment copy,
+   and writes nothing.
+5. `--list-spaces` refuses to be combined with any transform flag, so an
+   operator cannot believe an export ran when nothing was written.
+
+#### Cross-repository state
+
+The Docs repository forbids `t.Skip`, so the cross-repository check is a
+committed artifact rather than an environment-gated test:
+`server/importer/testdata/exporter/bundle.zip` is produced by the real
+exporter from a synthetic Confluence backup and validated on every run. It
+carries a page hierarchy, a blog post, labels, an attachment, a comment thread,
+and both placeholder kinds, and a second test asserts those shapes remain, so a
+regenerated bundle that lost them cannot keep passing.
+
+Regenerate it with:
+
+```shell
+mmetl transform confluence --file <backup>.zip --space ENG \
+  --organization-id https://example.atlassian.net --team engineering \
+  --output server/importer/testdata/exporter/bundle.zip
+```
+
+#### Verified against the private sample
+
+```text
+mmetl transform confluence --file Confluence-export.zip --space dkhspace \
+  --organization-id https://mattermost.atlassian.net --team engineering
+
+4 pages, 0 blog posts, 0 comments, 1 attachment, 1 user, 5 warnings
+```
+
+The Docs importer accepts that bundle.
+
+---
+
 ## I0 — Importer contract/archive inspection
 
 Repository: Docs.
