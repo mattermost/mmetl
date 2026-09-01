@@ -1,0 +1,132 @@
+{
+  "version": "2",
+  "generator": "mmetl-confluence-xml",
+  "generator_version": "0.0.0-fixture",
+  "created_at": "2026-01-01T00:00:00Z",
+  "source": {
+    "type": "confluence",
+    "organization_id": "https://confluence.example.com",
+    "space_id": "196611",
+    "space_key": "ENG",
+    "space_name": "Engineering",
+    "export_file": "Confluence-export.zip",
+    "timezone_id": "Etc/UTC"
+  },
+  "target": {
+    "team": "engineering"
+  },
+  "counts": {
+    "spaces_emitted": 1,
+    "pages_discovered": 3,
+    "pages_emitted": 2,
+    "pages_skipped": 1,
+    "blogposts_emitted": 1,
+    "comments_discovered": 5,
+    "comments_emitted": 3,
+    "comments_skipped": 2,
+    "attachments_discovered": 3,
+    "attachments_emitted": 2,
+    "attachments_skipped": 1,
+    "users_emitted": 3,
+    "users_inactive": 1,
+    "users_placeholder_email": 1,
+    "labels_preserved": 3,
+    "restricted_pages_preserved": 1,
+    "pages_flattened": 1,
+    "missing_bodies": 1
+  },
+  "checksums": {
+    "jsonl_sha256": "51651a607c318bf5598cc9c7df008c5a4b9f5d970f24ba5cd5573b30813d4cc3",
+    "attachments_sha256": "3d7f92063a73c0487239e8a2eca4f87d76d917674dd339b0c366aa26f7728cb9"
+  },
+  "users": [
+    {
+      "account_id": "557058:11111111-1111-4111-8111-111111111111",
+      "confluence_user_key": "8a7f808e6d1c1a02016d1c1a0a2b0001",
+      "confluence_username": "aline.turner",
+      "display_name": "Aline Turner",
+      "email": "aline.turner@example.com",
+      "external_id": "ldap://example/uid=aline",
+      "active": true,
+      "mattermost_username": "aline.turner",
+      "email_is_placeholder": false,
+      "username_proposal_source": "source_username"
+    },
+    {
+      "account_id": "557058:22222222-2222-4222-8222-222222222222",
+      "confluence_user_key": "8a7f808e6d1c1a02016d1c1a0a2b0002",
+      "confluence_username": "bokonkwo",
+      "display_name": "Bram Okonkwo",
+      "email": "bram.okonkwo@example.com",
+      "active": true,
+      "mattermost_username": "bram.okonkwo",
+      "email_is_placeholder": false,
+      "username_proposal_source": "explicit_mapping"
+    },
+    {
+      "account_id": "confluence-user-key-legacy-3",
+      "confluence_user_key": "confluence-user-key-legacy-3",
+      "display_name": "Former Employee",
+      "email": "confluence-9f86d081884c7d659a2f@users.invalid",
+      "active": false,
+      "mattermost_username": "confluence_user_9f86d081884c",
+      "email_is_placeholder": true,
+      "username_proposal_source": "fallback"
+    }
+  ],
+  "fidelity": {
+    "pages": "imported",
+    "blogposts": "imported_as_pages",
+    "comments": "imported_as_posts",
+    "attachments": "imported",
+    "labels": "preserved_not_applied",
+    "page_restrictions": "restriction_extraction_unverified",
+    "space_permissions": "not_imported",
+    "external_auth": "identifier_preserved_not_applied"
+  },
+  "warnings": [
+    {
+      "code": "attachment_blob_missing",
+      "entity_type": "attachment",
+      "source_id": "393219",
+      "message": "attachment blob is absent from the source archive; attachment skipped"
+    },
+    {
+      "code": "comment_parent_missing_skipped",
+      "entity_type": "comment",
+      "source_id": "327690",
+      "message": "parent comment was not emitted; comment and its descendants skipped"
+    },
+    {
+      "code": "page_content_too_large",
+      "entity_type": "page",
+      "source_id": "262148",
+      "message": "converted body exceeds the destination page body limit; page skipped"
+    },
+    {
+      "code": "page_depth_flattened",
+      "entity_type": "page",
+      "source_id": "262146",
+      "message": "source depth exceeded the destination maximum; page reparented to the nearest emitted ancestor"
+    },
+    {
+      "code": "page_missing_body",
+      "entity_type": "page",
+      "source_id": "262147",
+      "message": "no body content found; emitted an empty page"
+    },
+    {
+      "code": "restriction_extraction_unverified",
+      "entity_type": "page",
+      "source_id": "262146",
+      "message": "page restrictions are preserved as metadata and are not enforced; extraction is unverified"
+    },
+    {
+      "code": "user_placeholder_email",
+      "entity_type": "user",
+      "source_id": "confluence-user-key-legacy-3",
+      "message": "source user has no email; a deterministic placeholder was generated"
+    }
+  ],
+  "errors": []
+}

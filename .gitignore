@@ -10,6 +10,9 @@ tmp
 *.log
 *.zip
 
+# Committed golden fixtures, which are test inputs rather than dev scratch data
+!services/confluence/testdata/**/*.jsonl
+
 # IDE and editor files
 .idea
 CLAUDE.md
