@@ -2,10 +2,12 @@ package slack
 
 import (
 	"archive/zip"
+	"errors"
+	"fmt"
 	"strings"
 )
 
-func (t *Transformer) CheckForRequiredFile(zipReader *zip.Reader, fileName string) bool {
+func (t *Transformer) CheckForRequiredFile(zipReader *zip.Reader, fileName string) error {
 	found := false
 	foundInSubdirectory := false
 
@@ -19,30 +21,30 @@ func (t *Transformer) CheckForRequiredFile(zipReader *zip.Reader, fileName strin
 
 	if !found {
 		if foundInSubdirectory {
-			t.Logger.Errorf("Failed to find required file %s in the correct location, but might have found it in a subdirectory.", fileName)
-		} else {
-			t.Logger.Errorf("Failed to find required file %s in the correct location.", fileName)
+			err := fmt.Errorf("failed to find required file %s in the correct location, but might have found it in a subdirectory", fileName)
+			t.Logger.Error(err)
+			return err
 		}
-
-		return false
+		err := fmt.Errorf("failed to find required file %s in the correct location", fileName)
+		t.Logger.Error(err)
+		return err
 	}
 
-	return true
+	return nil
 }
 
-func (t *Transformer) Precheck(zipReader *zip.Reader) bool {
+func (t *Transformer) Precheck(zipReader *zip.Reader) error {
 	requiredFiles := []string{
 		"channels.json",
 		"integration_logs.json",
 	}
 
-	valid := true
-
+	var errs []error
 	for _, fileName := range requiredFiles {
-		fileExists := t.CheckForRequiredFile(zipReader, fileName)
-
-		valid = valid && fileExists
+		if err := t.CheckForRequiredFile(zipReader, fileName); err != nil {
+			errs = append(errs, err)
+		}
 	}
 
-	return valid
+	return errors.Join(errs...)
 }

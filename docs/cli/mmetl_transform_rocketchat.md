@@ -36,6 +36,7 @@ mmetl transform rocketchat [flags]
       --bot-owner string              Username of the Mattermost user who will own all imported bots. Required if the RocketChat export contains bot users.
       --debug                         Whether to show debug logs or not
       --default-email-domain string   If this flag is provided: When a user's email address is empty, the output's email address will be generated from their username and the provided domain.
+      --dry-run                       Parse and transform the export without writing JSONL or copying attachments. Logs warnings and errors to the terminal. Exits non-zero if problems are found, including missing attachments that a real transform would skip.
   -d, --dump-dir string               path to the mongodump output directory (containing .bson files)
       --guest-handling string         How to migrate RocketChat guest users (users whose roles include "guest"). One of:
                                         "guest" - migrate them as Mattermost guests (system_guest/team_guest/channel_guest). Highest fidelity, but the destination server must have Guest Accounts licensed (Professional/Enterprise) and enabled (GuestAccountsSettings.Enable); otherwise the accounts won't behave correctly.

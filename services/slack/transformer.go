@@ -32,6 +32,9 @@ type Transformer struct {
 	// guest started it), so a thread with many replies emits one WARN, not one
 	// per reply. droppedPostRefs still counts every dropped reply.
 	warnedDroppedThreads map[string]bool
+
+	// DryRun verifies the export without writing JSONL or copying attachments.
+	DryRun bool
 }
 
 // Guest handling modes for the --guest-handling flag.

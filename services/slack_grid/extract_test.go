@@ -6,13 +6,13 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/mattermost/mmetl/testhelper"
 	"github.com/sirupsen/logrus"
 )
 
 func TestExtractDirectory(t *testing.T) {
-	dir := createTestDir(t)
+	dir := testhelper.WorkDir(t)
 
-	defer os.RemoveAll(dir)
 	// Create a new GridTransformer
 	tf := NewGridTransformer(
 		logrus.New(),
@@ -25,7 +25,6 @@ func TestExtractDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.Remove(zipFile.Name())
 
 	zipWriter := zip.NewWriter(zipFile)
 	_, err = zipWriter.Create("test.txt")
@@ -59,8 +58,7 @@ func TestExtractDirectory(t *testing.T) {
 // the fix, this made ZipTeamDirectories fail with "error reading teams
 // directory" instead of completing with nothing to zip.
 func TestZipTeamDirectories_NoTeamsDir(t *testing.T) {
-	dir := createTestDir(t)
-	defer os.RemoveAll(dir)
+	dir := testhelper.WorkDir(t)
 
 	tf := NewGridTransformer(logrus.New())
 	tf.dirPath = dir

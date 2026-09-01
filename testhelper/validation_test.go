@@ -12,7 +12,7 @@ import (
 
 func TestValidateImportFile(t *testing.T) {
 	t.Run("validates valid import file", func(t *testing.T) {
-		tempDir := t.TempDir()
+		tempDir := WorkDir(t)
 		filePath := filepath.Join(tempDir, "import.jsonl")
 
 		content := `{"type":"version","version":1}
@@ -36,7 +36,7 @@ func TestValidateImportFile(t *testing.T) {
 	})
 
 	t.Run("detects invalid JSON", func(t *testing.T) {
-		tempDir := t.TempDir()
+		tempDir := WorkDir(t)
 		filePath := filepath.Join(tempDir, "import.jsonl")
 
 		content := `{"type":"version","version":1}
@@ -54,7 +54,7 @@ func TestValidateImportFile(t *testing.T) {
 	})
 
 	t.Run("detects missing user fields", func(t *testing.T) {
-		tempDir := t.TempDir()
+		tempDir := WorkDir(t)
 		filePath := filepath.Join(tempDir, "import.jsonl")
 
 		content := `{"type":"version","version":1}
@@ -72,7 +72,7 @@ func TestValidateImportFile(t *testing.T) {
 	})
 
 	t.Run("detects missing channel fields", func(t *testing.T) {
-		tempDir := t.TempDir()
+		tempDir := WorkDir(t)
 		filePath := filepath.Join(tempDir, "import.jsonl")
 
 		content := `{"type":"version","version":1}
@@ -89,7 +89,7 @@ func TestValidateImportFile(t *testing.T) {
 	})
 
 	t.Run("detects invalid channel type", func(t *testing.T) {
-		tempDir := t.TempDir()
+		tempDir := WorkDir(t)
 		filePath := filepath.Join(tempDir, "import.jsonl")
 
 		content := `{"type":"version","version":1}
@@ -114,7 +114,7 @@ func TestValidateImportFile(t *testing.T) {
 	})
 
 	t.Run("detects post referencing unknown user", func(t *testing.T) {
-		tempDir := t.TempDir()
+		tempDir := WorkDir(t)
 		filePath := filepath.Join(tempDir, "import.jsonl")
 
 		content := `{"type":"version","version":1}
@@ -140,7 +140,7 @@ func TestValidateImportFile(t *testing.T) {
 	})
 
 	t.Run("detects post referencing unknown channel", func(t *testing.T) {
-		tempDir := t.TempDir()
+		tempDir := WorkDir(t)
 		filePath := filepath.Join(tempDir, "import.jsonl")
 
 		content := `{"type":"version","version":1}
@@ -172,7 +172,7 @@ func TestValidateImportFile(t *testing.T) {
 	})
 
 	t.Run("reports counts correctly", func(t *testing.T) {
-		tempDir := t.TempDir()
+		tempDir := WorkDir(t)
 		filePath := filepath.Join(tempDir, "import.jsonl")
 
 		content := `{"type":"version","version":1}

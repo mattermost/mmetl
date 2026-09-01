@@ -1,6 +1,7 @@
 package rocketchat
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -126,6 +127,66 @@ func ExtractAttachments(
 
 	logger.Infof("Extracted %d attachments, skipped %d", done, skipped)
 	return nil
+}
+
+func skipUpload(upload *RocketChatUpload) bool {
+	return !upload.Complete || upload.TypeGroup == "thumb"
+}
+
+func fileSystemSourcePath(upload *RocketChatUpload, uploadsDir string) (string, error) {
+	if uploadsDir == "" {
+		return "", fmt.Errorf("FileSystem upload %s (%s): --uploads-dir not provided", upload.ID, upload.Name)
+	}
+	srcFilename := sanitizeFilename(filepath.Base(upload.Path))
+	if srcFilename == "" || srcFilename == "." || srcFilename == ".." {
+		return "", fmt.Errorf("FileSystem upload %s (%s): unsafe source path %q", upload.ID, upload.Name, upload.Path)
+	}
+	return filepath.Join(uploadsDir, srcFilename), nil
+}
+
+// VerifyAttachments checks that each complete upload's source exists without
+// writing any files. Missing sources are returned as a joined error.
+func VerifyAttachments(
+	uploads map[string]*RocketChatUpload,
+	gridfsIndex *GridFSIndex,
+	uploadsDir string,
+	logger log.FieldLogger,
+) error {
+	var errs []error
+	for _, upload := range uploads {
+		if skipUpload(upload) {
+			continue
+		}
+		switch {
+		case strings.HasPrefix(upload.Store, "GridFS:"):
+			if gridfsIndex != nil && gridfsIndex.Has(upload.ID) {
+				continue
+			}
+			if upload.Size == 0 {
+				continue
+			}
+			err := fmt.Errorf("GridFS chunks not found for upload %s (%s)", upload.ID, upload.Name)
+			logger.Error(err)
+			errs = append(errs, err)
+		case upload.Store == "FileSystem":
+			srcPath, err := fileSystemSourcePath(upload, uploadsDir)
+			if err != nil {
+				logger.Error(err)
+				errs = append(errs, err)
+				continue
+			}
+			if _, statErr := os.Stat(srcPath); statErr != nil {
+				err := fmt.Errorf("FileSystem upload %s (%s) not found at %s", upload.ID, upload.Name, srcPath)
+				logger.Error(err)
+				errs = append(errs, err)
+			}
+		default:
+			err := fmt.Errorf("unknown upload store %q for %s (%s)", upload.Store, upload.ID, upload.Name)
+			logger.Error(err)
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
 }
 
 func createEmptyFile(path string) error {

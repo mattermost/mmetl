@@ -7,7 +7,6 @@ package intermediate
 
 import (
 	"fmt"
-	"os"
 	"regexp"
 	"sort"
 	"strings"
@@ -17,10 +16,6 @@ import (
 	"github.com/mattermost/mattermost/server/public/model"
 	log "github.com/sirupsen/logrus"
 )
-
-// ExitFunc is the function called for fatal errors. Tests can override it to
-// avoid terminating the process.
-var ExitFunc func(code int) = os.Exit
 
 // NowFunc is used by CreatedMillis for the fallback timestamp. Tests can
 // override this for deterministic output.
@@ -196,7 +191,7 @@ type IntermediateUser struct {
 	DisplayName string                   `json:"display_name"`
 }
 
-func (u *IntermediateUser) Sanitise(logger log.FieldLogger, defaultEmailDomain string, skipEmptyEmails bool) {
+func (u *IntermediateUser) Sanitise(logger log.FieldLogger, defaultEmailDomain string, skipEmptyEmails bool) error {
 	// Log only non-sensitive identifiers; the full struct includes Email and
 	// Password, which must not be written to logs even at debug level.
 	logger.Debugf("TransformUsers: Sanitise: IntermediateUser Username=%s Id=%s", u.Username, u.Id)
@@ -204,17 +199,14 @@ func (u *IntermediateUser) Sanitise(logger log.FieldLogger, defaultEmailDomain s
 	if u.Email == "" {
 		if skipEmptyEmails {
 			logger.Warnf("User %s does not have an email address in the export. Using blank email address due to --skip-empty-emails flag.", u.Username)
-			return
+			return nil
 		}
 
 		if defaultEmailDomain != "" {
 			u.Email = u.Username + "@" + defaultEmailDomain
 			logger.Warnf("User %s does not have an email address in the export. Used %s as a placeholder. The user should update their email address once logged in to the system.", u.Username, u.Email)
 		} else {
-			msg := fmt.Sprintf("User %s does not have an email address in the export. Please provide an email domain through the --default-email-domain flag, to assign this user's email address. Alternatively, use the --skip-empty-emails flag to set the user's email to an empty string.", u.Username)
-			logger.Error(msg)
-			fmt.Println(msg)
-			ExitFunc(1)
+			return fmt.Errorf("user %s does not have an email address in the export. Please provide an email domain through the --default-email-domain flag, to assign this user's email address. Alternatively, use the --skip-empty-emails flag to set the user's email to an empty string", u.Username)
 		}
 	}
 
@@ -232,6 +224,8 @@ func (u *IntermediateUser) Sanitise(logger log.FieldLogger, defaultEmailDomain s
 		logger.Warnf("User %s position exceeds the maximum length. It will be truncated when imported.", u.Username)
 		u.Position = truncateRunes(u.Position, model.UserPositionMaxRunes)
 	}
+
+	return nil
 }
 
 type IntermediateReaction struct {

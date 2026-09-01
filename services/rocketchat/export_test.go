@@ -16,6 +16,7 @@ import (
 	"github.com/mattermost/mattermost/server/v8/channels/app/imports"
 
 	"github.com/mattermost/mmetl/services/intermediate"
+	"github.com/mattermost/mmetl/testhelper"
 )
 
 func newExportLogger() log.FieldLogger {
@@ -191,7 +192,7 @@ func TestExportOrder(t *testing.T) {
 		},
 	}
 
-	tmpFile, err := os.CreateTemp(t.TempDir(), "export-*.jsonl")
+	tmpFile, err := os.CreateTemp(testhelper.WorkDir(t), "export-*.jsonl")
 	require.NoError(t, err)
 	tmpFile.Close()
 
@@ -308,7 +309,7 @@ func TestExportLinesAreValidJSON(t *testing.T) {
 		},
 	}
 
-	tmpFile, err := os.CreateTemp(t.TempDir(), "export-*.jsonl")
+	tmpFile, err := os.CreateTemp(testhelper.WorkDir(t), "export-*.jsonl")
 	require.NoError(t, err)
 	tmpFile.Close()
 
