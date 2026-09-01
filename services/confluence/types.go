@@ -84,6 +84,95 @@ type Page struct {
 // IsBlogPost reports whether the page came from a Confluence blog post.
 func (p *Page) IsBlogPost() bool { return p.ContentType == ContentTypeBlogPost }
 
+// Comment is one Confluence comment selected for export. It becomes a
+// Mattermost post in the destination Space's backing channel.
+type Comment struct {
+	Key      EntityKey
+	SourceID string
+
+	// PageSourceID is the emitted page the comment hangs from.
+	PageSourceID string
+
+	// ParentSourceID is the immediate parent comment, empty for a top-level
+	// comment. ThreadRootSourceID is the top-level comment of the thread and is
+	// never empty; for a top-level comment it is its own source ID.
+	//
+	// Mattermost threads are flat: every reply's RootId is the thread root, not
+	// the immediate parent, so both are kept.
+	ParentSourceID     string
+	ThreadRootSourceID string
+
+	CreatorKey      EntityKey
+	LastModifierKey EntityKey
+
+	CreatedAt    int64
+	HasCreatedAt bool
+	UpdatedAt    int64
+	HasUpdatedAt bool
+
+	// IsResolved mirrors Confluence's inline-comment resolution state. No
+	// resolution marker appears in the discovery sample, so this stays false
+	// until a fixture proves how Confluence spells it.
+	IsResolved bool
+
+	BodyContentKeys     []EntityKey
+	ContentPropertyKeys []EntityKey
+}
+
+// Attachment is one Confluence attachment selected for export.
+//
+// ContainerSourceID is where Confluence hung it, which for a space-description
+// attachment is not a page at all. PageSourceID is the page it is emitted
+// against.
+type Attachment struct {
+	Key      EntityKey
+	SourceID string
+
+	ContainerKey      EntityKey
+	ContainerSourceID string
+	PageSourceID      string
+
+	// Version selects the exact blob in the archive. An export carries every
+	// version, and only the current one is copied.
+	Version int
+
+	// Filename is Confluence's attachment title, before sanitation.
+	Filename string
+
+	MediaType string
+	Size      int64
+
+	// ArchivePath is the entry inside the source ZIP.
+	ArchivePath string
+
+	CreatorKey      EntityKey
+	LastModifierKey EntityKey
+
+	CreatedAt    int64
+	HasCreatedAt bool
+	UpdatedAt    int64
+	HasUpdatedAt bool
+
+	ContentPropertyKeys []EntityKey
+}
+
+// Attachment metadata carried as Confluence content properties rather than as
+// object scalars.
+const (
+	attachmentPropMediaType = "MEDIA_TYPE"
+	attachmentPropFileSize  = "FILESIZE"
+)
+
+// ContentProperty scalar names.
+const (
+	contentPropertyName        = "name"
+	contentPropertyStringValue = "stringValue"
+	contentPropertyLongValue   = "longValue"
+)
+
+// contentPropVersion is the attachment version, which selects its archive blob.
+const contentPropVersion = "version"
+
 // Page and content property names in a Confluence Cloud XML backup.
 const (
 	contentPropTitle              = "title"

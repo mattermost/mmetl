@@ -236,3 +236,279 @@ func contentCandidate(object *RawObject, space Space, loc *time.Location) Conten
 	}
 	return candidate
 }
+
+// CommentCandidate is a comment as read from the source, before eligibility and
+// thread resolution.
+type CommentCandidate struct {
+	Comment *Comment
+
+	ContainerKey EntityKey
+	ParentKey    EntityKey
+
+	Status             string
+	HasOriginalVersion bool
+	OriginalVersionID  string
+}
+
+// IsInitiallyEligible applies the four self-contained conditions of the section
+// 6.2 comment predicate. Whether the comment survives also depends on its
+// ancestors, which BuildCommentThreads decides.
+func (c CommentCandidate) IsInitiallyEligible(emittedPages map[string]*Page) bool {
+	if !strings.EqualFold(c.Status, contentStatusCurrent) {
+		return false
+	}
+	if c.HasOriginalVersion || !isAbsentOrZeroID(c.OriginalVersionID) {
+		return false
+	}
+	if !isContentContainer(c.ContainerKey) {
+		return false
+	}
+	_, emitted := emittedPages[c.ContainerKey.ID]
+	return emitted
+}
+
+func commentFromObject(object *RawObject, loc *time.Location) CommentCandidate {
+	comment := &Comment{
+		Key:                 object.Key,
+		SourceID:            object.Key.ID,
+		BodyContentKeys:     object.Collection(contentCollBodyContents),
+		ContentPropertyKeys: object.Collection(contentCollContentProperties),
+	}
+	comment.CreatorKey, _ = object.Reference(contentPropCreator)
+	comment.LastModifierKey, _ = object.Reference(contentPropLastModifier)
+	comment.CreatedAt, comment.HasCreatedAt = SourceTimeMillis(object.ScalarValue(contentPropCreationDate), loc)
+	comment.UpdatedAt, comment.HasUpdatedAt = SourceTimeMillis(object.ScalarValue(contentPropLastModification), loc)
+
+	candidate := CommentCandidate{
+		Comment: comment,
+		Status:  object.ScalarValue(contentPropStatus),
+	}
+	candidate.ContainerKey, _ = object.Reference(contentPropContainerContent)
+	candidate.ParentKey, _ = object.Reference(contentPropParent)
+	comment.PageSourceID = candidate.ContainerKey.ID
+
+	originalVersionID, present := object.Scalar(contentPropOriginalVersionID)
+	if present {
+		candidate.OriginalVersionID = originalVersionID
+	}
+	_, candidate.HasOriginalVersion = object.Reference(contentPropOriginalVersion)
+
+	return candidate
+}
+
+// commentSkip records why one comment was dropped and how many descendants went
+// with it.
+type commentSkip struct {
+	sourceID    string
+	reason      string
+	descendants int
+}
+
+// BuildCommentThreads applies the comment predicate and resolves the thread
+// graph, returning the surviving comments in emission order.
+//
+// A comment whose parent is missing, excluded, on another page, or part of a
+// cycle is dropped along with everything below it: importing a reply whose
+// parent never arrived would attach it to the wrong thread or to none.
+//
+// Warnings are one per root cause, not one per descendant. A broken thread of
+// fifty replies is one editorial problem, and fifty warnings would bury it.
+func BuildCommentThreads(candidates []CommentCandidate, pageOrder []*Page) (comments []*Comment, warnings []Warning) {
+	eligiblePages := make(map[string]*Page, len(pageOrder))
+	for _, page := range pageOrder {
+		eligiblePages[page.SourceID] = page
+	}
+
+	eligible := map[string]CommentCandidate{}
+	var eligibleOrder []string
+	for _, candidate := range candidates {
+		if candidate.IsInitiallyEligible(eligiblePages) {
+			eligible[candidate.Comment.SourceID] = candidate
+			eligibleOrder = append(eligibleOrder, candidate.Comment.SourceID)
+		}
+	}
+
+	resolver := &commentResolver{eligible: eligible, state: map[string]*commentResolution{}}
+	for _, id := range eligibleOrder {
+		resolver.resolve(id, map[string]bool{})
+	}
+
+	kept := make([]*Comment, 0, len(eligibleOrder))
+	for _, id := range eligibleOrder {
+		resolution := resolver.state[id]
+		if !resolution.keep {
+			continue
+		}
+		comment := eligible[id].Comment
+		comment.ParentSourceID = resolution.parentID
+		comment.ThreadRootSourceID = resolution.threadRootID
+		kept = append(kept, comment)
+	}
+
+	return orderComments(kept, pageOrder), resolver.warnings()
+}
+
+type commentResolution struct {
+	keep         bool
+	parentID     string
+	threadRootID string
+
+	// rootCauseID names the comment that actually broke, which is this comment
+	// when it is the root cause and an ancestor otherwise.
+	rootCauseID string
+	reason      string
+}
+
+type commentResolver struct {
+	eligible map[string]CommentCandidate
+	state    map[string]*commentResolution
+	skips    []commentSkip
+	skipByID map[string]int
+}
+
+func (r *commentResolver) resolve(id string, visiting map[string]bool) *commentResolution {
+	if existing, ok := r.state[id]; ok {
+		return existing
+	}
+
+	candidate := r.eligible[id]
+	parentID := candidate.ParentKey.ID
+
+	switch {
+	case candidate.ParentKey.IsZero():
+		return r.keep(id, "", id)
+
+	case visiting[id]:
+		return r.skipRootCause(id, fmt.Sprintf("comment %s is part of a parent cycle", id))
+	}
+
+	parent, parentEligible := r.eligible[parentID]
+	switch {
+	case !parentEligible:
+		return r.skipRootCause(id, fmt.Sprintf("parent comment %s was not emitted", parentID))
+
+	case parent.Comment.PageSourceID != candidate.Comment.PageSourceID:
+		return r.skipRootCause(id, fmt.Sprintf(
+			"parent comment %s is on page %s, not %s",
+			parentID, parent.Comment.PageSourceID, candidate.Comment.PageSourceID))
+	}
+
+	visiting[id] = true
+	parentResolution := r.resolve(parentID, visiting)
+	delete(visiting, id)
+
+	if !parentResolution.keep {
+		return r.skipDescendant(id, parentResolution)
+	}
+	return r.keep(id, parentID, parentResolution.threadRootID)
+}
+
+func (r *commentResolver) keep(id, parentID, threadRootID string) *commentResolution {
+	resolution := &commentResolution{keep: true, parentID: parentID, threadRootID: threadRootID}
+	r.state[id] = resolution
+	return resolution
+}
+
+func (r *commentResolver) skipRootCause(id, reason string) *commentResolution {
+	resolution := &commentResolution{rootCauseID: id, reason: reason}
+	r.state[id] = resolution
+
+	if r.skipByID == nil {
+		r.skipByID = map[string]int{}
+	}
+	r.skipByID[id] = len(r.skips)
+	r.skips = append(r.skips, commentSkip{sourceID: id, reason: reason})
+	return resolution
+}
+
+func (r *commentResolver) skipDescendant(id string, parent *commentResolution) *commentResolution {
+	resolution := &commentResolution{rootCauseID: parent.rootCauseID, reason: parent.reason}
+	r.state[id] = resolution
+
+	if index, ok := r.skipByID[parent.rootCauseID]; ok {
+		r.skips[index].descendants++
+	}
+	return resolution
+}
+
+func (r *commentResolver) warnings() []Warning {
+	var warnings []Warning
+	for _, skip := range r.skips {
+		warnings = append(warnings, Warning{
+			Code:       WarnCommentParentMissingSkip,
+			EntityType: "comment",
+			SourceID:   skip.sourceID,
+			Message:    TruncateMessage(skip.reason + "; comment skipped"),
+		})
+		if skip.descendants > 0 {
+			warnings = append(warnings, Warning{
+				Code:       WarnCommentAncestorSkipped,
+				EntityType: "comment",
+				SourceID:   skip.sourceID,
+				Message: TruncateMessage(fmt.Sprintf(
+					"%d further comment(s) below skipped comment %s were skipped with it",
+					skip.descendants, skip.sourceID)),
+			})
+		}
+	}
+	return warnings
+}
+
+// orderComments groups comments by their page in page emission order, then
+// emits each thread root before its descendants, as the bundle requires.
+func orderComments(comments []*Comment, pageOrder []*Page) []*Comment {
+	byPage := map[string][]*Comment{}
+	for _, comment := range comments {
+		byPage[comment.PageSourceID] = append(byPage[comment.PageSourceID], comment)
+	}
+
+	ordered := make([]*Comment, 0, len(comments))
+	for _, page := range pageOrder {
+		pageComments := byPage[page.SourceID]
+		if len(pageComments) == 0 {
+			continue
+		}
+
+		children := map[string][]*Comment{}
+		var roots []*Comment
+		for _, comment := range pageComments {
+			if comment.ParentSourceID == "" {
+				roots = append(roots, comment)
+				continue
+			}
+			children[comment.ParentSourceID] = append(children[comment.ParentSourceID], comment)
+		}
+
+		sortComments(roots)
+		for _, siblings := range children {
+			sortComments(siblings)
+		}
+
+		var walk func(comment *Comment)
+		walk = func(comment *Comment) {
+			ordered = append(ordered, comment)
+			for _, child := range children[comment.SourceID] {
+				walk(child)
+			}
+		}
+		for _, root := range roots {
+			walk(root)
+		}
+	}
+	return ordered
+}
+
+// sortComments orders comments by creation time, then by source ID numerically
+// when it is numeric. Confluence carries no explicit comment position.
+func sortComments(comments []*Comment) {
+	sort.SliceStable(comments, func(i, j int) bool {
+		a, b := comments[i], comments[j]
+		if a.HasCreatedAt != b.HasCreatedAt {
+			return a.HasCreatedAt
+		}
+		if a.HasCreatedAt && a.CreatedAt != b.CreatedAt {
+			return a.CreatedAt < b.CreatedAt
+		}
+		return lessNumericThenLexical(a.SourceID, b.SourceID)
+	})
+}
