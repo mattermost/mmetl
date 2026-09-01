@@ -1,8 +1,11 @@
 package confluence
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"hash/crc32"
 	"io"
 	"sort"
 	"strconv"
@@ -342,4 +345,294 @@ func (s *DependencySelection) orderedAttachments() []*Attachment {
 		ordered = append(ordered, s.Attachments[pageID]...)
 	}
 	return ordered
+}
+
+// attachmentFilenameMaxRunes bounds a sanitized filename. It leaves room inside
+// a ZIP entry name for the two source IDs and the data/ prefix, and no
+// destination shows more than this anyway.
+const attachmentFilenameMaxRunes = 128
+
+// defaultAttachmentFilename names a blob whose source filename sanitizes to
+// nothing, so the entry still has a usable name.
+const defaultAttachmentFilename = "attachment"
+
+// windowsReservedNames cannot be used as a filename on Windows even with an
+// extension. A bundle extracted there would fail on one, so they are prefixed.
+var windowsReservedNames = map[string]bool{
+	"con": true, "prn": true, "aux": true, "nul": true,
+	"com1": true, "com2": true, "com3": true, "com4": true, "com5": true,
+	"com6": true, "com7": true, "com8": true, "com9": true,
+	"lpt1": true, "lpt2": true, "lpt3": true, "lpt4": true, "lpt5": true,
+	"lpt6": true, "lpt7": true, "lpt8": true, "lpt9": true,
+}
+
+// SanitizeAttachmentFilename reduces a Confluence filename to one that is safe
+// as a ZIP entry name on any platform.
+//
+// It strips directory separators, control characters, and the characters
+// Windows forbids, and it never returns "", ".", or "..". The original filename
+// is preserved untouched in the attachment props, so nothing is lost by being
+// strict here.
+func SanitizeAttachmentFilename(raw string) string {
+	// Take the last path segment: a Confluence filename should not contain a
+	// separator, but one that does must not create a directory in the bundle.
+	name := raw
+	if idx := strings.LastIndexAny(name, `/\`); idx >= 0 {
+		name = name[idx+1:]
+	}
+
+	var b strings.Builder
+	b.Grow(len(name))
+	for _, r := range name {
+		switch {
+		case r < 0x20, r == 0x7f:
+			// Control characters, including NUL.
+		case strings.ContainsRune(`<>:"|?*`, r):
+			b.WriteRune('_')
+		default:
+			b.WriteRune(r)
+		}
+	}
+
+	// A trailing dot or space is silently dropped by Windows, which would make
+	// the manifest path and the extracted path disagree.
+	cleaned := strings.TrimRight(strings.TrimSpace(b.String()), ". ")
+	cleaned = strings.Trim(cleaned, "/")
+
+	if runes := []rune(cleaned); len(runes) > attachmentFilenameMaxRunes {
+		cleaned = strings.TrimRight(string(runes[:attachmentFilenameMaxRunes]), ". ")
+	}
+
+	switch cleaned {
+	case "", ".", "..":
+		return defaultAttachmentFilename
+	}
+
+	stem := cleaned
+	if idx := strings.IndexByte(stem, '.'); idx > 0 {
+		stem = stem[:idx]
+	}
+	if windowsReservedNames[strings.ToLower(stem)] {
+		return "_" + cleaned
+	}
+	return cleaned
+}
+
+// AttachmentBlobResult is the outcome of copying one attachment's bytes.
+type AttachmentBlobResult struct {
+	Attachment *Attachment
+
+	// BundlePath is where the blob lives in the output bundle.
+	BundlePath string
+
+	// Size and SHA256 are measured from the bytes actually copied, not
+	// from what the source claimed.
+	Size   int64
+	SHA256 string
+}
+
+// AttachmentSink receives one attachment's bytes.
+//
+// The writer is handed a stream rather than a buffer: an attachment can be a
+// gigabyte, and the whole point of the pass is that only one flows through
+// memory at a time.
+type AttachmentSink interface {
+	WriteAttachment(bundlePath string, size int64, body io.Reader) error
+}
+
+// CopyAttachments streams each emitted attachment from the source archive into
+// the sink, verifying it and recording what was actually written.
+//
+// An attachment that cannot be copied is skipped with a warning and removed
+// from the selection, so the bundle never lists a blob it does not carry. A
+// failure here is never fatal: one corrupt image should not cost an operator
+// the whole space.
+func CopyAttachments(archive *SourceArchive, deps *DependencySelection, sink AttachmentSink) ([]AttachmentBlobResult, []Warning, error) {
+	var (
+		results  []AttachmentBlobResult
+		warnings []Warning
+	)
+
+	usedPaths := map[string]bool{}
+
+	for _, pageID := range sortedAttachmentPages(deps) {
+		kept := deps.Attachments[pageID][:0]
+
+		for _, attachment := range deps.Attachments[pageID] {
+			result, warning, err := copyAttachment(archive, attachment, usedPaths, sink)
+			if err != nil {
+				return nil, nil, err
+			}
+			if warning != nil {
+				warnings = append(warnings, *warning)
+				delete(deps.AttachmentsByID, attachment.SourceID)
+				deps.AttachmentsEmitted--
+				deps.AttachmentsSkipped++
+				continue
+			}
+			kept = append(kept, attachment)
+			results = append(results, *result)
+		}
+
+		if len(kept) == 0 {
+			delete(deps.Attachments, pageID)
+			continue
+		}
+		deps.Attachments[pageID] = kept
+	}
+
+	SortWarnings(warnings)
+	return results, warnings, nil
+}
+
+func sortedAttachmentPages(deps *DependencySelection) []string {
+	pageIDs := make([]string, 0, len(deps.Attachments))
+	for pageID := range deps.Attachments {
+		pageIDs = append(pageIDs, pageID)
+	}
+	sort.Slice(pageIDs, func(i, j int) bool { return lessNumericThenLexical(pageIDs[i], pageIDs[j]) })
+	return pageIDs
+}
+
+// copyAttachment verifies and copies one blob. A non-nil warning means the
+// attachment was skipped; only an error from the sink is fatal.
+func copyAttachment(
+	archive *SourceArchive,
+	attachment *Attachment,
+	usedPaths map[string]bool,
+	sink AttachmentSink,
+) (*AttachmentBlobResult, *Warning, error) {
+	ref := AttachmentRef{
+		ContainerID:  attachment.ContainerSourceID,
+		AttachmentID: attachment.SourceID,
+		Version:      attachment.Version,
+	}
+	entry, ok := archive.Attachment(ref)
+	if !ok {
+		return nil, &Warning{
+			Code:       WarnAttachmentBlobMissing,
+			EntityType: "attachment",
+			SourceID:   attachment.SourceID,
+			Message: TruncateMessage(fmt.Sprintf(
+				"the source archive has no blob at %s; attachment skipped", ref)),
+		}, nil
+	}
+
+	// The declared size comes from a Confluence content property and the entry
+	// size from the ZIP directory. They disagreeing means the export is not
+	// internally consistent, and copying either one would be a guess.
+	if attachment.Size > 0 && attachment.Size != entry.Size {
+		return nil, &Warning{
+			Code:       WarnAttachmentSizeMismatch,
+			EntityType: "attachment",
+			SourceID:   attachment.SourceID,
+			Message: TruncateMessage(fmt.Sprintf(
+				"Confluence records %d bytes but the archive entry holds %d; attachment skipped",
+				attachment.Size, entry.Size)),
+		}, nil
+	}
+
+	sanitized := SanitizeAttachmentFilename(attachment.Filename)
+	bundlePath := uniqueAttachmentPath(attachment, sanitized, usedPaths)
+
+	digest, size, err := verifyAttachmentBlob(entry)
+	if err != nil {
+		return nil, &Warning{
+			Code:       WarnAttachmentBlobCorrupt,
+			EntityType: "attachment",
+			SourceID:   attachment.SourceID,
+			Message:    TruncateMessage(err.Error() + "; attachment skipped"),
+		}, nil
+	}
+
+	body, err := entry.Open()
+	if err != nil {
+		return nil, &Warning{
+			Code:       WarnAttachmentBlobCorrupt,
+			EntityType: "attachment",
+			SourceID:   attachment.SourceID,
+			Message:    TruncateMessage(err.Error() + "; attachment skipped"),
+		}, nil
+	}
+	defer func() { _ = body.Close() }()
+
+	// Bounded so a ZIP directory that understates an entry's real length cannot
+	// make the writer consume unbounded input.
+	if err := sink.WriteAttachment(bundlePath, size, io.LimitReader(body, size)); err != nil {
+		return nil, nil, fmt.Errorf("writing attachment %s: %w", bundlePath, err)
+	}
+
+	attachment.Size = size
+	attachment.SanitizedFilename = sanitized
+	attachment.BundlePath = bundlePath
+	attachment.SHA256 = digest
+
+	return &AttachmentBlobResult{
+		Attachment: attachment,
+		BundlePath: bundlePath,
+		Size:       size,
+		SHA256:     digest,
+	}, nil, nil
+}
+
+// verifyAttachmentBlob reads the entry once to confirm it decompresses to the
+// declared length with the declared CRC, and returns its SHA-256.
+//
+// Reading twice, once to verify and once to copy, is deliberate: writing a
+// corrupt blob into the bundle and reporting it afterwards would leave the
+// operator with a bundle they must not import.
+func verifyAttachmentBlob(entry AttachmentEntry) (digest string, size int64, err error) {
+	body, err := entry.Open()
+	if err != nil {
+		return "", 0, err
+	}
+	defer func() { _ = body.Close() }()
+
+	hash := sha256.New()
+	crc := crc32.NewIEEE()
+
+	// One byte over the declared size is read on purpose, so an entry that
+	// decompresses to more than it declared is detected rather than truncated.
+	written, err := io.Copy(io.MultiWriter(hash, crc), io.LimitReader(body, entry.Size+1))
+	if err != nil {
+		return "", 0, fmt.Errorf("reading %s: %w", entry.Path, err)
+	}
+	if written != entry.Size {
+		return "", 0, fmt.Errorf("%s declares %d bytes but decompresses to %d", entry.Path, entry.Size, written)
+	}
+	if crc.Sum32() != entry.CRC32 {
+		return "", 0, fmt.Errorf("%s fails its CRC check", entry.Path)
+	}
+	return hex.EncodeToString(hash.Sum(nil)), written, nil
+}
+
+// uniqueAttachmentPath keeps two attachments from colliding on one bundle path.
+//
+// Sanitation can map two different source filenames onto one, and the contract
+// path already carries the attachment's own source ID, so a collision means the
+// same attachment twice or a sanitation clash. Either way a suffix keeps both
+// blobs addressable.
+func uniqueAttachmentPath(attachment *Attachment, sanitized string, used map[string]bool) string {
+	path := AttachmentBundlePath(attachment.PageSourceID, attachment.SourceID, sanitized)
+	if !used[path] {
+		used[path] = true
+		return path
+	}
+
+	stem, extension := splitFilename(sanitized)
+	for n := 2; ; n++ {
+		candidate := AttachmentBundlePath(attachment.PageSourceID, attachment.SourceID,
+			fmt.Sprintf("%s_%d%s", stem, n, extension))
+		if !used[candidate] {
+			used[candidate] = true
+			return candidate
+		}
+	}
+}
+
+func splitFilename(name string) (stem, extension string) {
+	if idx := strings.LastIndexByte(name, '.'); idx > 0 {
+		return name[:idx], name[idx:]
+	}
+	return name, ""
 }

@@ -199,6 +199,12 @@ type Attachment struct {
 	// ArchivePath is the entry inside the source ZIP.
 	ArchivePath string
 
+	// SanitizedFilename, BundlePath and SHA256 are filled in when the bytes are
+	// copied. Filename keeps the original, so nothing is lost by sanitizing.
+	SanitizedFilename string
+	BundlePath        string
+	SHA256            string
+
 	CreatorKey      EntityKey
 	LastModifierKey EntityKey
 
