@@ -29,6 +29,11 @@ const (
 	NodeTableRow       = "tableRow"
 	NodeTableCell      = "tableCell"
 	NodeTableHeader    = "tableHeader"
+	NodeTaskList       = "taskList"
+	NodeTaskItem       = "taskItem"
+	NodeMention        = "mention"
+	NodeCallout        = "callout"
+	NodeImage          = "image"
 
 	MarkBold      = "bold"
 	MarkItalic    = "italic"
@@ -84,6 +89,7 @@ type Converter struct {
 	warnings  []Warning
 	nodeCount int
 	sourceID  string
+	context   *ConversionContext
 }
 
 // NewConverter returns a converter for one page or comment.
@@ -276,6 +282,13 @@ func (c *Converter) convertElement(element *storageNode, depth int) (nodes []*Ti
 		return nodes, true, err
 
 	case name == "p":
+		// Confluence puts images, task lists and block macros inside <p>. TipTap
+		// paragraphs hold inline content only, so such a paragraph is treated as
+		// a block container and splits around them.
+		if containsBlockElement(element.Children) {
+			nodes, err = c.convertBlocks(element.Children, depth+1)
+			return nodes, true, err
+		}
 		node, err := c.node(NodeParagraph, depth)
 		if err != nil {
 			return nil, true, err
@@ -828,7 +841,65 @@ const (
 	sfPlainTextBody   = "plain-text-body"
 	sfParameter       = "parameter"
 	sfMacroNameAttr   = "name"
+
+	sfLink                = "link"
+	sfImage               = "image"
+	sfEmoticon            = "emoticon"
+	sfTaskList            = "task-list"
+	sfInlineCommentMarker = "inline-comment-marker"
+	sfADFExtension        = "adf-extension"
 )
+
+// isBlockElement reports whether an element becomes block-level output, so a
+// paragraph containing one can be split around it.
+func isBlockElement(node *storageNode) bool {
+	if node.IsText() {
+		return false
+	}
+	name := node.LocalName()
+	if node.IsConfluence() {
+		switch name {
+		case sfStructuredMacro, sfTaskList, sfImage, sfADFExtension, sfRichTextBody, sfPlainTextBody:
+			return true
+		default:
+			return isTransparentBlock(name)
+		}
+	}
+	switch name {
+	case "p", "blockquote", "pre", "ul", "ol", "table", "hr":
+		return true
+	}
+	return isHeading(name) || isTransparentBlock(name)
+}
+
+func containsBlockElement(children []*storageNode) bool {
+	for _, child := range children {
+		if isBlockElement(child) {
+			return true
+		}
+	}
+	return false
+}
+
+// convertADFExtension renders an embedded ADF feature as a marker naming it.
+// These are newer Confluence Cloud constructs with no storage-format body to
+// recover, so there is nothing to keep but the name.
+func (c *Converter) convertADFExtension(element *storageNode, depth int) ([]*TipTapNode, error) {
+	name := firstNonEmpty(adfExtensionName(element), "adf-extension")
+	c.warn(WarnUnsupportedMacro, fmt.Sprintf(
+		"embedded Confluence feature %q has no destination equivalent and was replaced with a marker", name))
+
+	paragraph, err := c.node(NodeParagraph, depth)
+	if err != nil {
+		return nil, err
+	}
+	text, err := c.textNode(fmt.Sprintf("[Unsupported Confluence macro: %s]", name), nil, depth+1)
+	if err != nil {
+		return nil, err
+	}
+	paragraph.Content = []*TipTapNode{text}
+	return []*TipTapNode{paragraph}, nil
+}
 
 // convertConfluenceElement converts a Confluence block element.
 //
@@ -839,7 +910,16 @@ const (
 func (c *Converter) convertConfluenceElement(element *storageNode, depth int) ([]*TipTapNode, error) {
 	switch element.LocalName() {
 	case sfStructuredMacro:
-		return c.convertUnsupportedMacro(element, depth)
+		return c.convertMacro(element, depth)
+
+	case sfTaskList:
+		return c.convertTaskList(element, depth)
+
+	case sfImage:
+		return c.convertImage(element, nil, depth)
+
+	case sfADFExtension:
+		return c.convertADFExtension(element, depth)
 
 	case sfRichTextBody, sfPlainTextBody:
 		return c.convertBlocks(element.Children, depth+1)
@@ -858,6 +938,21 @@ func (c *Converter) convertConfluenceElement(element *storageNode, depth int) ([
 // position.
 func (c *Converter) convertConfluenceInline(element *storageNode, marks []TipTapMark, depth int) ([]*TipTapNode, error) {
 	switch element.LocalName() {
+	case sfLink:
+		return c.convertLinkElement(element, marks, depth)
+
+	case sfImage:
+		return c.convertImage(element, marks, depth)
+
+	case sfEmoticon:
+		return c.convertEmoticon(element, marks, depth)
+
+	case sfInlineCommentMarker:
+		// An anchor for a Confluence inline comment. The comment itself is
+		// imported separately as a post; the anchor has no destination mapping
+		// yet, so its text is kept and the marker dropped.
+		return c.convertInline(element.Children, marks, depth+1)
+
 	case sfPlaceholder:
 		// Template placeholder text such as "Insert your email here". It is
 		// visible in Confluence, so dropping it would lose text a reader sees.
@@ -909,4 +1004,755 @@ func (c *Converter) convertUnsupportedMacro(element *storageNode, depth int) ([]
 		}
 	}
 	return nodes, nil
+}
+
+// Placeholder templates. Section 11 allows exactly these three, only in typed
+// TipTap attributes, and the importer rewrites nothing else.
+const (
+	placeholderPageFormat       = "{{CONF_PAGE_ID:%s}}"
+	placeholderAttachmentFormat = "{{CONF_ATTACHMENT_ID:%s}}"
+	placeholderUserFormat       = "{{CONF_USER_ID:%s}}"
+)
+
+// PagePlaceholder, AttachmentPlaceholder and UserPlaceholder build the only
+// placeholders the contract allows.
+func PagePlaceholder(sourceID string) string {
+	return fmt.Sprintf(placeholderPageFormat, sourceID)
+}
+
+func AttachmentPlaceholder(sourceID string) string {
+	return fmt.Sprintf(placeholderAttachmentFormat, sourceID)
+}
+
+func UserPlaceholder(accountID string) string {
+	return fmt.Sprintf(placeholderUserFormat, accountID)
+}
+
+// mentionLabelMaxRunes bounds the visible label on a mention. It is a
+// destination-facing string, not content, and an unbounded display name would
+// inflate every page that mentions the same user.
+const mentionLabelMaxRunes = 64
+
+// ConversionContext resolves the references a body makes into the source IDs
+// the placeholders carry.
+//
+// Confluence links by title and filename, not by ID. Resolving them here is
+// what section 11 requires: the importer only ever sees IDs, so an ambiguous
+// title never reaches it as a guess.
+type ConversionContext struct {
+	SpaceKey string
+
+	// pagesByTitle holds every page sharing a lowercased title, so an ambiguous
+	// reference can be recognized rather than silently resolved to the first.
+	pagesByTitle map[string][]*Page
+
+	// attachmentsByPageAndName is keyed by page source ID and lowercased
+	// filename, with a fallback index by filename alone for references that
+	// name no page.
+	attachmentsByPageAndName map[string][]*Attachment
+	attachmentsByName        map[string][]*Attachment
+
+	usersByAccountID map[string]*User
+	usersByKey       map[string]*User
+}
+
+// NewConversionContext indexes the selected content for reference resolution.
+func NewConversionContext(space Space, pages []*Page, attachments map[string][]*Attachment, users []*User) *ConversionContext {
+	ctx := &ConversionContext{
+		SpaceKey:                 space.SpaceKey,
+		pagesByTitle:             map[string][]*Page{},
+		attachmentsByPageAndName: map[string][]*Attachment{},
+		attachmentsByName:        map[string][]*Attachment{},
+		usersByAccountID:         map[string]*User{},
+		usersByKey:               map[string]*User{},
+	}
+
+	for _, page := range pages {
+		title := strings.ToLower(strings.TrimSpace(page.Title))
+		ctx.pagesByTitle[title] = append(ctx.pagesByTitle[title], page)
+	}
+	for pageID, list := range attachments {
+		for _, attachment := range list {
+			name := strings.ToLower(strings.TrimSpace(attachment.Filename))
+			ctx.attachmentsByPageAndName[pageID+"\x00"+name] = append(ctx.attachmentsByPageAndName[pageID+"\x00"+name], attachment)
+			ctx.attachmentsByName[name] = append(ctx.attachmentsByName[name], attachment)
+		}
+	}
+	for _, user := range users {
+		ctx.usersByAccountID[user.AccountID] = user
+		if user.ConfluenceUserKey != "" {
+			ctx.usersByKey[user.ConfluenceUserKey] = user
+		}
+	}
+	return ctx
+}
+
+// SetContext installs the reference index. Without one, every reference falls
+// back to visible text, which is what a comment converted before its page set
+// is known would produce.
+func (c *Converter) SetContext(ctx *ConversionContext) { c.context = ctx }
+
+// resolveUser maps an ri:user reference onto an exported user.
+func (c *Converter) resolveUser(element *storageNode) (*User, bool) {
+	if c.context == nil {
+		return nil, false
+	}
+	if accountID := element.Attr("account-id"); accountID != "" {
+		if user, ok := c.context.usersByAccountID[accountID]; ok {
+			return user, true
+		}
+	}
+	// ri:userkey is the ConfluenceUserImpl key, which in a Cloud export is
+	// usually the account ID as well, so both indexes are tried.
+	if key := element.Attr("userkey"); key != "" {
+		if user, ok := c.context.usersByKey[key]; ok {
+			return user, true
+		}
+		if user, ok := c.context.usersByAccountID[key]; ok {
+			return user, true
+		}
+	}
+	return nil, false
+}
+
+// resolvePage maps an ri:page reference onto an exported page.
+//
+// A reference into another space, or one whose title matches several pages, is
+// not resolved: section 11 forbids emitting a title-based placeholder, and
+// guessing which page was meant would silently link readers to the wrong one.
+func (c *Converter) resolvePage(element *storageNode) (*Page, string) {
+	if c.context == nil {
+		return nil, "no page index was available"
+	}
+
+	title := strings.TrimSpace(element.Attr("content-title"))
+	if title == "" {
+		return nil, "the reference names no page title"
+	}
+	if spaceKey := strings.TrimSpace(element.Attr("space-key")); spaceKey != "" &&
+		!strings.EqualFold(spaceKey, c.context.SpaceKey) {
+		return nil, fmt.Sprintf("the reference points into space %q, which is not being exported", spaceKey)
+	}
+
+	matches := c.context.pagesByTitle[strings.ToLower(title)]
+	switch len(matches) {
+	case 0:
+		return nil, fmt.Sprintf("no exported page is titled %q", title)
+	case 1:
+		return matches[0], ""
+	default:
+		return nil, fmt.Sprintf("%d exported pages are titled %q", len(matches), title)
+	}
+}
+
+// resolveAttachment maps an ri:attachment reference onto an exported
+// attachment, preferring the page the reference names.
+func (c *Converter) resolveAttachment(element *storageNode) (*Attachment, string) {
+	if c.context == nil {
+		return nil, "no attachment index was available"
+	}
+
+	filename := strings.TrimSpace(element.Attr("filename"))
+	if filename == "" {
+		return nil, "the reference names no filename"
+	}
+	name := strings.ToLower(filename)
+
+	// A nested ri:page names the attachment's page; without one it belongs to
+	// the page carrying the reference.
+	for _, child := range element.Children {
+		if child.IsText() || child.LocalName() != "page" {
+			continue
+		}
+		page, _ := c.resolvePage(child)
+		if page == nil {
+			continue
+		}
+		if matches := c.context.attachmentsByPageAndName[page.SourceID+"\x00"+name]; len(matches) == 1 {
+			return matches[0], ""
+		}
+	}
+	if c.sourceID != "" {
+		if matches := c.context.attachmentsByPageAndName[c.sourceID+"\x00"+name]; len(matches) == 1 {
+			return matches[0], ""
+		}
+	}
+
+	matches := c.context.attachmentsByName[name]
+	switch len(matches) {
+	case 0:
+		return nil, fmt.Sprintf("no exported attachment is named %q", filename)
+	case 1:
+		return matches[0], ""
+	default:
+		return nil, fmt.Sprintf("%d exported attachments are named %q", len(matches), filename)
+	}
+}
+
+// convertLinkElement converts ac:link, which Confluence uses for page links,
+// attachment links, and user mentions alike.
+func (c *Converter) convertLinkElement(element *storageNode, marks []TipTapMark, depth int) ([]*TipTapNode, error) {
+	target, body := splitLinkChildren(element)
+	if target == nil {
+		return c.convertInline(body, marks, depth+1)
+	}
+
+	switch target.LocalName() {
+	case "user":
+		return c.convertUserMention(target, depth)
+	case "page", "blog-post":
+		return c.convertPageLink(target, body, marks, depth)
+	case "attachment":
+		return c.convertAttachmentLink(target, body, marks, depth)
+	case "url":
+		return c.convertURLLink(target, body, marks, depth)
+	default:
+		return c.convertInline(body, marks, depth+1)
+	}
+}
+
+// splitLinkChildren separates the ri: target from the link's visible body.
+func splitLinkChildren(element *storageNode) (target *storageNode, body []*storageNode) {
+	for _, child := range element.Children {
+		if child.IsText() {
+			body = append(body, child)
+			continue
+		}
+		switch child.LocalName() {
+		case "user", "page", "blog-post", "attachment", "url", "space", "content-entity":
+			if target == nil {
+				target = child
+			}
+		case "plain-text-link-body", "link-body":
+			body = append(body, child.Children...)
+		default:
+			body = append(body, child)
+		}
+	}
+	return target, body
+}
+
+// convertUserMention emits a mention node carrying the user placeholder, or
+// plain text when the user is not part of this export.
+func (c *Converter) convertUserMention(target *storageNode, depth int) ([]*TipTapNode, error) {
+	user, ok := c.resolveUser(target)
+	if !ok {
+		identifier := firstNonEmpty(target.Attr("account-id"), target.Attr("userkey"))
+		c.warn(WarnXMLUnknownReferenceClass, fmt.Sprintf(
+			"mentioned user %q is not part of this export; the mention was kept as text", identifier))
+
+		node, err := c.textNode("@"+identifier, nil, depth)
+		if err != nil {
+			return nil, err
+		}
+		return []*TipTapNode{node}, nil
+	}
+
+	node, err := c.node(NodeMention, depth)
+	if err != nil {
+		return nil, err
+	}
+	node.Attrs = map[string]any{
+		"id":    UserPlaceholder(user.AccountID),
+		"label": truncateRunes(firstNonEmpty(user.DisplayName, user.MattermostUsername), mentionLabelMaxRunes),
+	}
+	return []*TipTapNode{node}, nil
+}
+
+func (c *Converter) convertPageLink(target *storageNode, body []*storageNode, marks []TipTapMark, depth int) ([]*TipTapNode, error) {
+	label := strings.TrimSpace(target.Attr("content-title"))
+
+	page, reason := c.resolvePage(target)
+	if page == nil {
+		c.warn(WarnXMLUnknownReferenceClass, fmt.Sprintf(
+			"page link could not be resolved (%s); the link text was kept without the link", reason))
+		return c.linkFallbackText(body, label, marks, depth)
+	}
+	return c.linkedBody(body, firstNonEmpty(label, page.Title), PagePlaceholder(page.SourceID), marks, depth)
+}
+
+func (c *Converter) convertAttachmentLink(target *storageNode, body []*storageNode, marks []TipTapMark, depth int) ([]*TipTapNode, error) {
+	filename := strings.TrimSpace(target.Attr("filename"))
+
+	attachment, reason := c.resolveAttachment(target)
+	if attachment == nil {
+		c.warn(WarnXMLUnknownReferenceClass, fmt.Sprintf(
+			"attachment link could not be resolved (%s); the filename was kept as text", reason))
+		return c.linkFallbackText(body, filename, marks, depth)
+	}
+	return c.linkedBody(body, firstNonEmpty(filename, attachment.Filename),
+		AttachmentPlaceholder(attachment.SourceID), marks, depth)
+}
+
+func (c *Converter) convertURLLink(target *storageNode, body []*storageNode, marks []TipTapMark, depth int) ([]*TipTapNode, error) {
+	raw := strings.TrimSpace(target.Attr("value"))
+	safe := SanitizeURL(raw)
+	if safe == "" {
+		c.warn(WarnDangerousURLRemoved,
+			"link target used a scheme that is not allowed; the link text was kept without the link")
+		return c.linkFallbackText(body, raw, marks, depth)
+	}
+	return c.linkedBody(body, safe, safe, marks, depth)
+}
+
+// linkedBody renders a link's visible content under a link mark, falling back
+// to the label when the source gave the link no text of its own.
+func (c *Converter) linkedBody(body []*storageNode, label, href string, marks []TipTapMark, depth int) ([]*TipTapNode, error) {
+	linked := appendMark(marks, TipTapMark{Type: MarkLink, Attrs: map[string]any{"href": href}})
+
+	nodes, err := c.convertInline(body, linked, depth+1)
+	if err != nil {
+		return nil, err
+	}
+	if len(nodes) > 0 {
+		return nodes, nil
+	}
+
+	node, err := c.textNode(firstNonEmpty(label, href), linked, depth)
+	if err != nil {
+		return nil, err
+	}
+	return []*TipTapNode{node}, nil
+}
+
+// linkFallbackText keeps an unresolved link's text visible, without the
+// executable attribute section 11 forbids emitting unresolved.
+func (c *Converter) linkFallbackText(body []*storageNode, label string, marks []TipTapMark, depth int) ([]*TipTapNode, error) {
+	nodes, err := c.convertInline(body, marks, depth+1)
+	if err != nil {
+		return nil, err
+	}
+	if len(nodes) > 0 {
+		return nodes, nil
+	}
+	if label == "" {
+		return nil, nil
+	}
+
+	node, err := c.textNode(label, marks, depth)
+	if err != nil {
+		return nil, err
+	}
+	return []*TipTapNode{node}, nil
+}
+
+// convertImage converts ac:image, whose target is either an attachment in this
+// export or an external URL.
+func (c *Converter) convertImage(element *storageNode, marks []TipTapMark, depth int) ([]*TipTapNode, error) {
+	alt := strings.TrimSpace(element.Attr("alt"))
+
+	var target *storageNode
+	for _, child := range element.Children {
+		if !child.IsText() {
+			target = child
+			break
+		}
+	}
+	if target == nil {
+		return nil, nil
+	}
+
+	var src, label string
+	switch target.LocalName() {
+	case "attachment":
+		attachment, reason := c.resolveAttachment(target)
+		if attachment == nil {
+			c.warn(WarnXMLUnknownReferenceClass, fmt.Sprintf(
+				"image attachment could not be resolved (%s); a text link was kept in its place", reason))
+			return c.imageFallbackText(firstNonEmpty(alt, target.Attr("filename")), marks, depth)
+		}
+		src = AttachmentPlaceholder(attachment.SourceID)
+		label = firstNonEmpty(alt, attachment.Filename)
+
+	case "url":
+		raw := strings.TrimSpace(target.Attr("value"))
+		src = SanitizeURL(raw)
+		if src == "" {
+			c.warn(WarnDangerousURLRemoved, "image source used a scheme that is not allowed; the image was dropped")
+			return c.imageFallbackText(alt, marks, depth)
+		}
+		label = firstNonEmpty(alt, raw)
+
+	default:
+		return c.imageFallbackText(alt, marks, depth)
+	}
+
+	node, err := c.node(NodeImage, depth)
+	if err != nil {
+		return nil, err
+	}
+	node.Attrs = map[string]any{"src": src}
+	if label != "" {
+		node.Attrs["alt"] = label
+	}
+	return []*TipTapNode{node}, nil
+}
+
+func (c *Converter) imageFallbackText(label string, marks []TipTapMark, depth int) ([]*TipTapNode, error) {
+	if label == "" {
+		return nil, nil
+	}
+	node, err := c.textNode(label, marks, depth)
+	if err != nil {
+		return nil, err
+	}
+	return []*TipTapNode{node}, nil
+}
+
+// convertEmoticon renders a Confluence emoji as text. The destination schema
+// has no emoji node, and the export carries the character itself.
+func (c *Converter) convertEmoticon(element *storageNode, marks []TipTapMark, depth int) ([]*TipTapNode, error) {
+	text := firstNonEmpty(
+		element.Attr("emoji-fallback"),
+		element.Attr("emoji-shortname"),
+		element.Attr("name"),
+	)
+	if text == "" {
+		return nil, nil
+	}
+
+	node, err := c.textNode(text, marks, depth)
+	if err != nil {
+		return nil, err
+	}
+	return []*TipTapNode{node}, nil
+}
+
+// convertTaskList converts ac:task-list into a TipTap task list, preserving
+// which items were ticked.
+func (c *Converter) convertTaskList(element *storageNode, depth int) ([]*TipTapNode, error) {
+	list, err := c.node(NodeTaskList, depth)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, child := range element.Children {
+		if child.IsText() || child.LocalName() != "task" {
+			continue
+		}
+
+		item, err := c.node(NodeTaskItem, depth+1)
+		if err != nil {
+			return nil, err
+		}
+		item.Attrs = map[string]any{"checked": taskIsComplete(child)}
+
+		for _, part := range child.Children {
+			if part.IsText() || part.LocalName() != "task-body" {
+				continue
+			}
+			body, err := c.convertBlocks(part.Children, depth+2)
+			if err != nil {
+				return nil, err
+			}
+			item.Content = append(item.Content, body...)
+		}
+		if len(item.Content) == 0 {
+			empty, err := c.node(NodeParagraph, depth+2)
+			if err != nil {
+				return nil, err
+			}
+			item.Content = []*TipTapNode{empty}
+		}
+		list.Content = append(list.Content, item)
+	}
+
+	if len(list.Content) == 0 {
+		return nil, nil
+	}
+	return []*TipTapNode{list}, nil
+}
+
+func taskIsComplete(task *storageNode) bool {
+	for _, child := range task.Children {
+		if !child.IsText() && child.LocalName() == "task-status" {
+			return strings.EqualFold(strings.TrimSpace(child.PlainText()), "complete")
+		}
+	}
+	return false
+}
+
+// macroCalloutTypes maps the Confluence admonition macros onto the destination's
+// callout types. "panel" is Confluence's generic callout and is included: the
+// section 10 matrix is a minimum, and rendering a panel as an unsupported-macro
+// marker above its own body would be visibly worse than a callout.
+var macroCalloutTypes = map[string]string{
+	"info":    "info",
+	"note":    "note",
+	"warning": "warning",
+	"tip":     "success",
+	"panel":   "info",
+}
+
+// convertMacro converts a structured macro, falling back to the visible marker
+// for anything with no destination equivalent.
+func (c *Converter) convertMacro(element *storageNode, depth int) ([]*TipTapNode, error) {
+	name := strings.ToLower(strings.TrimSpace(element.Attr(sfMacroNameAttr)))
+
+	switch name {
+	case "code":
+		return c.convertCodeMacro(element, depth)
+	case "children", "pagetree":
+		return c.convertChildrenMacro(element, depth)
+	case "jira":
+		return c.convertJiraMacro(element, depth)
+	case "status":
+		return c.convertStatusMacro(element, depth)
+	case "expand":
+		return c.convertMacroBody(element, depth)
+	}
+
+	if calloutType, ok := macroCalloutTypes[name]; ok {
+		return c.convertCalloutMacro(element, calloutType, depth)
+	}
+	return c.convertUnsupportedMacro(element, depth)
+}
+
+// convertCodeMacro renders a code macro as a code block, keeping the language
+// when the macro names one.
+func (c *Converter) convertCodeMacro(element *storageNode, depth int) ([]*TipTapNode, error) {
+	node, err := c.node(NodeCodeBlock, depth)
+	if err != nil {
+		return nil, err
+	}
+	if language := macroParameter(element, "language"); language != "" {
+		node.Attrs = map[string]any{"language": language}
+	}
+
+	text := macroBodyText(element)
+	if text == "" {
+		return nil, nil
+	}
+	textNode, err := c.textNode(text, nil, depth+1)
+	if err != nil {
+		return nil, err
+	}
+	node.Content = []*TipTapNode{textNode}
+	return []*TipTapNode{node}, nil
+}
+
+func (c *Converter) convertCalloutMacro(element *storageNode, calloutType string, depth int) ([]*TipTapNode, error) {
+	node, err := c.node(NodeCallout, depth)
+	if err != nil {
+		return nil, err
+	}
+	node.Attrs = map[string]any{"type": calloutType}
+
+	body, err := c.convertMacroBody(element, depth+1)
+	if err != nil {
+		return nil, err
+	}
+	if len(body) == 0 {
+		// A callout must hold at least one block.
+		empty, err := c.node(NodeParagraph, depth+1)
+		if err != nil {
+			return nil, err
+		}
+		body = []*TipTapNode{empty}
+	}
+	node.Content = body
+	return []*TipTapNode{node}, nil
+}
+
+// convertChildrenMacro replaces a dynamic child listing with the links it would
+// have rendered at export time.
+//
+// The list is a snapshot: the macro is live in Confluence and the destination
+// has no equivalent, so a frozen list of real links is closer to what the
+// reader saw than a marker would be.
+func (c *Converter) convertChildrenMacro(element *storageNode, depth int) ([]*TipTapNode, error) {
+	page := c.currentPage()
+	if page == nil || len(page.Children) == 0 {
+		c.warn(WarnUnsupportedMacro,
+			"a child-pages macro listed pages dynamically; it has no destination equivalent and no children were available to list")
+		return c.convertUnsupportedMacro(element, depth)
+	}
+
+	list, err := c.node(NodeBulletList, depth)
+	if err != nil {
+		return nil, err
+	}
+	for _, child := range page.Children {
+		item, err := c.node(NodeListItem, depth+1)
+		if err != nil {
+			return nil, err
+		}
+		paragraph, err := c.node(NodeParagraph, depth+2)
+		if err != nil {
+			return nil, err
+		}
+		link, err := c.textNode(child.Title, []TipTapMark{{
+			Type:  MarkLink,
+			Attrs: map[string]any{"href": PagePlaceholder(child.SourceID)},
+		}}, depth+3)
+		if err != nil {
+			return nil, err
+		}
+		paragraph.Content = []*TipTapNode{link}
+		item.Content = []*TipTapNode{paragraph}
+		list.Content = append(list.Content, item)
+	}
+	return []*TipTapNode{list}, nil
+}
+
+// convertJiraMacro renders a Jira issue reference as a link when the macro
+// carries a server URL, and as the bare key otherwise.
+func (c *Converter) convertJiraMacro(element *storageNode, depth int) ([]*TipTapNode, error) {
+	key := firstNonEmpty(macroParameter(element, "key"), macroParameter(element, "jqlQuery"))
+	if key == "" {
+		c.warn(WarnUnsupportedMacro, "a Jira macro named no issue key and was replaced with a marker")
+		return c.convertUnsupportedMacro(element, depth)
+	}
+
+	paragraph, err := c.node(NodeParagraph, depth)
+	if err != nil {
+		return nil, err
+	}
+
+	var marks []TipTapMark
+	if server := SanitizeURL(macroParameter(element, "serverId-url")); server != "" {
+		marks = []TipTapMark{{
+			Type:  MarkLink,
+			Attrs: map[string]any{"href": strings.TrimRight(server, "/") + "/browse/" + key},
+		}}
+	}
+
+	text, err := c.textNode(key, marks, depth+1)
+	if err != nil {
+		return nil, err
+	}
+	paragraph.Content = []*TipTapNode{text}
+	return []*TipTapNode{paragraph}, nil
+}
+
+// convertStatusMacro renders a status lozenge as text. The destination has no
+// status node, and the label is the part a reader needs.
+func (c *Converter) convertStatusMacro(element *storageNode, depth int) ([]*TipTapNode, error) {
+	title := macroParameter(element, "title")
+	if title == "" {
+		return nil, nil
+	}
+
+	paragraph, err := c.node(NodeParagraph, depth)
+	if err != nil {
+		return nil, err
+	}
+	text, err := c.textNode("["+title+"]", nil, depth+1)
+	if err != nil {
+		return nil, err
+	}
+	paragraph.Content = []*TipTapNode{text}
+	return []*TipTapNode{paragraph}, nil
+}
+
+// convertMacroBody converts only a macro's body, ignoring its parameters.
+func (c *Converter) convertMacroBody(element *storageNode, depth int) ([]*TipTapNode, error) {
+	var nodes []*TipTapNode
+	for _, child := range element.Children {
+		if child.IsText() || !child.IsConfluence() {
+			continue
+		}
+		switch child.LocalName() {
+		case sfRichTextBody:
+			body, err := c.convertBlocks(child.Children, depth+1)
+			if err != nil {
+				return nil, err
+			}
+			nodes = append(nodes, body...)
+		case sfPlainTextBody:
+			text := strings.TrimSpace(child.PlainText())
+			if text == "" {
+				continue
+			}
+			paragraph, err := c.node(NodeParagraph, depth)
+			if err != nil {
+				return nil, err
+			}
+			textNode, err := c.textNode(text, nil, depth+1)
+			if err != nil {
+				return nil, err
+			}
+			paragraph.Content = []*TipTapNode{textNode}
+			nodes = append(nodes, paragraph)
+		}
+	}
+	return nodes, nil
+}
+
+// macroParameter reads one ac:parameter by name.
+func macroParameter(element *storageNode, name string) string {
+	for _, child := range element.Children {
+		if child.IsText() || child.LocalName() != sfParameter {
+			continue
+		}
+		if strings.EqualFold(child.Attr(sfMacroNameAttr), name) {
+			return strings.TrimSpace(child.PlainText())
+		}
+	}
+	return ""
+}
+
+// macroBodyText is the plain text of a macro's body, ignoring its parameters.
+func macroBodyText(element *storageNode) string {
+	var b strings.Builder
+	for _, child := range element.Children {
+		if child.IsText() || !child.IsConfluence() {
+			continue
+		}
+		switch child.LocalName() {
+		case sfRichTextBody, sfPlainTextBody:
+			b.WriteString(child.PlainText())
+		}
+	}
+	return b.String()
+}
+
+// adfExtensionName names an ADF extension by its node type, so the marker says
+// which feature was there.
+func adfExtensionName(element *storageNode) string {
+	for _, child := range element.Children {
+		if child.IsText() {
+			continue
+		}
+		if child.LocalName() == "adf-node" {
+			if nodeType := child.Attr("type"); nodeType != "" {
+				return nodeType
+			}
+		}
+		if name := adfExtensionName(child); name != "" {
+			return name
+		}
+	}
+	return ""
+}
+
+func (c *Converter) currentPage() *Page {
+	if c.context == nil {
+		return nil
+	}
+	for _, pages := range c.context.pagesByTitle {
+		for _, page := range pages {
+			if page.SourceID == c.sourceID {
+				return page
+			}
+		}
+	}
+	return nil
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+func truncateRunes(s string, limit int) string {
+	runes := []rune(s)
+	if len(runes) <= limit {
+		return s
+	}
+	return string(runes[:limit])
 }

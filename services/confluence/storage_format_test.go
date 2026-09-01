@@ -20,11 +20,17 @@ func convert(t *testing.T, storage string) (*TipTapNode, []Warning) {
 	encoded, err := converter.Convert(storage, "26542273")
 	require.NoError(t, err)
 
+	return decodeTipTap(t, encoded), converter.Warnings()
+}
+
+// decodeTipTap parses converter output back into a node tree.
+func decodeTipTap(t *testing.T, encoded string) *TipTapNode {
+	t.Helper()
+
 	var doc TipTapNode
 	require.NoError(t, json.Unmarshal([]byte(encoded), &doc))
 	require.Equal(t, NodeDoc, doc.Type)
-
-	return &doc, converter.Warnings()
+	return &doc
 }
 
 // blockTypes lists the top-level block types of a converted document.
@@ -349,16 +355,30 @@ func TestConvert_HTMLEntities(t *testing.T) {
 }
 
 func TestConvert_UnsupportedMacroKeepsItsBody(t *testing.T) {
+	// "roadmap" renders a live planner that has no static equivalent.
 	doc, warnings := convert(t,
-		`<ac:structured-macro ac:name="expand"><ac:parameter ac:name="title">More</ac:parameter>`+
+		`<ac:structured-macro ac:name="roadmap"><ac:parameter ac:name="title">Q1</ac:parameter>`+
 			`<ac:rich-text-body><p>hidden but real</p></ac:rich-text-body></ac:structured-macro>`)
 
 	require.Equal(t, []string{NodeParagraph, NodeParagraph}, blockTypes(doc))
-	require.Equal(t, "[Unsupported Confluence macro: expand]", flatten(doc.Content[0]))
-	require.Equal(t, "hidden but real", flatten(doc.Content[1]))
+	require.Equal(t, "[Unsupported Confluence macro: roadmap]", flatten(doc.Content[0]))
+	require.Equal(t, "hidden but real", flatten(doc.Content[1]),
+		"the macro body is real content and is kept below the marker")
 
 	require.Len(t, warnings, 1)
-	require.Contains(t, warnings[0].Message, "expand")
+	require.Contains(t, warnings[0].Message, "roadmap")
+}
+
+// An expand macro is a disclosure widget around ordinary content. There is
+// nothing to warn about: the content is kept, only the folding is lost.
+func TestConvert_ExpandMacroKeepsOnlyItsBody(t *testing.T) {
+	doc, warnings := convert(t,
+		`<ac:structured-macro ac:name="expand"><ac:parameter ac:name="title">More</ac:parameter>`+
+			`<ac:rich-text-body><p>revealed</p></ac:rich-text-body></ac:structured-macro>`)
+
+	require.Equal(t, []string{NodeParagraph}, blockTypes(doc))
+	require.Equal(t, "revealed", flatten(doc.Content[0]))
+	require.Empty(t, warnings)
 }
 
 func TestConvert_RejectsOversizedContent(t *testing.T) {
@@ -430,6 +450,7 @@ var allowedNodeTypesForTest = []string{
 	NodeDoc, NodeParagraph, NodeText, NodeHeading, NodeHardBreak, NodeHorizontalRule,
 	NodeBlockquote, NodeCodeBlock, NodeBulletList, NodeOrderedList, NodeListItem,
 	NodeTable, NodeTableRow, NodeTableCell, NodeTableHeader,
+	NodeTaskList, NodeTaskItem, NodeMention, NodeCallout, NodeImage,
 }
 
 var allowedMarkTypesForTest = []string{
