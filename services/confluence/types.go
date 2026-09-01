@@ -35,6 +35,76 @@ func (s Space) HasHomePage() bool { return !s.HomePageKey.IsZero() }
 // HasDescription reports whether the space declares a description.
 func (s Space) HasDescription() bool { return !s.DescriptionKey.IsZero() }
 
+// Page is one canonical Confluence page or blog post selected for export.
+//
+// It carries metadata only. Bodies are read in a later pass and are never held
+// alongside the whole page set, so BodyContentKeys is a handle rather than
+// content.
+type Page struct {
+	Key      EntityKey
+	SourceID string
+
+	// ContentType is ContentTypePage or ContentTypeBlogPost. Blog posts import
+	// as ordinary Docs pages and are distinguished only by this prop.
+	ContentType string
+
+	Title    string
+	SpaceKey EntityKey
+
+	// SourceParentKey is the parent Confluence declared. ParentSourceID is the
+	// parent actually emitted, which differs when a parent was excluded or when
+	// the page was flattened to fit the destination depth limit.
+	SourceParentKey EntityKey
+	ParentSourceID  string
+
+	// Depth is the output depth, with a root page at 1.
+	Depth int
+
+	CreatorKey      EntityKey
+	LastModifierKey EntityKey
+
+	// CreatedAt and UpdatedAt are Unix milliseconds. HasCreatedAt and
+	// HasUpdatedAt distinguish "no timestamp" from the epoch.
+	CreatedAt    int64
+	HasCreatedAt bool
+	UpdatedAt    int64
+	HasUpdatedAt bool
+
+	// Position orders siblings. Confluence omits it on blog posts.
+	Position    int64
+	HasPosition bool
+
+	BodyContentKeys     []EntityKey
+	ContentPropertyKeys []EntityKey
+
+	// Children is the output hierarchy, in emission order.
+	Children []*Page
+}
+
+// IsBlogPost reports whether the page came from a Confluence blog post.
+func (p *Page) IsBlogPost() bool { return p.ContentType == ContentTypeBlogPost }
+
+// Page and content property names in a Confluence Cloud XML backup.
+const (
+	contentPropTitle              = "title"
+	contentPropStatus             = "contentStatus"
+	contentPropOriginalVersion    = "originalVersion"
+	contentPropOriginalVersionID  = "originalVersionId"
+	contentPropCreator            = "creator"
+	contentPropLastModifier       = "lastModifier"
+	contentPropCreationDate       = "creationDate"
+	contentPropLastModification   = "lastModificationDate"
+	contentPropPosition           = "position"
+	contentPropParent             = "parent"
+	contentPropContainerContent   = "containerContent"
+	contentCollBodyContents       = "bodyContents"
+	contentCollContentProperties  = "contentProperties"
+	contentCollHistoricalVersions = "historicalVersions"
+)
+
+// contentStatusCurrent is the only content status this exporter emits.
+const contentStatusCurrent = "current"
+
 // Space property names in a Confluence Cloud XML backup.
 const (
 	spacePropName        = "name"
