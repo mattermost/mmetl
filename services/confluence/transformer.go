@@ -233,6 +233,25 @@ func (b *bundleBuilder) run() (*TransformResult, error) {
 	}
 	b.warn(labels.Warnings...)
 
+	restricted, restrictionWarnings, err := SelectRestrictions(b.archive, content, refs)
+	if err != nil {
+		return nil, err
+	}
+	b.warn(restrictionWarnings...)
+	b.counts.RestrictedPagesPreserved = restricted
+
+	// Reported on every export, not only when a restriction is found. Silence
+	// would read as "nothing here is restricted", when what it has to say is
+	// that restrictions are recorded and never enforced.
+	b.warn(Warning{
+		Code:       WarnRestrictionUnverified,
+		EntityType: "space",
+		SourceID:   b.space.SourceID,
+		Message: TruncateMessage(fmt.Sprintf(
+			"%d page restriction(s) were preserved as metadata and are not enforced; access at the "+
+				"destination remains Space-level", restricted)),
+	})
+
 	users, userWarnings, err := SelectUsers(b.archive, b.options.OrganizationID, refs, b.mapping)
 	if err != nil {
 		return nil, err

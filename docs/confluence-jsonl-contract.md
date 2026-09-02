@@ -101,7 +101,7 @@ rules that are not expressible as a struct:
   | `confluence_author_account_id` | string | may be empty; when set, must appear in manifest users |
   | `import_labels` | array of string | may be empty |
   | `confluence_labels` | array of `{name, namespace}` | may be empty |
-  | `confluence_restrictions` | object | may be empty |
+  | `confluence_restrictions` | object | may be empty; see section 8 |
 
 * Serialized `page.props` is at most 64 KiB. The producer targets 48 KiB to
   leave the importer room for its own metadata namespace.
@@ -152,10 +152,11 @@ See `Manifest` in `services/confluence/contract.go` for the exact shape. Rules:
 * `users[]` has unique `account_id` and unique `mattermost_username`.
   `username_proposal_source` is one of `explicit_mapping`, `source_username`,
   `source_email`, `source_display_name`, `fallback`.
-* Every `fidelity` field is non-empty. The fidelity block states what the bundle
-  actually claims, so `page_restrictions` stays
-  `restriction_extraction_unverified` until a real restricted-page XML fixture
-  exists.
+* Every `fidelity` field is non-empty. The fidelity block states what the
+  bundle actually claims. `page_restrictions` remains
+  `restriction_extraction_unverified`: user restrictions are now extracted from
+  a real export, but group restrictions are not yet verified and nothing is
+  enforced at the destination. See section 8.
 * `warnings` are sorted by code, entity type, source ID, then message; each
   message is at most 2048 UTF-8 bytes and contains no body text or email.
 * `errors` **must be empty**. A manifest carrying an error describes a bundle
@@ -208,7 +209,44 @@ mention    -> attrs.id becomes the Mattermost user ID, attrs.label the destinati
 An unresolved or cross-space reference keeps its visible text, loses the
 unresolved executable attribute, and produces a warning.
 
-## 8. Golden fixtures
+## 8. Page restrictions
+
+A restricted page carries `confluence_restrictions` in its props:
+
+```json
+{
+  "view_users":  ["<canonical-account-id>"],
+  "view_groups": ["<source-group-name>"],
+  "edit_users":  ["<canonical-account-id>"],
+  "edit_groups": ["<source-group-name>"]
+}
+```
+
+An unrestricted page carries `{}`. Every list is present when any restriction
+exists, so a consumer never has to distinguish absent from empty.
+
+Users are named by canonical account ID, never by Confluence key: the importer
+resolves account IDs only. A restricted user who is not in the bundle's user
+list is **omitted** rather than emitted as a raw key, because a key the importer
+cannot resolve is indistinguishable from a user it has not created yet.
+
+Confluence stores these as a `ContentPermissionSet` per restriction kind
+(`View` or `Edit`) naming the page, holding `ContentPermission` rows that each
+name either a `userSubject` or a `groupName`. The exporter reads that structure
+directly.
+
+**What is and is not verified.** The user form is confirmed against a real
+Confluence Cloud export. The group form is not: no export seen so far contains
+a group-restricted page, so the exporter emits a
+`restriction_extraction_unverified` warning naming the group whenever it
+encounters one. An unrecognized restriction kind is reported and dropped rather
+than guessed at.
+
+**Nothing enforces any of this.** The restrictions are inert metadata. Access at
+the destination is Space-level, and every export says so in a warning whether or
+not it found a restriction — silence would read as "nothing here is restricted".
+
+## 9. Golden fixtures
 
 `services/confluence/testdata/contract/` holds the shared fixture set. It is
 generated from the builders in `services/confluence/contract_test.go`:

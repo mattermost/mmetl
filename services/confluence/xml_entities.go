@@ -43,13 +43,14 @@ func (c ClassRef) Matches(k EntityKey) bool {
 
 // Confluence packages observed in a Cloud XML backup.
 const (
-	PkgConfluencePages   = "com.atlassian.confluence.pages"
-	PkgConfluenceSpaces  = "com.atlassian.confluence.spaces"
-	PkgConfluenceCore    = "com.atlassian.confluence.core"
-	PkgConfluenceUser    = "com.atlassian.confluence.user"
-	PkgConfluenceContent = "com.atlassian.confluence.content"
-	PkgConfluenceLabels  = "com.atlassian.confluence.labels"
-	PkgCrowdUser         = "com.atlassian.crowd.model.user"
+	PkgConfluencePages    = "com.atlassian.confluence.pages"
+	PkgConfluenceSpaces   = "com.atlassian.confluence.spaces"
+	PkgConfluenceCore     = "com.atlassian.confluence.core"
+	PkgConfluenceUser     = "com.atlassian.confluence.user"
+	PkgConfluenceContent  = "com.atlassian.confluence.content"
+	PkgConfluenceLabels   = "com.atlassian.confluence.labels"
+	PkgConfluenceSecurity = "com.atlassian.confluence.security"
+	PkgCrowdUser          = "com.atlassian.crowd.model.user"
 )
 
 // The classes this exporter reads. Everything else in the backup is ignored.
@@ -64,6 +65,12 @@ var (
 	ClassContentProperty  = ClassRef{PkgConfluenceContent, "ContentProperty"}
 	ClassLabel            = ClassRef{PkgConfluenceLabels, "Label"}
 	ClassLabelling        = ClassRef{PkgConfluenceLabels, "Labelling"}
+
+	// Page restrictions. A ContentPermissionSet names the page and whether the
+	// restriction is on viewing or editing; its ContentPermission rows each name
+	// either a user or a group.
+	ClassContentPermissionSet = ClassRef{PkgConfluenceSecurity, "ContentPermissionSet"}
+	ClassContentPermission    = ClassRef{PkgConfluenceSecurity, "ContentPermission"}
 
 	// ClassConfluenceUser keys on "key", not "id".
 	ClassConfluenceUser = ClassRef{PkgConfluenceUser, "ConfluenceUserImpl"}

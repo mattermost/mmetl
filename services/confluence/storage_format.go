@@ -277,6 +277,14 @@ func (c *Converter) convertElement(element *storageNode, depth int) (nodes []*Ti
 		nodes, err = c.convertBlocks(element.Children, depth+1)
 		return nodes, true, err
 
+	// Confluence emits ac:link at block level when a link is rendered as a card,
+	// and an emoticon or comment marker can sit alone between paragraphs. They
+	// are inline content wherever they appear, so they are reported as inline
+	// and the caller gathers them into a paragraph. Converting them as blocks
+	// would drop the link and keep only its text.
+	case element.IsConfluence() && isInlineConfluenceElement(name):
+		return nil, false, nil
+
 	case element.IsConfluence():
 		nodes, err = c.convertConfluenceElement(element, depth)
 		return nodes, true, err
@@ -850,6 +858,16 @@ const (
 	sfADFExtension        = "adf-extension"
 )
 
+// isInlineConfluenceElement lists the Confluence elements that are inline
+// content wherever they appear in the document.
+func isInlineConfluenceElement(name string) bool {
+	switch name {
+	case sfLink, sfEmoticon, sfInlineCommentMarker, sfPlaceholder, sfParameter:
+		return true
+	}
+	return false
+}
+
 // isBlockElement reports whether an element becomes block-level output, so a
 // paragraph containing one can be split around it.
 func isBlockElement(node *storageNode) bool {
@@ -858,6 +876,9 @@ func isBlockElement(node *storageNode) bool {
 	}
 	name := node.LocalName()
 	if node.IsConfluence() {
+		if isInlineConfluenceElement(name) {
+			return false
+		}
 		switch name {
 		case sfStructuredMacro, sfTaskList, sfImage, sfADFExtension, sfRichTextBody, sfPlainTextBody:
 			return true

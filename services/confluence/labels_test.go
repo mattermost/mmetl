@@ -110,26 +110,6 @@ func TestSelectLabels(t *testing.T) {
 	})
 }
 
-// TestSelectLabels_ReportsRestrictionsUnverified pins the standing warning. It
-// is emitted on every export, not only when something is found: silence here
-// would read as "this space has no restricted pages" when it actually means
-// "restrictions were never looked for".
-func TestSelectLabels_ReportsRestrictionsUnverified(t *testing.T) {
-	_, selection, _ := labelFixture(t)
-
-	require.Zero(t, selection.RestrictedPagesPreserved)
-
-	var found bool
-	for _, warning := range selection.Warnings {
-		if warning.Code == WarnRestrictionUnverified {
-			found = true
-			require.Equal(t, "26542084", warning.SourceID)
-			require.Contains(t, warning.Message, "Space-level")
-		}
-	}
-	require.True(t, found)
-}
-
 func TestSelectLabels_NoLabels(t *testing.T) {
 	archive := archiveWithEntities(t, `<object class="Page" package="com.atlassian.confluence.pages">
 <id name="id">1</id>
@@ -139,7 +119,7 @@ func TestSelectLabels_NoLabels(t *testing.T) {
 	selection, err := SelectLabels(archive, content, NewUserRefs())
 	require.NoError(t, err)
 	require.Zero(t, selection.LabelsPreserved)
-	require.Len(t, selection.Warnings, 1, "the restriction warning still stands")
+	require.Empty(t, selection.Warnings)
 }
 
 // TestLabelNames pins the flat list the bundle carries. Personal-namespace
@@ -165,6 +145,10 @@ func TestRestrictionsIsEmpty(t *testing.T) {
 	require.True(t, Restrictions{}.IsEmpty())
 	require.False(t, Restrictions{ViewUsers: []string{"a"}}.IsEmpty())
 	require.False(t, Restrictions{EditGroups: []string{"g"}}.IsEmpty())
+
+	require.True(t, SourceRestrictions{}.IsEmpty())
+	require.False(t, SourceRestrictions{ViewUserKeys: []EntityKey{{ID: "a"}}}.IsEmpty())
+	require.False(t, SourceRestrictions{EditGroups: []string{"g"}}.IsEmpty())
 }
 
 // TestSelectLabels_PrivateSample is the E9 gate against a real export. It
@@ -195,12 +179,6 @@ func TestSelectLabels_PrivateSample(t *testing.T) {
 		require.NoErrorf(t, err, "space %s", space.SpaceKey)
 
 		totalLabels += selection.LabelsPreserved
-		require.Zero(t, selection.RestrictedPagesPreserved,
-			"no page restriction may be claimed until a real fixture proves the format")
-
-		for _, page := range content.Pages {
-			require.True(t, page.Restrictions.IsEmpty())
-		}
 	}
 	t.Logf("page labels preserved across all spaces: %d", totalLabels)
 }

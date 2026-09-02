@@ -268,8 +268,52 @@ func (b *bundleBuilder) pageProps(page *Page, ctx *ConversionContext) map[string
 		PropConfluenceAuthorAccountID: b.accountFor(page.CreatorKey, ctx),
 		PropImportLabels:              names,
 		PropConfluenceLabels:          labels,
-		PropConfluenceRestrictions:    map[string]any{},
+		PropConfluenceRestrictions:    restrictionProps(page.SourceRestrictions, ctx),
 	}
+}
+
+// restrictionProps resolves the source restriction into the contract shape,
+// naming users by their canonical account ID.
+//
+// A restricted user who is not in this export is dropped rather than emitted as
+// a raw Confluence key: the importer resolves account IDs only, and a key it
+// cannot resolve would look like a user it simply had not created yet.
+func restrictionProps(source SourceRestrictions, ctx *ConversionContext) map[string]any {
+	if source.IsEmpty() {
+		return map[string]any{}
+	}
+
+	resolved := Restrictions{
+		ViewGroups: source.ViewGroups,
+		EditGroups: source.EditGroups,
+	}
+	for _, key := range source.ViewUserKeys {
+		if account := accountIDFor(key, ctx); account != "" {
+			resolved.ViewUsers = append(resolved.ViewUsers, account)
+		}
+	}
+	for _, key := range source.EditUserKeys {
+		if account := accountIDFor(key, ctx); account != "" {
+			resolved.EditUsers = append(resolved.EditUsers, account)
+		}
+	}
+
+	return map[string]any{
+		"view_users":  toAnySlice(resolved.ViewUsers),
+		"view_groups": toAnySlice(resolved.ViewGroups),
+		"edit_users":  toAnySlice(resolved.EditUsers),
+		"edit_groups": toAnySlice(resolved.EditGroups),
+	}
+}
+
+// toAnySlice returns a non-nil slice, so an absent restriction serializes as []
+// rather than null.
+func toAnySlice(values []string) []any {
+	out := make([]any, 0, len(values))
+	for _, value := range values {
+		out = append(out, value)
+	}
+	return out
 }
 
 func attachmentData(attachment *Attachment) AttachmentData {
@@ -385,6 +429,10 @@ func (b *bundleBuilder) dropSkippedAttachments(deps *DependencySelection, skippe
 // accountFor maps a source user reference onto the canonical account ID the
 // props carry, or "" when the reference names nobody this export knows.
 func (b *bundleBuilder) accountFor(key EntityKey, ctx *ConversionContext) string {
+	return accountIDFor(key, ctx)
+}
+
+func accountIDFor(key EntityKey, ctx *ConversionContext) string {
 	if key.IsZero() || ctx == nil {
 		return ""
 	}
@@ -447,7 +495,6 @@ func (b *bundleBuilder) tallyCounts(
 	b.counts.AttachmentsSkipped = deps.AttachmentsSkipped
 
 	b.counts.LabelsPreserved = labels.LabelsPreserved
-	b.counts.RestrictedPagesPreserved = labels.RestrictedPagesPreserved
 
 	b.counts.UsersEmitted = len(users)
 	for _, user := range users {

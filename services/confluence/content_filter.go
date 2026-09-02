@@ -557,17 +557,6 @@ func SelectLabels(archive *SourceArchive, content *ContentSelection, refs *UserR
 		}
 	}
 
-	// Reported on every export, not only when something is found. A report that
-	// stayed silent here would read as "this space has no restricted pages"
-	// when it actually means "restrictions were never looked for".
-	selection.Warnings = append(selection.Warnings, Warning{
-		Code:       WarnRestrictionUnverified,
-		EntityType: "space",
-		SourceID:   content.SpaceSourceID,
-		Message: "page restrictions were not extracted; Confluence's page-restriction format is " +
-			"unverified against a real export, so access remains Space-level",
-	})
-
 	SortWarnings(selection.Warnings)
 	return selection, nil
 }
@@ -713,4 +702,151 @@ func LabelNames(labels []Label) []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+// ContentPermissionSet and ContentPermission property names.
+const (
+	permissionSetPropType     = "type"
+	permissionSetPropOwning   = "owningContent"
+	permissionSetCollPerms    = "contentPermissions"
+	permissionPropUserSubject = "userSubject"
+	permissionPropGroupName   = "groupName"
+	permissionPropOwningSet   = "owningSet"
+
+	// permissionTypeView and permissionTypeEdit are the two set types
+	// Confluence writes.
+	permissionTypeView = "view"
+	permissionTypeEdit = "edit"
+)
+
+// SelectRestrictions reads the page restrictions of the selected space.
+//
+// Confluence stores a restriction as a ContentPermissionSet naming the page and
+// the kind of restriction, holding ContentPermission rows that each name either
+// a user or a group. Both objects are buffered before being joined, because
+// either can appear first in the stream and a restricted page has only a
+// handful of rows.
+//
+// Restricted users join the user closure: a page restricted to someone is a
+// reference to that person, and the manifest has to be able to name them.
+func SelectRestrictions(archive *SourceArchive, content *ContentSelection, refs *UserRefs) (int, []Warning, error) {
+	entities, err := archive.OpenEntities()
+	if err != nil {
+		return 0, nil, err
+	}
+	defer func() { _ = entities.Close() }()
+
+	decoder := NewObjectDecoder(entities)
+	decoder.SetAccept(func(class ClassRef) bool {
+		return class == ClassContentPermissionSet || class == ClassContentPermission
+	})
+
+	type permissionSet struct {
+		kind   string
+		pageID string
+	}
+
+	sets := map[string]permissionSet{}
+	permissions := map[string][]*RawObject{}
+
+	for {
+		object, err := decoder.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return 0, nil, err
+		}
+
+		switch {
+		case object.Is(ClassContentPermissionSet):
+			owning, ok := object.Reference(permissionSetPropOwning)
+			if !ok || !isContentContainer(owning) {
+				continue
+			}
+			sets[object.Key.ID] = permissionSet{
+				kind:   strings.ToLower(strings.TrimSpace(object.ScalarValue(permissionSetPropType))),
+				pageID: owning.ID,
+			}
+
+		case object.Is(ClassContentPermission):
+			if owningSet, ok := object.Reference(permissionPropOwningSet); ok {
+				permissions[owningSet.ID] = append(permissions[owningSet.ID], object)
+			}
+		}
+	}
+
+	var warnings []Warning
+	restricted := 0
+
+	for _, setID := range sortedKeysOf(sets) {
+		set := sets[setID]
+		page, emitted := content.ByID[set.pageID]
+		if !emitted {
+			continue
+		}
+
+		for _, permission := range permissions[setID] {
+			userKey, hasUser := permission.Reference(permissionPropUserSubject)
+			groupName := strings.TrimSpace(permission.ScalarValue(permissionPropGroupName))
+
+			switch {
+			case hasUser:
+				refs.Add(userKey)
+				switch set.kind {
+				case permissionTypeView:
+					page.SourceRestrictions.ViewUserKeys = append(page.SourceRestrictions.ViewUserKeys, userKey)
+				case permissionTypeEdit:
+					page.SourceRestrictions.EditUserKeys = append(page.SourceRestrictions.EditUserKeys, userKey)
+				}
+
+			case groupName != "":
+				switch set.kind {
+				case permissionTypeView:
+					page.SourceRestrictions.ViewGroups = append(page.SourceRestrictions.ViewGroups, groupName)
+				case permissionTypeEdit:
+					page.SourceRestrictions.EditGroups = append(page.SourceRestrictions.EditGroups, groupName)
+				}
+				// No real group-restricted page has been seen, so a bundle that
+				// carries one says so rather than implying it was verified.
+				warnings = append(warnings, Warning{
+					Code:       WarnRestrictionUnverified,
+					EntityType: "page",
+					SourceID:   page.SourceID,
+					Message: TruncateMessage(fmt.Sprintf(
+						"page is restricted to group %q; group restrictions have not been verified against a real export "+
+							"and are preserved as metadata only", groupName)),
+				})
+			}
+		}
+
+		if set.kind != permissionTypeView && set.kind != permissionTypeEdit {
+			warnings = append(warnings, Warning{
+				Code:       WarnRestrictionUnverified,
+				EntityType: "page",
+				SourceID:   page.SourceID,
+				Message: TruncateMessage(fmt.Sprintf(
+					"page carries a %q restriction, which this exporter does not recognize; it was not preserved", set.kind)),
+			})
+		}
+	}
+
+	for _, page := range content.Pages {
+		page.SourceRestrictions.sort()
+		if !page.SourceRestrictions.IsEmpty() {
+			restricted++
+		}
+	}
+
+	SortWarnings(warnings)
+	return restricted, warnings, nil
+}
+
+func sortedKeysOf[V any](m map[string]V) []string {
+	keys := make([]string, 0, len(m))
+	for key := range m {
+		keys = append(keys, key)
+	}
+	sort.Slice(keys, func(i, j int) bool { return lessNumericThenLexical(keys[i], keys[j]) })
+	return keys
 }

@@ -1,5 +1,7 @@
 package confluence
 
+import "sort"
+
 // Space is one Confluence space in the source backup.
 //
 // SourceID is the numeric Space object ID and is the only identity the bundle
@@ -80,9 +82,9 @@ type Page struct {
 	// Labels are the Confluence labels applied to this page, in a stable order.
 	Labels []Label
 
-	// Restrictions is always empty in this iteration; see the Restrictions doc
-	// comment for why.
-	Restrictions Restrictions
+	// SourceRestrictions are the page's restrictions, with users still named by
+	// their Confluence key.
+	SourceRestrictions SourceRestrictions
 
 	// Children is the output hierarchy, in emission order.
 	Children []*Page
@@ -107,14 +109,12 @@ type Label struct {
 	OwnerKey EntityKey
 }
 
-// Restrictions is the page-restriction shape the contract carries.
+// Restrictions is the page-restriction shape the contract carries. Users are
+// named by their canonical account ID, so the importer never has to resolve a
+// Confluence key.
 //
-// Extraction is unverified: the discovery sample contains no page-restriction
-// object at all, only space-level SpacePermission rows, which this iteration
-// does not import. The type and its plumbing exist so the importer can store
-// restrictions the day a real restricted-page fixture proves how Confluence
-// spells them; until then every export reports the restriction fidelity as
-// unverified and no bundle claims to have found any.
+// It is metadata only. Nothing enforces it, and the report says so: access at
+// the destination remains Space-level.
 type Restrictions struct {
 	ViewUsers  []string `json:"view_users"`
 	ViewGroups []string `json:"view_groups"`
@@ -126,6 +126,37 @@ type Restrictions struct {
 func (r Restrictions) IsEmpty() bool {
 	return len(r.ViewUsers) == 0 && len(r.ViewGroups) == 0 &&
 		len(r.EditUsers) == 0 && len(r.EditGroups) == 0
+}
+
+// SourceRestrictions is a page's restrictions as read from the source, with
+// users still identified by their Confluence key.
+//
+// The keys are resolved to canonical account IDs when props are built, because
+// the user closure is not known until after restrictions have been read: a page
+// restricted to someone is itself a reference to that person.
+type SourceRestrictions struct {
+	ViewUserKeys []EntityKey
+	ViewGroups   []string
+	EditUserKeys []EntityKey
+	EditGroups   []string
+}
+
+// IsEmpty reports whether no restriction was recognized.
+func (r SourceRestrictions) IsEmpty() bool {
+	return len(r.ViewUserKeys) == 0 && len(r.ViewGroups) == 0 &&
+		len(r.EditUserKeys) == 0 && len(r.EditGroups) == 0
+}
+
+// sort orders every list so the same source produces the same page props.
+func (r *SourceRestrictions) sort() {
+	sortEntityKeys(r.ViewUserKeys)
+	sortEntityKeys(r.EditUserKeys)
+	sort.Strings(r.ViewGroups)
+	sort.Strings(r.EditGroups)
+}
+
+func sortEntityKeys(keys []EntityKey) {
+	sort.Slice(keys, func(i, j int) bool { return keys[i].ID < keys[j].ID })
 }
 
 // Label and Labelling property names.

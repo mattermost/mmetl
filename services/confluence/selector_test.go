@@ -225,6 +225,34 @@ func TestResolveSpace(t *testing.T) {
 		require.ErrorContains(t, err, `no space matches "ENG"`)
 	})
 
+	// A personal space key is shown as "~<account id>", so an operator copying
+	// the id out of a URL or a listing naturally leaves the tilde behind.
+	t.Run("a personal space key resolves without its tilde", func(t *testing.T) {
+		personal := []Space{
+			{SourceID: "63864834", SpaceKey: "~5d3eaa4376cb3e0d9d31cf8e", Name: "Guillermo Vaya"},
+			{SourceID: "26542084", SpaceKey: "dkhspace", Name: "dkh-space"},
+		}
+
+		space, err := ResolveSpace(personal, "5d3eaa4376cb3e0d9d31cf8e")
+		require.NoError(t, err)
+		require.Equal(t, "63864834", space.SourceID)
+
+		withTilde, err := ResolveSpace(personal, "~5d3eaa4376cb3e0d9d31cf8e")
+		require.NoError(t, err)
+		require.Equal(t, "63864834", withTilde.SourceID)
+	})
+
+	// The tilde form is tried last, so it can never shadow a real key.
+	t.Run("a real key wins over the tilde form", func(t *testing.T) {
+		collision := []Space{
+			{SourceID: "1", SpaceKey: "eng"},
+			{SourceID: "2", SpaceKey: "~eng"},
+		}
+		space, err := ResolveSpace(collision, "eng")
+		require.NoError(t, err)
+		require.Equal(t, "1", space.SourceID)
+	})
+
 	// A numeric key must not shadow the source-id step for a different space.
 	t.Run("numeric id wins over an identical key", func(t *testing.T) {
 		collision := []Space{

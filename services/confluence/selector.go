@@ -103,6 +103,10 @@ func SortSpaces(spaces []Space) {
 	})
 }
 
+// personalSpaceKeyPrefix is what Confluence puts in front of a personal
+// space's key.
+const personalSpaceKeyPrefix = "~"
+
 // SpaceSelectionError reports that --space named zero or several spaces. It
 // carries the full catalog so the command can print the valid-space table
 // without recataloging.
@@ -140,12 +144,19 @@ func ResolveSpace(spaces []Space, selector string) (Space, error) {
 	}
 
 	folded := strings.ToLower(selector)
+	// A personal space key is the user's account ID with a "~" in front, and it
+	// is shown that way everywhere, so an operator naturally copies the id
+	// without it. Tried last, after every exact form, so it can never take
+	// precedence over a real key or name.
+	tilde := personalSpaceKeyPrefix + folded
+
 	steps := []func(Space) bool{
 		func(s Space) bool { return s.SourceID == selector },
 		func(s Space) bool { return s.SpaceKey == selector },
 		func(s Space) bool { return strings.ToLower(s.SpaceKey) == folded },
 		func(s Space) bool { return s.Name == selector },
 		func(s Space) bool { return strings.ToLower(s.Name) == folded },
+		func(s Space) bool { return strings.ToLower(s.SpaceKey) == tilde },
 	}
 
 	for _, matches := range steps {

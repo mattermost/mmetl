@@ -333,6 +333,40 @@ func TestConvert_ParagraphSplitsAroundBlockContent(t *testing.T) {
 	require.Equal(t, "after", flatten(doc.Content[2]))
 }
 
+// TestConvert_BlockLevelLinkKeepsItsLink is a regression test for a real body.
+//
+// Confluence emits ac:link at block level, outside any paragraph, when a link
+// is rendered as a card (ac:card-appearance="block"). The block-level branch
+// converted it as a container and kept only its text, so the link silently
+// disappeared while an identical inline link a paragraph above it worked.
+func TestConvert_BlockLevelLinkKeepsItsLink(t *testing.T) {
+	doc, warnings := convertWithContext(t,
+		`<p><ac:link ac:card-appearance="inline"><ri:page ri:content-title="Runbook"/>`+
+			`<ac:link-body>inline one</ac:link-body></ac:link></p>`+
+			`<ac:link ac:card-appearance="block"><ri:page ri:content-title="Runbook"/>`+
+			`<ac:link-body>block one</ac:link-body></ac:link>`)
+	require.Empty(t, warnings)
+
+	require.Equal(t, []string{NodeParagraph, NodeParagraph}, blockTypes(doc),
+		"the block-level link is gathered into its own paragraph")
+
+	for i, expected := range []string{"inline one", "block one"} {
+		node := doc.Content[i].Content[0]
+		require.Equal(t, expected, node.Text)
+		require.Equal(t, []string{MarkLink}, markTypes(node), expected)
+		require.Equal(t, "{{CONF_PAGE_ID:101}}", node.Marks[0].Attrs["href"], expected)
+	}
+}
+
+// An emoticon or comment marker can also sit alone between paragraphs.
+func TestConvert_BlockLevelInlineElements(t *testing.T) {
+	doc, _ := convertWithContext(t,
+		`<p>before</p><ac:emoticon ac:emoji-fallback="Y"/><p>after</p>`)
+
+	require.Equal(t, []string{NodeParagraph, NodeParagraph, NodeParagraph}, blockTypes(doc))
+	require.Equal(t, "Y", flatten(doc.Content[1]))
+}
+
 // Section 11 allows exactly three placeholders, and only in typed attributes.
 func TestPlaceholderFormats(t *testing.T) {
 	require.Equal(t, "{{CONF_PAGE_ID:101}}", PagePlaceholder("101"))
