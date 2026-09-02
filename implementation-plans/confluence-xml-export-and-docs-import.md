@@ -142,7 +142,13 @@ These constraints prevent the implementer from guessing around missing infrastru
 7. Import bundles are retained on local disk until the job is terminal. This is why HA is unsupported in the first iteration.
 8. The API rejects new imports when `ClusterSettings.Enable` is true, returning stable error `import_ha_not_supported` with HTTP 501.
 9. No mutation occurs before explicit confirmation. Bundle upload and local-disk staging are not considered Mattermost data mutation.
-10. Page-restriction parser completion is blocked until a real restricted-page XML fixture is available. The contract and importer storage are implemented now; XML extraction remains marked experimental/unverified.
+10. Page-restriction extraction is implemented and verified for the **user**
+    form against a real export (see the second-export record below). The
+    **group** form is still unverified: no export seen so far contains a
+    group-restricted page, so encountering one emits a warning naming the
+    group. Nothing is enforced at the destination either way, and the
+    `page_restrictions` fidelity value stays
+    `restriction_extraction_unverified` until the group form is confirmed.
 
 ---
 
@@ -1690,6 +1696,75 @@ The Docs importer accepts that bundle.
 
 ---
 
+### Second-export record (2026-09-02)
+
+A second daily export was taken with content added specifically to close the
+gaps the first one left: `Confluence-export-sep-02.zip`, exporting space
+`~5d3eaa4376cb3e0d9d31cf8e` (ID 63864834).
+
+#### Page restrictions: format found, extraction implemented
+
+Two classes appear that the first export did not contain at all, which is why
+E9 could only store synthetic restrictions:
+
+```text
+ContentPermissionSet
+  type            "View" | "Edit"
+  owningContent   -> Page
+  contentPermissions -> [ContentPermission]
+
+ContentPermission
+  type            "View" | "Edit"
+  userSubject     -> ConfluenceUserImpl   (absent for a group restriction)
+  groupName       scalar                  (empty for a user restriction)
+  owningSet       -> ContentPermissionSet
+```
+
+This maps directly onto the section 22 shape. Extraction is implemented and
+verified: the real restricted page resolves to one view user and one edit user,
+kept apart. Group restrictions remain unverified, as recorded in constraint 10
+and stop condition 7 above.
+
+#### A bug only real data found
+
+Confluence emits `ac:link` at **block** level, outside any paragraph, when a
+link is rendered as a card (`ac:card-appearance="block"`). The block-level
+branch converted it as a container and kept only its text, so the link vanished
+silently, while an identical inline link one paragraph above it worked. Inline
+Confluence elements are now reported as inline wherever they appear.
+
+#### Confirmed limitation: comment resolution is not exported
+
+The string `resolv` appears **nowhere** in the export, and the new inline
+comment carries only `comment-uuid`, `actualCommentType`, `inline-marker-ref`,
+`inline-comment` and `inline-original-selection`. A Confluence XML backup does
+not carry inline-comment resolution state, so `is_resolved` can never be
+populated from one. This is a source-format limitation, not an open question.
+
+#### Selector usability
+
+A personal space key is displayed as `~<account id>`, so the operator naturally
+supplied the id without the tilde and selection failed. A sixth resolution step
+accepts that form, tried last so it can never shadow a real key or name. This
+extends section 3.4; it cannot introduce ambiguity, because a personal key is
+unique once the prefix is added.
+
+#### Newly covered by real data
+
+Page links (`ri:page`), attachment images (`ri:attachment` inside `ac:image`),
+page labels including a personal-namespace one, a second attachment on a real
+page, blockquotes, ordered lists, underline and strikethrough, a deeper
+hierarchy, and a child page under a restricted parent.
+
+#### Still uncovered
+
+Threaded comment replies, a completed task, an attachment with more than one
+version, an attachment link in body text (`ri:attachment` inside `ac:link`),
+code macros, and the `note`/`warning`/`tip`/`jira`/`children` macros. All are
+covered synthetically; none is verified against a real export.
+
+---
+
 ## I0 — Importer contract/archive inspection
 
 Repository: Docs.
@@ -1865,7 +1940,8 @@ The implementation model MUST stop and ask for a decision when any occurs:
 4. The user does not provide stable `--organization-id` for a transform.
 5. More than one canonical current object exists for one logical content item.
 6. A supported entity exceeds Docs limits and no outcome is specified above.
-7. Real page-restriction XML is required to claim complete extraction.
+7. A **group**-restricted page is required to claim complete restriction
+   extraction. The user form is verified; the group form is not.
 8. Cluster mode is enabled.
 9. Placeholder `.invalid` emails cannot be created under destination policy.
 10. Core APIs require imported users to become team/Space members.
