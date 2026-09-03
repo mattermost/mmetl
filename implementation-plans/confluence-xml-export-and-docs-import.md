@@ -1765,6 +1765,64 @@ covered synthetically; none is verified against a real export.
 
 ---
 
+### Contract alignment with the Docs importer stack (2026-09-03)
+
+The Docs importer has been implemented independently as
+`mattermost-plugin-docs` PRs #30–#36, split out of #18 — whose branch is the
+"Docs read-only reference" this plan names. That stack goes further than I0–I14
+(store, app, worker, HTTP API, and a webapp wizard this plan says not to
+build), so the importer half of this plan is superseded by it and I0–I14 are
+not being implemented here.
+
+Its producer counterpart is mmetl PR #99, the other branch this plan names as a
+read-only reference. That one is CSV-based, which this plan supersedes; the XML
+exporter here is its replacement.
+
+**The two contracts were mutually incompatible.** Both call themselves v2. The
+blocking set was established empirically rather than by reading: a real bundle
+was transformed step by step and fed to that importer's own `Inspect()` until
+accepted, then steps were removed to find the minimum. Five differences
+blocked; four of the nine originally suspected turned out to be tolerated,
+because that importer ignores unknown fields.
+
+Four are resolved on the producer side, per the operator's decision:
+
+| # | Difference | Resolution |
+|---|---|---|
+| 2 | `organization_id` was a URL; the consumer indexes it and requires `[A-Za-z0-9._:@~-]` | producer rejects anything outside that set and names a usable value; never normalizes |
+| 3 | consumer reconciles a four-count summary this plan does not specify | producer derives `spaces`/`pages`/`comments`/`attachments` from the breakdown when a bundle is written |
+| 4 | §3.3 scopes by `(organization_id, space_id)` and forbids space keys; the consumer scopes by space key | producer repeats `space_key` in the stream; `space_id` is still carried as metadata so a rename-safe importer needs no new bundle version |
+| 5 | sentinel payload was `{}`; the consumer cross-checks `team` and `space_import_source_id` | producer fills both, which strengthens truncation detection |
+
+**Deviation from §3.3 recorded explicitly.** Item 4 gives up the rename-safety
+§3.3 exists to protect: if a Confluence space key is renamed and the space
+re-exported, that importer will treat it as a new space and import everything
+again. The immutable numeric ID is still in the bundle, so this is recoverable
+later without a format change, but as things stand the guarantee is gone. This
+was the operator's call, taken with the cost stated.
+
+The fifth difference, `warnings`/`errors` shape, is deliberately **not**
+resolved here. This plan specifies structured issues carrying stable codes, and
+§25 requires that logic never key off human-readable messages; that importer
+declares `[]string`. The producer keeps the structured form and the importer is
+to be adapted.
+
+Verified: a bundle produced by the aligned exporter from the private sample is
+accepted unmodified by that importer's `Inspect()` once, and only once, its
+manifest warnings are flattened — confirming the four fixes are complete and
+the warnings shape is the sole remainder.
+
+#### Accepted but inert in that importer's current release
+
+Specified here, validated by that importer, then ignored: comment thread roots,
+attachment bytes, `confluence_restrictions`, `confluence_labels`, and seven of
+the ten `users[]` fields. They stay specified — a bundle is not weakened
+because one consumer release does not read all of it — but E7's comment
+threading, E12's attachment extraction, and the restriction extraction added on
+2026-09-02 have no destination effect yet.
+
+---
+
 ## I0 — Importer contract/archive inspection
 
 Repository: Docs.

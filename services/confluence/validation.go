@@ -181,9 +181,9 @@ func (v *lineValidator) spaceLine(lineNo int, line Line) error {
 	if err != nil {
 		return fmt.Errorf("line %d: space.props: %w", lineNo, err)
 	}
-	if sourceID != v.source.SpaceID {
-		return fmt.Errorf("line %d: space.props.%s is %q, want source.space_id %q",
-			lineNo, PropImportSourceID, sourceID, v.source.SpaceID)
+	if sourceID != v.source.SpaceKey {
+		return fmt.Errorf("line %d: space.props.%s is %q, want source.space_key %q",
+			lineNo, PropImportSourceID, sourceID, v.source.SpaceKey)
 	}
 	if err := checkPropsSize(fmt.Sprintf("line %d: space.props", lineNo), space.Props); err != nil {
 		return err
@@ -205,9 +205,9 @@ func (v *lineValidator) page(lineNo int, line Line) error {
 	if page.Team != v.space.Team {
 		return fmt.Errorf("line %d: page.team %q differs from space.team %q", lineNo, page.Team, v.space.Team)
 	}
-	if page.SpaceImportSourceID != v.source.SpaceID {
-		return fmt.Errorf("line %d: page.space_import_source_id is %q, want %q",
-			lineNo, page.SpaceImportSourceID, v.source.SpaceID)
+	if page.SpaceImportSourceID != v.source.SpaceKey {
+		return fmt.Errorf("line %d: page.space_import_source_id is %q, want source.space_key %q",
+			lineNo, page.SpaceImportSourceID, v.source.SpaceKey)
 	}
 	if page.User == "" {
 		return fmt.Errorf("line %d: page.user is empty", lineNo)

@@ -129,13 +129,14 @@ func TestValidateLines(t *testing.T) {
 			wantErr: `type "page" is missing its payload`,
 		},
 		{
+			// The stream repeats the space key, and the destination scopes by it.
 			name: "space props source id disagrees with version line",
 			lines: func() []Line {
 				lines := []Line{versionLine(), spaceLine(), sentinelLine()}
 				lines[1].Space.Props[PropImportSourceID] = "999"
 				return lines
 			}(),
-			wantErr: "want source.space_id",
+			wantErr: `want source.space_key "ENG"`,
 		},
 		{
 			name: "page after comment",

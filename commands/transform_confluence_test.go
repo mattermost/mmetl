@@ -175,7 +175,7 @@ func TestTransformConfluenceEndToEnd(t *testing.T) {
 	out, err := runTransformConfluence(t,
 		"--file", export,
 		"--space", "dkhspace",
-		"--organization-id", "https://example.atlassian.net",
+		"--organization-id", "example.atlassian.net",
 		"--team", "Engineering",
 		"--output", output,
 	)
@@ -185,7 +185,7 @@ func TestTransformConfluenceEndToEnd(t *testing.T) {
 	manifest, lines := readBundle(t, output)
 
 	require.Equal(t, "2", manifest.Version)
-	require.Equal(t, "https://example.atlassian.net", manifest.Source.OrganizationID)
+	require.Equal(t, "example.atlassian.net", manifest.Source.OrganizationID)
 	require.Equal(t, "26542084", manifest.Source.SpaceID)
 	require.Equal(t, "dkhspace", manifest.Source.SpaceKey)
 	require.Equal(t, "engineering", manifest.Target.Team, "the team is lowercased, as the other transforms do")
@@ -207,7 +207,7 @@ func TestTransformConfluenceValidateOnly(t *testing.T) {
 	out, err := runTransformConfluence(t,
 		"--file", export,
 		"--space", "dkhspace",
-		"--organization-id", "https://example.atlassian.net",
+		"--organization-id", "example.atlassian.net",
 		"--team", "engineering",
 		"--output", output,
 		"--validate-only",

@@ -72,11 +72,11 @@ mmetl transform confluence --file Confluence-export.zip --list-spaces
 
 # 2. Check a space converts cleanly, writing nothing
 mmetl transform confluence --file Confluence-export.zip --space ENG \
-  --organization-id https://example.atlassian.net --team engineering --validate-only
+  --organization-id example.atlassian.net --team engineering --validate-only
 
 # 3. Produce the bundle
 mmetl transform confluence --file Confluence-export.zip --space ENG \
-  --organization-id https://example.atlassian.net --team engineering
+  --organization-id example.atlassian.net --team engineering
 ```
 
 `--space` accepts the space's numeric source ID, its key, or its name; an
@@ -86,7 +86,12 @@ ambiguous or unknown value fails and prints the valid spaces.
 every export from the same site.** It scopes every source identifier in the
 bundle, so changing it makes a re-export look like a different site: the
 importer will create everything again instead of updating what is already
-there. Any stable string works; the site URL is the obvious choice.
+there.
+
+It may contain only letters, digits and `. _ : @ ~ -`, because the destination
+stores it in an indexed column — pass the site host, `example.atlassian.net`,
+not a URL. A rejected value is never rewritten for you; the error names a
+usable one.
 
 The bundle is self-validating. It is written to a temporary file, checked
 against the same rules the importer applies, and only then moved into place, so

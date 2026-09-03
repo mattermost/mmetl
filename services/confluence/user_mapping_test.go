@@ -59,7 +59,7 @@ const sampleUsers = `<object class="ConfluenceUserImpl" package="com.atlassian.c
 const (
 	testAccountWithEmail = "5d3eaa4376cb3e0d9d31cf8e"
 	testAccountNoEmail   = "712020:a924cd92-1fed-4db6-9012-05a189f295f5"
-	testOrganizationID   = "https://confluence.example.com"
+	testOrganizationID   = "confluence.example.com"
 )
 
 func selectSampleUsers(t *testing.T, mapping *UserMapping) ([]*User, []Warning) {
@@ -134,7 +134,7 @@ func TestPlaceholderEmailIsDeterministicAndScoped(t *testing.T) {
 	refs := NewUserRefs()
 	refs.Add(confluenceUserKey(testAccountNoEmail))
 
-	other, _, err := SelectUsers(archive, "https://other.example.com", refs, NewUserMapping())
+	other, _, err := SelectUsers(archive, "other.example.com", refs, NewUserMapping())
 	require.NoError(t, err)
 	require.NotEqual(t, first[1].Email, other[0].Email, "a different site must not produce the same address")
 }
@@ -443,7 +443,7 @@ func TestCanonicalAccountID(t *testing.T) {
 	hashed := canonicalAccountID(testOrganizationID, empty, "")
 	require.Len(t, hashed, 64)
 	require.Equal(t, hashed, canonicalAccountID(testOrganizationID, empty, ""), "deterministic")
-	require.NotEqual(t, hashed, canonicalAccountID("https://other.example.com", empty, ""),
+	require.NotEqual(t, hashed, canonicalAccountID("other.example.com", empty, ""),
 		"scoped by organization so two sites cannot collide")
 }
 

@@ -5,7 +5,7 @@
   "created_at": "2026-01-01T00:00:00Z",
   "source": {
     "type": "confluence",
-    "organization_id": "https://confluence.example.com",
+    "organization_id": "confluence.example.com",
     "space_id": "196611",
     "space_key": "ENG",
     "space_name": "Engineering",
@@ -33,7 +33,11 @@
     "labels_preserved": 3,
     "restricted_pages_preserved": 1,
     "pages_flattened": 1,
-    "missing_bodies": 1
+    "missing_bodies": 1,
+    "spaces": 1,
+    "pages": 3,
+    "comments": 3,
+    "attachments": 2
   },
   "checksums": {
     "jsonl_sha256": "0000000000000000000000000000000000000000000000000000000000000000",

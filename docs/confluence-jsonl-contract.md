@@ -12,6 +12,35 @@ Nothing in this document may change without changing both implementations, both
 fixture sets, and the implementation plan in the same review. A consumer that
 accepts a bundle this document rejects is a bug, and so is the reverse.
 
+## Alignment with the Docs importer stack
+
+This document was reconciled against the Docs importer in
+`mattermost-plugin-docs` PRs #30–#36, which consumes the same bundle. The
+reconciliation was established empirically: a bundle was transformed step by
+step and fed to that importer's own `Inspect()` until it was accepted, then
+steps were removed to find the minimum.
+
+Five differences blocked acceptance. Four are resolved here, on the producer
+side:
+
+| Difference | Resolution |
+|---|---|
+| `organization_id` charset | producer rejects anything outside `[A-Za-z0-9._:@~-]` |
+| four-count summary | producer emits it alongside the breakdown |
+| space identity in the stream | producer repeats `space_key`, not `space_id` |
+| sentinel payload | producer fills `team` and `space_import_source_id` |
+
+The fifth is `warnings`/`errors`: this document specifies structured objects
+carrying stable codes, and that importer currently declares `[]string`. It is
+left structured deliberately — logic must never key off human-readable text —
+and the importer is to be adapted.
+
+Some fields this document requires are accepted by that importer and then
+ignored in its current release: comment thread roots, attachment bytes,
+`confluence_restrictions`, `confluence_labels`, and seven of the ten
+`users[]` fields. They remain specified here; a bundle is not weakened because
+one consumer release does not yet read all of it.
+
 ## 1. Layout
 
 ```text
@@ -53,11 +82,15 @@ resolve_space_placeholders    exactly one, last line
 ```
 
 A line whose `type` does not match the payload it carries is rejected, as is a
-line carrying no payload at all. `resolve_space_placeholders` is an ordering
-sentinel with an empty payload: it exists so a truncated stream is always
-detectable. A missing or duplicated sentinel is rejected. The importer performs
-placeholder resolution during page execution, once destination mappings exist,
-not when it reads this line.
+line carrying no payload at all. A missing or duplicated
+`resolve_space_placeholders` is rejected.
+
+`resolve_space_placeholders` marks the end of the stream, so a truncated one is
+always detectable. It repeats `team` and `space_import_source_id`, which a
+consumer cross-checks against the manifest; that catches a stream truncated and
+re-terminated as well as one simply cut short. The importer performs placeholder
+resolution during page execution, once destination mappings exist, not when it
+reads this line.
 
 ## 4. Line payloads
 
@@ -69,19 +102,28 @@ rules that are not expressible as a struct:
 * `version` is `2`. No other value is accepted.
 * `source.organization_id`, `source.space_id`, and `source.space_key` are all
   non-empty.
-* `source.space_id` is the numeric source Space **object ID**, never the key.
-  Every source ID in the bundle is interpreted only inside
-  `(organization_id, space_id)`.
+* `source.organization_id` matches `[A-Za-z0-9._:@~-]+` and is at most 1024
+  bytes. The destination stores it in an indexed column, so a site **URL** is
+  not accepted — pass the host, `example.atlassian.net`. It is never
+  normalized, only accepted or rejected: it scopes every source mapping, so
+  rewriting it silently would split one site's history across two identities.
+* `source.space_key` is the identity the destination scopes by, and it is what
+  `space.props.import_source_id` and every page's `space_import_source_id`
+  repeat.
+* `source.space_id` is the immutable numeric Space **object ID**, carried
+  alongside as metadata. A Confluence space key can be renamed and the ID
+  cannot, so an importer that later wants rename-safe reimport has the stable
+  identity available without a new bundle version.
 
 ### space
 
-* `space.props.import_source_id` equals `source.space_id`.
+* `space.props.import_source_id` equals `source.space_key`.
 * `space.title` is non-empty and at most 255 runes.
 * `space.team` is the team every page must also name.
 
 ### page
 
-* `page.space_import_source_id` equals `source.space_id`.
+* `page.space_import_source_id` equals `source.space_key`.
 * `page.team` equals `space.team`.
 * `page.user` is non-empty and appears as a `mattermost_username` in the manifest.
 * `page.title` is non-empty and at most 255 runes.
@@ -149,6 +191,12 @@ See `Manifest` in `services/confluence/contract.go` for the exact shape. Rules:
   destination import. `spaces_emitted`, `pages_emitted`, `blogposts_emitted`,
   `comments_emitted`, `attachments_emitted`, and `users_emitted` must agree
   exactly with the stream.
+* `counts` additionally carries a four-count summary — `spaces`, `pages`,
+  `comments`, `attachments` — derived from the breakdown, because the consumer
+  reconciles against those names. `pages` counts page and blog-post lines
+  together, since a blog post is emitted as a page. The producer derives them
+  at the point a bundle is written, so the summary can never disagree with the
+  breakdown it came from.
 * `users[]` has unique `account_id` and unique `mattermost_username`.
   `username_proposal_source` is one of `explicit_mapping`, `source_username`,
   `source_email`, `source_display_name`, `fallback`.

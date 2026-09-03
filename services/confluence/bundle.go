@@ -193,6 +193,9 @@ func (w *BundleWriter) Finish(manifest *Manifest, lines []Line) error {
 		return err
 	}
 
+	// Derived here, at the single point every bundle is written, so no caller can
+	// produce one whose summary disagrees with its breakdown.
+	manifest.Counts.deriveSummaryCounts()
 	manifest.Checksums = ManifestChecksums{
 		JSONLSHA256:       SHA256Hex(jsonl),
 		AttachmentsSHA256: attachmentsSum,

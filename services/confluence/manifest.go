@@ -146,8 +146,11 @@ func (b *bundleBuilder) emitLines(
 	warnings = append(warnings, commentWarnings...)
 
 	lines = append(lines, Line{
-		Type:                     LineTypeResolveSpacePlaceholders,
-		ResolveSpacePlaceholders: &ResolvePlaceholdersData{},
+		Type: LineTypeResolveSpacePlaceholders,
+		ResolveSpacePlaceholders: &ResolvePlaceholdersData{
+			Team:                b.options.Team,
+			SpaceImportSourceID: b.space.SpaceKey,
+		},
 	})
 
 	b.dropSkippedAttachments(deps, skipped, &warnings)
@@ -159,7 +162,7 @@ func (b *bundleBuilder) spaceData() *SpaceData {
 		Team:  b.options.Team,
 		Title: firstNonEmpty(b.space.Name, b.space.SpaceKey, b.space.SourceID),
 		Props: map[string]any{
-			PropImportSourceID:     b.space.SourceID,
+			PropImportSourceID:     b.space.SpaceKey,
 			PropImportSource:       SourceType,
 			PropConfluenceSpaceKey: b.space.SpaceKey,
 		},
@@ -206,7 +209,7 @@ func (b *bundleBuilder) pageLine(
 	author := usernames[b.accountFor(page.CreatorKey, ctx)]
 	data := &PageData{
 		Team:                 b.options.Team,
-		SpaceImportSourceID:  b.space.SourceID,
+		SpaceImportSourceID:  b.space.SpaceKey,
 		User:                 firstNonEmpty(author, b.fallbackUsername(usernames)),
 		Title:                title,
 		Content:              content,
@@ -505,6 +508,8 @@ func (b *bundleBuilder) tallyCounts(
 			b.counts.UsersPlaceholderEmail++
 		}
 	}
+
+	b.counts.deriveSummaryCounts()
 }
 
 func (b *bundleBuilder) buildManifest(users []*User) *Manifest {

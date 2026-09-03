@@ -5,7 +5,7 @@
   "created_at": "2026-01-01T00:00:00Z",
   "source": {
     "type": "confluence",
-    "organization_id": "https://confluence.example.com",
+    "organization_id": "confluence.example.com",
     "space_id": "196611",
     "space_key": "ENG",
     "space_name": "Engineering",
@@ -33,10 +33,14 @@
     "labels_preserved": 3,
     "restricted_pages_preserved": 1,
     "pages_flattened": 1,
-    "missing_bodies": 1
+    "missing_bodies": 1,
+    "spaces": 1,
+    "pages": 3,
+    "comments": 3,
+    "attachments": 2
   },
   "checksums": {
-    "jsonl_sha256": "31785a280ca43502567da22f383909de8dbca71b122e61d2a568cf9569d45e87",
+    "jsonl_sha256": "05de9c745cd9b82e6eee9c9b1385938d35e434300c3f1cb025dcbf48677a5d1c",
     "attachments_sha256": "f624210e620ea766537447305205b88f7add08b66fc89a6a17aff672f6b2dbed"
   },
   "users": [

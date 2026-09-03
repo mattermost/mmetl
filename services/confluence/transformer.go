@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -80,11 +81,19 @@ func (o *TransformOptions) ValidateOptions() error {
 	return nil
 }
 
-// ValidateOrganizationID enforces the section 3.3 rules.
+// organizationIDPattern is the character set the Docs importer accepts for an
+// external identifier. It is enforced here so an unusable value is rejected at
+// the flag, naming the fix, rather than at import time.
+var organizationIDPattern = regexp.MustCompile(`^[A-Za-z0-9._:@~-]+$`)
+
+// ValidateOrganizationID enforces the section 3.3 rules, narrowed to the
+// character set the destination can index.
 //
-// The value is preserved exactly, including case and any trailing path, because
-// it is the scope of every source mapping: normalizing it here would silently
-// split one site's history across two identities.
+// The value is never normalized, only accepted or rejected: it is the scope of
+// every source mapping, so silently rewriting it would split one site's history
+// across two identities. A site URL is the natural thing to reach for and is not
+// accepted, because the destination stores this in an indexed column; the error
+// says what to pass instead.
 func ValidateOrganizationID(raw string) error {
 	trimmed := strings.TrimSpace(raw)
 	switch {
@@ -96,8 +105,36 @@ func ValidateOrganizationID(raw string) error {
 		return fmt.Errorf("--organization-id is %d bytes, over the %d byte limit", len(trimmed), OrganizationIDMaxBytes)
 	case !utf8.ValidString(trimmed):
 		return errors.New("--organization-id must be valid UTF-8")
+	case !organizationIDPattern.MatchString(trimmed):
+		return fmt.Errorf("--organization-id %q may only contain letters, digits and . _ : @ ~ -; "+
+			"pass the site host such as %q rather than a URL", trimmed, suggestOrganizationID(trimmed))
 	}
 	return nil
+}
+
+// suggestOrganizationID turns a rejected value into the nearest acceptable one,
+// so the error can show the operator what to pass. It feeds the message only;
+// nothing is normalized behind their back.
+func suggestOrganizationID(raw string) string {
+	suggestion := raw
+	if _, after, found := strings.Cut(suggestion, "://"); found {
+		suggestion = after
+	}
+	suggestion = strings.ReplaceAll(strings.Trim(suggestion, "/"), "/", ".")
+
+	var b strings.Builder
+	for _, r := range suggestion {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+		case strings.ContainsRune("._:@~-", r):
+			b.WriteRune(r)
+		}
+	}
+	if b.Len() == 0 {
+		return "example.atlassian.net"
+	}
+	return b.String()
 }
 
 // DefaultOutputPath is the bundle name used when --output is not given.

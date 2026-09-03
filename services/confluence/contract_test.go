@@ -32,7 +32,7 @@ var fixtureClock = time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC)
 
 const (
 	fixtureGeneratorVersion = "0.0.0-fixture"
-	fixtureOrganizationID   = "https://confluence.example.com"
+	fixtureOrganizationID   = "confluence.example.com"
 	fixtureSpaceID          = "196611"
 	fixtureSpaceKey         = "ENG"
 	fixtureSpaceName        = "Engineering"
@@ -95,6 +95,9 @@ func (b *fixtureBundle) render(t *testing.T) map[string][]byte {
 	require.NoError(t, err)
 
 	manifest := b.manifest
+	// Derived rather than restated in every builder, exactly as the real
+	// producer does it.
+	manifest.Counts.deriveSummaryCounts()
 	manifest.Checksums = ManifestChecksums{
 		JSONLSHA256:       SHA256Hex(jsonl.Bytes()),
 		AttachmentsSHA256: attachmentsSum,
@@ -131,7 +134,7 @@ func minimalBundle() *fixtureBundle {
 					Team:  fixtureTeam,
 					Title: fixtureSpaceName,
 					Props: map[string]any{
-						PropImportSourceID:     fixtureSpaceID,
+						PropImportSourceID:     fixtureSpaceKey,
 						PropImportSource:       SourceType,
 						PropConfluenceSpaceKey: fixtureSpaceKey,
 					},
@@ -141,7 +144,7 @@ func minimalBundle() *fixtureBundle {
 				Type: LineTypePage,
 				Page: &PageData{
 					Team:                fixtureTeam,
-					SpaceImportSourceID: fixtureSpaceID,
+					SpaceImportSourceID: fixtureSpaceKey,
 					User:                "aline.turner",
 					Title:               "Engineering Home",
 					Content:             EmptyDocumentJSON,
@@ -159,7 +162,13 @@ func minimalBundle() *fixtureBundle {
 					},
 				},
 			},
-			{Type: LineTypeResolveSpacePlaceholders, ResolveSpacePlaceholders: &ResolvePlaceholdersData{}},
+			{
+				Type: LineTypeResolveSpacePlaceholders,
+				ResolveSpacePlaceholders: &ResolvePlaceholdersData{
+					Team:                fixtureTeam,
+					SpaceImportSourceID: fixtureSpaceKey,
+				},
+			},
 		},
 		manifest: Manifest{
 			Version:          ManifestVersion,
@@ -257,7 +266,7 @@ func fullBundle() *fixtureBundle {
 					Title:       fixtureSpaceName,
 					Description: "Engineering handbooks, runbooks, and release notes.",
 					Props: map[string]any{
-						PropImportSourceID:      fixtureSpaceID,
+						PropImportSourceID:      fixtureSpaceKey,
 						PropImportSource:        SourceType,
 						PropConfluenceSpaceKey:  fixtureSpaceKey,
 						"confluence_space_name": fixtureSpaceName,
@@ -268,7 +277,7 @@ func fullBundle() *fixtureBundle {
 				Type: LineTypePage,
 				Page: &PageData{
 					Team:                fixtureTeam,
-					SpaceImportSourceID: fixtureSpaceID,
+					SpaceImportSourceID: fixtureSpaceKey,
 					User:                "aline.turner",
 					Title:               "Engineering Home",
 					Content:             homeContent,
@@ -318,7 +327,7 @@ func fullBundle() *fixtureBundle {
 				Type: LineTypePage,
 				Page: &PageData{
 					Team:                 fixtureTeam,
-					SpaceImportSourceID:  fixtureSpaceID,
+					SpaceImportSourceID:  fixtureSpaceKey,
 					User:                 "bram.okonkwo",
 					Title:                "Incident Runbook",
 					Content:              childContent,
@@ -351,7 +360,7 @@ func fullBundle() *fixtureBundle {
 				Type: LineTypePage,
 				Page: &PageData{
 					Team:                fixtureTeam,
-					SpaceImportSourceID: fixtureSpaceID,
+					SpaceImportSourceID: fixtureSpaceKey,
 					User:                "confluence_user_9f86d081884c",
 					Title:               "Q1 Engineering Update",
 					Content:             blogContent,
@@ -419,7 +428,13 @@ func fullBundle() *fixtureBundle {
 					},
 				},
 			},
-			{Type: LineTypeResolveSpacePlaceholders, ResolveSpacePlaceholders: &ResolvePlaceholdersData{}},
+			{
+				Type: LineTypeResolveSpacePlaceholders,
+				ResolveSpacePlaceholders: &ResolvePlaceholdersData{
+					Team:                fixtureTeam,
+					SpaceImportSourceID: fixtureSpaceKey,
+				},
+			},
 		},
 		manifest: Manifest{
 			Version:          ManifestVersion,

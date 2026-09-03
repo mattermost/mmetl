@@ -165,7 +165,14 @@ type Line struct {
 }
 
 // Source identifies the Confluence namespace every source ID in the bundle is
-// scoped to. SpaceID is the numeric source Space object ID, never the key.
+// scoped to.
+//
+// SpaceKey is the identity the destination scopes by, and it is what
+// space.props.import_source_id and every page's space_import_source_id repeat.
+// SpaceID is the immutable numeric Space object ID, carried alongside it as
+// metadata: a Confluence space key can be renamed and the ID cannot, so an
+// importer that later wants rename-safe reimport has the stable identity
+// available without a new bundle version.
 type Source struct {
 	OrganizationID string `json:"organization_id"`
 	SpaceID        string `json:"space_id"`
@@ -182,7 +189,8 @@ type SpaceData struct {
 
 // PageData describes one destination Docs page. Pages appear parent-first.
 type PageData struct {
-	Team                 string           `json:"team"`
+	Team string `json:"team"`
+	// SpaceImportSourceID repeats Source.SpaceKey.
 	SpaceImportSourceID  string           `json:"space_import_source_id"`
 	User                 string           `json:"user"`
 	Title                string           `json:"title"`
@@ -215,11 +223,17 @@ type PageCommentData struct {
 	Props                       map[string]any `json:"props"`
 }
 
-// ResolvePlaceholdersData is the payload of the trailing ordering sentinel. It
-// carries no fields: the importer resolves placeholders during page execution,
-// once destination mappings exist. The sentinel exists so a truncated stream is
-// always detectable.
-type ResolvePlaceholdersData struct{}
+// ResolvePlaceholdersData is the payload of the trailing ordering sentinel.
+//
+// Placeholder resolution itself happens during page execution, once destination
+// mappings exist; this line only marks the end of the stream. It repeats the
+// team and the source space so a consumer can cross-check them against the
+// manifest, which catches a stream truncated and re-terminated as well as one
+// simply cut short.
+type ResolvePlaceholdersData struct {
+	Team                string `json:"team"`
+	SpaceImportSourceID string `json:"space_import_source_id"`
+}
 
 // Manifest is import-manifest.json.
 type Manifest struct {
@@ -275,6 +289,27 @@ type ManifestCounts struct {
 	RestrictedPagesPreserved int `json:"restricted_pages_preserved"`
 	PagesFlattened           int `json:"pages_flattened"`
 	MissingBodies            int `json:"missing_bodies"`
+
+	// The four-count summary the Docs importer reconciles against the stream it
+	// parsed. It is redundant with the breakdown above and derived from it, but
+	// the importer reads these names and nothing else, so a bundle that omits
+	// them is rejected for declaring zero pages.
+	//
+	// Pages counts page and blog-post lines together, because a blog post is
+	// emitted as a page.
+	Spaces      int `json:"spaces"`
+	Pages       int `json:"pages"`
+	Comments    int `json:"comments"`
+	Attachments int `json:"attachments"`
+}
+
+// deriveSummaryCounts fills the four-count summary from the breakdown, so the
+// two can never disagree.
+func (c *ManifestCounts) deriveSummaryCounts() {
+	c.Spaces = c.SpacesEmitted
+	c.Pages = c.PagesEmitted + c.BlogPostsEmitted
+	c.Comments = c.CommentsEmitted
+	c.Attachments = c.AttachmentsEmitted
 }
 
 // ManifestChecksums pins the exact bundle payload bytes.
