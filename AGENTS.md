@@ -14,8 +14,9 @@ Pipeline is **Parse → Transform → Export** around a source-agnostic core:
   `rocketchat`, `slack_grid`).
 - `services/intermediate/` — the source-agnostic core. `types.go` defines the
   `Intermediate` model; `export.go` defines `Exporter`, which emits the JSONL;
-  `report.go` / `reasons.go` / `report_markdown.go` define the transform report
-  that `Exporter` carries.
+  `metadata.go` is the shared `Info` model for the version line, JSON report,
+  and Markdown `## Run` / `## Produced` tables; `report.go` / `reasons.go` /
+  `report_markdown.go` define the transform report that `Exporter` carries.
   **Each provider's `Transformer` embeds `intermediate.Exporter`** — so adding a
   provider means writing a parser + transformer that fill the Intermediate
   model; the export side is shared.
