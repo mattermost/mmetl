@@ -94,7 +94,11 @@ func transformRocketChatCmdF(cmd *cobra.Command, args []string) error {
 	}
 
 	transformer := rocketchat.NewTransformer(team, logger)
-	if err = transformer.Transform(parsed, skipAttachments, skipEmptyEmails, defaultEmailDomain, guestHandling); err != nil && !dryRun {
+	if err = transformer.Transform(parsed, skipAttachments, skipEmptyEmails, defaultEmailDomain, guestHandling); err != nil {
+		if dryRun {
+			transformer.Logger.Error(err)
+			return errors.New(dryRunFailedMsg)
+		}
 		return err
 	}
 
