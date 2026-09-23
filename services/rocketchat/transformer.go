@@ -113,7 +113,9 @@ func (t *Transformer) Transform(parsed *ParsedData, skipAttachments bool, skipEm
 	// Guests are exported with Mattermost guest roles only in "guest" mode.
 	t.EmitGuestRoles = guestHandling == GuestHandlingGuest
 
-	t.transformUsers(parsed.Users, skipEmptyEmails, defaultEmailDomain, guestHandling)
+	if err := t.transformUsers(parsed.Users, skipEmptyEmails, defaultEmailDomain, guestHandling); err != nil {
+		return err
+	}
 	t.transformChannels(parsed.Rooms)
 	t.transformSubscriptions(parsed.Subscriptions)
 	// Must run after transformSubscriptions, which is what populates
@@ -135,7 +137,7 @@ func (t *Transformer) Transform(parsed *ParsedData, skipAttachments bool, skipEm
 
 // transformUsers converts RocketChatUser records into IntermediateUser records
 // and stores them in Intermediate.UsersById keyed by RC _id.
-func (t *Transformer) transformUsers(users []RocketChatUser, skipEmptyEmails bool, defaultEmailDomain string, guestHandling string) {
+func (t *Transformer) transformUsers(users []RocketChatUser, skipEmptyEmails bool, defaultEmailDomain string, guestHandling string) error {
 	t.Logger.Info("Transforming users")
 
 	result := make(map[string]*intermediate.IntermediateUser, len(users))
@@ -200,7 +202,7 @@ func (t *Transformer) transformUsers(users []RocketChatUser, skipEmptyEmails boo
 
 		if !newUser.IsBot {
 			if err := newUser.Sanitise(t.Logger, defaultEmailDomain, skipEmptyEmails); err != nil {
-				t.RecordError(err)
+				return err
 			}
 		}
 		result[newUser.Id] = newUser
@@ -235,6 +237,7 @@ func (t *Transformer) transformUsers(users []RocketChatUser, skipEmptyEmails boo
 	}
 
 	t.Logger.Infof("Transformed %d users", len(result))
+	return nil
 }
 
 // dropSkippedMembers returns the given parallel uid/username slices with any

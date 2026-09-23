@@ -418,7 +418,61 @@ func TestTransformBigGroupChannels(t *testing.T) {
 		assert.Equal(t, fmt.Sprintf("purpose%d", i+1), result[i].Purpose)
 		assert.Equal(t, fmt.Sprintf("topic%d", i+1), result[i].Header)
 		assert.Equal(t, model.ChannelTypePrivate, result[i].Type)
+		if bigGroupChannels[i].Name != "" {
+			assert.Equal(t, bigGroupChannels[i].Name, result[i].OriginalName,
+				"posts are keyed by the Slack folder name, not the purpose overwrite")
+		} else {
+			assert.Equal(t, bigGroupChannels[i].Id, result[i].OriginalName)
+		}
 	}
+}
+
+func TestOversizedMPIMKeepsOriginalNameAndReceivesPosts(t *testing.T) {
+	tr := NewTransformer("test", log.New())
+	members := make([]string, model.ChannelGroupMaxUsers+1)
+	users := map[string]*IntermediateUser{}
+	for i := range members {
+		id := fmt.Sprintf("u%d", i)
+		members[i] = id
+		users[id] = &IntermediateUser{Id: id, Username: id, Email: id + "@ex.com"}
+	}
+	tr.Intermediate.UsersById = users
+
+	const slackName = "mpdm-alice--bob--charlie-1"
+	channels := tr.TransformChannels([]SlackChannel{{
+		Id:      "G999",
+		Name:    slackName,
+		Members: members,
+		Purpose: SlackChannelSub{Value: "oversized-mpim-purpose"},
+		Type:    model.ChannelTypeGroup,
+	}})
+
+	require.Len(t, channels, 1)
+	assert.Equal(t, slackName, channels[0].OriginalName)
+	assert.Equal(t, model.ChannelTypePrivate, channels[0].Type)
+
+	tr.Intermediate.PrivateChannels = channels
+	require.NoError(t, tr.TransformPosts(&SlackExport{
+		Posts: map[string][]SlackPost{
+			slackName: {{User: members[0], Text: "hello from oversized mpim", TimeStamp: "1704067200.000100", Type: "message"}},
+		},
+	}, "", true, false, false))
+
+	require.Len(t, tr.Intermediate.Posts, 1, "a regression here drops every post as channel_not_found")
+	assert.Equal(t, "hello from oversized mpim", tr.Intermediate.Posts[0].Message)
+}
+
+func TestAddFilesToPostSkipsNamelessLegacyFile(t *testing.T) {
+	tr := NewTransformer("test", log.New())
+	post := &SlackPost{
+		File:  &SlackFile{Id: "F1", Name: ""},
+		Files: []*SlackFile{{Id: "F2", Name: "kept.png"}},
+	}
+	out := &IntermediatePost{}
+
+	tr.AddFilesToPost(post, false, &SlackExport{}, t.TempDir(), out, false)
+
+	assert.Empty(t, out.Attachments, "legacy file wins and has no name: nothing to attach")
 }
 
 func TestTransformRegularGroupChannels(t *testing.T) {
@@ -746,7 +800,7 @@ func TestTransformUsers(t *testing.T) {
 
 	defaultEmailDomain := ""
 	skipEmptyEmails := false
-	slackTransformer.TransformUsers(users, skipEmptyEmails, defaultEmailDomain, GuestHandlingGuest)
+	require.NoError(t, slackTransformer.TransformUsers(users, skipEmptyEmails, defaultEmailDomain, GuestHandlingGuest))
 	require.Len(t, slackTransformer.Intermediate.UsersById, len(users))
 
 	for i, id := range []string{id1, id2, id3} {
@@ -810,7 +864,7 @@ func TestTransformUsersGuests(t *testing.T) {
 
 	t.Run("guest-handling=guest flags guests but does not drop them", func(t *testing.T) {
 		slackTransformer := NewTransformer("test", log.New())
-		slackTransformer.TransformUsers(guestUsers(), false, "", GuestHandlingGuest)
+		require.NoError(t, slackTransformer.TransformUsers(guestUsers(), false, "", GuestHandlingGuest))
 
 		require.Len(t, slackTransformer.Intermediate.UsersById, 4)
 		assert.True(t, slackTransformer.Intermediate.UsersById[multiChannelGuestId].IsGuest)
@@ -821,7 +875,7 @@ func TestTransformUsersGuests(t *testing.T) {
 
 	t.Run("guest-handling=user flags guests but does not drop them", func(t *testing.T) {
 		slackTransformer := NewTransformer("test", log.New())
-		slackTransformer.TransformUsers(guestUsers(), false, "", GuestHandlingUser)
+		require.NoError(t, slackTransformer.TransformUsers(guestUsers(), false, "", GuestHandlingUser))
 
 		require.Len(t, slackTransformer.Intermediate.UsersById, 4)
 		// IsGuest reflects detection regardless of mode; the export mode
@@ -832,7 +886,7 @@ func TestTransformUsersGuests(t *testing.T) {
 
 	t.Run("guest-handling=skip drops guests entirely", func(t *testing.T) {
 		slackTransformer := NewTransformer("test", log.New())
-		slackTransformer.TransformUsers(guestUsers(), false, "", GuestHandlingSkip)
+		require.NoError(t, slackTransformer.TransformUsers(guestUsers(), false, "", GuestHandlingSkip))
 
 		require.Len(t, slackTransformer.Intermediate.UsersById, 2)
 		assert.Nil(t, slackTransformer.Intermediate.UsersById[multiChannelGuestId])
@@ -1035,7 +1089,7 @@ func TestDeleteAt(t *testing.T) {
 
 	defaultEmailDomain := ""
 	skipEmptyEmails := false
-	slackTransformer.TransformUsers(users, skipEmptyEmails, defaultEmailDomain, GuestHandlingGuest)
+	require.NoError(t, slackTransformer.TransformUsers(users, skipEmptyEmails, defaultEmailDomain, GuestHandlingGuest))
 	require.Zero(t, slackTransformer.Intermediate.UsersById[activeUsers[0].Id].DeleteAt)
 	require.Zero(t, slackTransformer.Intermediate.UsersById[activeUsers[1].Id].DeleteAt)
 	require.NotZero(t, slackTransformer.Intermediate.UsersById[inactiveUsers[0].Id].DeleteAt)
@@ -1839,7 +1893,7 @@ func TestTransformBotUsers(t *testing.T) {
 			},
 		}
 
-		slackTransformer.TransformUsers(users, false, "", GuestHandlingGuest)
+		require.NoError(t, slackTransformer.TransformUsers(users, false, "", GuestHandlingGuest))
 
 		// Regular user
 		regularUser := slackTransformer.Intermediate.UsersById["U001"]
@@ -1874,7 +1928,7 @@ func TestTransformBotUsers(t *testing.T) {
 
 		// This should NOT panic or exit even though the bot has no email
 		// and no --default-email-domain or --skip-empty-emails is set
-		slackTransformer.TransformUsers(users, false, "", GuestHandlingGuest)
+		require.NoError(t, slackTransformer.TransformUsers(users, false, "", GuestHandlingGuest))
 
 		botUser := slackTransformer.Intermediate.UsersById["B001"]
 		require.NotNil(t, botUser)
@@ -1897,7 +1951,7 @@ func TestTransformBotUsers(t *testing.T) {
 			},
 		}
 
-		slackTransformer.TransformUsers(users, false, "", GuestHandlingGuest)
+		require.NoError(t, slackTransformer.TransformUsers(users, false, "", GuestHandlingGuest))
 
 		botUser := slackTransformer.Intermediate.UsersById["B002"]
 		require.NotNil(t, botUser)
@@ -1919,7 +1973,7 @@ func TestTransformBotUsers(t *testing.T) {
 			},
 		}
 
-		slackTransformer.TransformUsers(users, false, "", GuestHandlingGuest)
+		require.NoError(t, slackTransformer.TransformUsers(users, false, "", GuestHandlingGuest))
 
 		// Should be stored under user ID, not empty string
 		botUser := slackTransformer.Intermediate.UsersById["U003"]

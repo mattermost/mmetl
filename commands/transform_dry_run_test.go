@@ -171,6 +171,19 @@ func TestTransformSlackDryRun(t *testing.T) {
 		assert.Contains(t, err.Error(), "does not have an email address")
 	})
 
+	t.Run("rejects an empty export zip", func(t *testing.T) {
+		dir := testhelper.WorkDir(t)
+		path := filepath.Join(dir, "empty.zip")
+		output := filepath.Join(dir, "out.jsonl")
+		writeZip(t, path, map[string]string{})
+
+		err := runTransformSlack(t, "--team", "testteam", "--file", path, "--output", output, "--skip-attachments")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "contains no files")
+		_, statErr := os.Stat(output)
+		assert.True(t, os.IsNotExist(statErr), "empty zip must not write an import file")
+	})
+
 	t.Run("fails when an attachment is missing from the zip", func(t *testing.T) {
 		path := missingAttachmentExport(t)
 		err := runTransformSlack(t, "--dry-run", "--team", "testteam", "--file", path)
