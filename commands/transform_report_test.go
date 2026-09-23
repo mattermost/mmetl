@@ -1,6 +1,7 @@
 package commands_test
 
 import (
+	"archive/zip"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/mattermost/mattermost/server/v8/channels/app/imports"
 	"github.com/mattermost/mmetl/commands"
 	"github.com/mattermost/mmetl/services/intermediate"
 	"github.com/mattermost/mmetl/services/slack"
@@ -91,15 +93,52 @@ func TestTransformReportContents(t *testing.T) {
 		var report transformReport
 		require.NoError(t, json.Unmarshal(raw, &report))
 
-		assert.Equal(t, "slack", report.Metadata.Provider)
-		assert.Equal(t, "myteam", report.Metadata.Team)
-		assert.Equal(t, outputPath, report.Metadata.Output)
+		assert.Equal(t, "mmetl", report.Metadata.Generator)
+		require.NotNil(t, report.Metadata.Additional)
+		assert.Equal(t, "slack", report.Metadata.Additional.Source.Platform)
+		assert.Equal(t, "myteam", report.Metadata.Additional.Target.Team)
+		assert.Equal(t, filepath.Base(outputPath), report.Metadata.Additional.Target.Output)
 		assert.Empty(t, report.Error)
 
 		assert.ElementsMatch(t, []string{"multi.guest", "single.guest"},
 			report.skippedNames("user", "guest_skip_mode"))
 		assert.Equal(t, 1, report.Entities["user"].Transformed)
 		assert.Equal(t, 2, report.Entities["user"].Skipped)
+	})
+
+	t.Run("line 1 of the import file carries the same metadata", func(t *testing.T) {
+		report := readTransformReport(t, outputPath, "# Slack Transform Report")
+
+		raw, err := os.ReadFile(outputPath)
+		require.NoError(t, err)
+
+		firstLine, _, found := strings.Cut(string(raw), "\n")
+		require.True(t, found, "the bulk import file must have more than the version line")
+
+		var line imports.LineImportData
+		require.NoError(t, json.Unmarshal([]byte(strings.TrimRight(firstLine, " ")), &line))
+
+		assert.Equal(t, "version", line.Type)
+		require.NotNil(t, line.Version)
+		assert.Equal(t, 1, *line.Version)
+		require.NotNil(t, line.Info)
+		assert.Equal(t, report.Metadata.Generator, line.Info.Generator)
+		assert.Equal(t, report.Metadata.Version, line.Info.Version)
+
+		var additional intermediate.Additional
+		require.NoError(t, json.Unmarshal(line.Info.Additional, &additional))
+		require.NotNil(t, report.Metadata.Additional)
+		assert.Equal(t, report.Metadata.Additional.Source, additional.Source)
+		assert.Equal(t, report.Metadata.Additional.Target, additional.Target)
+		assert.Equal(t, report.Metadata.Additional.Run.Command, additional.Run.Command)
+		assert.Equal(t, report.Metadata.Additional.Counts, additional.Counts)
+		assert.Positive(t, additional.Source.SizeBytes, "the export's size is recorded")
+		assert.Positive(t, additional.Counts.Users, "a run that produced users must say so")
+		assert.Positive(t, additional.Counts.PublicChannels)
+
+		// The import file gets shipped to a server, so it must not carry the
+		// operator's filesystem layout. --file is an absolute temp path here.
+		assert.NotContains(t, firstLine, string(os.PathSeparator))
 	})
 
 	t.Run("two runs of the same export produce identical reports", func(t *testing.T) {
@@ -147,6 +186,40 @@ func TestTransformReportWrittenOnFailure(t *testing.T) {
 
 	// The work done before the failure is still accounted for.
 	assert.NotEmpty(t, report.skippedNames("user", "guest_skip_mode"))
+}
+
+// TestTransformRejectsEmptySlackExport covers the reason the zip is checked for
+// files after it opens: a valid empty archive has a non-nil, zero-length File
+// slice, and used to exit 0 with no import file and no explanation.
+func TestTransformRejectsEmptySlackExport(t *testing.T) {
+	dir := t.TempDir()
+	zipPath := filepath.Join(dir, "empty.zip")
+	outputPath := filepath.Join(dir, "mm_export.jsonl")
+
+	f, err := os.Create(zipPath)
+	require.NoError(t, err)
+	w := zip.NewWriter(f)
+	require.NoError(t, w.Close())
+	require.NoError(t, f.Close())
+
+	c := commands.RootCmd
+	resetCobraFlags(c)
+	c.SetArgs([]string{
+		"transform", "slack",
+		"--team", "myteam",
+		"--file", zipPath,
+		"--output", outputPath,
+		"--skip-attachments",
+	})
+	err = c.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "contains no files")
+	assert.NoFileExists(t, outputPath)
+
+	raw, readErr := os.ReadFile(filepath.Join(dir, intermediate.ReportMarkdownFilename))
+	require.NoError(t, readErr, "an empty archive must still leave a report")
+	assert.Contains(t, string(raw), "## Stopped because of an error")
+	assert.Contains(t, string(raw), "contains no files")
 }
 
 // TestTransformReportWrittenWhenInputUnreadable covers the failures that happen
