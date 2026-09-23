@@ -251,7 +251,7 @@ func newTransformLogger(dir, provider string, debug, dryRun bool) (*log.Logger, 
 
 	logger := log.New()
 	if dryRun {
-		logger.SetOutput(os.Stdout)
+		logger.SetOutput(io.MultiWriter(os.Stdout, logFile))
 		logger.SetFormatter(&log.TextFormatter{ForceColors: true})
 	} else {
 		logger.SetOutput(logFile)
