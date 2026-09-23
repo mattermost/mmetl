@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/mattermost/mattermost/server/public/model"
@@ -43,10 +44,10 @@ type Transformer struct {
 	skippedUserIDs   map[string]bool
 	skippedUsernames map[string]bool
 
-	// droppedPostRefs / droppedMembershipRefs count references removed because
-	// they pointed at a skipped user, for the end-of-transform summary log.
-	droppedPostRefs       int
-	droppedMembershipRefs int
+	// skippedUsernameByID maps a skipped user ID to the username it had, so the
+	// report can still name the user behind a dropped membership or post after
+	// the IntermediateUser is gone.
+	skippedUsernameByID map[string]string
 }
 
 // Guest handling modes for the --guest-handling flag.
@@ -95,6 +96,7 @@ func NewTransformer(teamName string, logger log.FieldLogger) *Transformer {
 			TeamName:     teamName,
 			Intermediate: &intermediate.Intermediate{},
 			Logger:       logger,
+			Report:       intermediate.NewReport(logger),
 		},
 		skippedRoomIDs:        make(map[string]bool),
 		roomIDToChannelName:   make(map[string]string),
@@ -103,6 +105,7 @@ func NewTransformer(teamName string, logger log.FieldLogger) *Transformer {
 		knownChannels:         make(map[string]string),
 		skippedUserIDs:        make(map[string]bool),
 		skippedUsernames:      make(map[string]bool),
+		skippedUsernameByID:   make(map[string]string),
 	}
 }
 
@@ -127,12 +130,7 @@ func (t *Transformer) Transform(parsed *ParsedData, skipAttachments bool, skipEm
 	}
 	t.transformMessages(parsed.Messages, uploadsForTransform)
 
-	if t.droppedPostRefs > 0 || t.droppedMembershipRefs > 0 {
-		t.Logger.Infof("Dropped %d posts and %d channel/DM memberships referencing skipped users",
-			t.droppedPostRefs, t.droppedMembershipRefs)
-	}
-
-	return t.Err()
+	return nil
 }
 
 // transformUsers converts RocketChatUser records into IntermediateUser records
@@ -140,13 +138,23 @@ func (t *Transformer) Transform(parsed *ParsedData, skipAttachments bool, skipEm
 func (t *Transformer) transformUsers(users []RocketChatUser, skipEmptyEmails bool, defaultEmailDomain string, guestHandling string) error {
 	t.Logger.Info("Transforming users")
 
+	// Count the source accounts once, split by the report kind each will land
+	// under. Accounts of an unsupported type are counted as users, which is what
+	// they are skipped as below.
+	sourceBots := 0
+	for _, u := range users {
+		if u.Type == "bot" {
+			sourceBots++
+		}
+	}
+	t.Report.Bots().Seen(sourceBots)
+	t.Report.Users().Seen(len(users) - sourceBots)
+
 	result := make(map[string]*intermediate.IntermediateUser, len(users))
-	// unsupportedByType counts users dropped because their RC type is neither
-	// "user" nor "bot" (e.g. "app", "unknown", or empty), broken down by type
-	// for the summary log.
-	unsupportedByType := make(map[string]int)
+	// guestCount counts every guest the dump held, migrated ones included. The
+	// report only records the guests it skipped, so this is the one place the
+	// total lives.
 	guestCount := 0
-	guestsSkipped := 0
 	for _, u := range users {
 		// Only real people (type "user") and bots (type "bot") are migrated.
 		// Everything else — "app" (marketplace/app-owned accounts like
@@ -159,8 +167,8 @@ func (t *Transformer) transformUsers(users []RocketChatUser, skipEmptyEmails boo
 			if typeLabel == "" {
 				typeLabel = "empty"
 			}
-			unsupportedByType[typeLabel]++
 			t.markUserSkipped(u.ID, u.Username)
+			t.Report.Users().Skip(u.ID, u.Username, ReasonUserUnsupportedType, typeLabel)
 			continue
 		}
 
@@ -170,8 +178,8 @@ func (t *Transformer) transformUsers(users []RocketChatUser, skipEmptyEmails boo
 		if isGuest {
 			guestCount++
 			if guestHandling == GuestHandlingSkip {
-				guestsSkipped++
 				t.markUserSkipped(u.ID, u.Username)
+				t.Report.Users().Skip(u.ID, u.Username, intermediate.ReasonGuestSkipMode)
 				continue
 			}
 		}
@@ -201,7 +209,7 @@ func (t *Transformer) transformUsers(users []RocketChatUser, skipEmptyEmails boo
 		}
 
 		if !newUser.IsBot {
-			if err := newUser.Sanitise(t.Logger, defaultEmailDomain, skipEmptyEmails); err != nil {
+			if err := newUser.Sanitise(t.Report.Users(), defaultEmailDomain, skipEmptyEmails); err != nil {
 				return err
 			}
 		}
@@ -211,47 +219,48 @@ func (t *Transformer) transformUsers(users []RocketChatUser, skipEmptyEmails boo
 
 	t.Intermediate.UsersById = result
 
-	if len(unsupportedByType) > 0 {
-		total := 0
-		parts := make([]string, 0, len(unsupportedByType))
-		// Sort the type labels for deterministic log output.
-		labels := make([]string, 0, len(unsupportedByType))
-		for label := range unsupportedByType {
-			labels = append(labels, label)
-		}
-		sort.Strings(labels)
-		for _, label := range labels {
-			total += unsupportedByType[label]
-			parts = append(parts, fmt.Sprintf("%s=%d", label, unsupportedByType[label]))
-		}
-		t.Logger.Infof("Skipped %d users of unsupported types (%s)", total, strings.Join(parts, ", "))
-	}
-
+	// Which accounts were skipped, of what type, and which guests went with
+	// them are all in the transform report, named individually.
 	switch guestHandling {
 	case GuestHandlingGuest:
 		t.Logger.Infof("Detected %d guest users; mode=guest (migrating as MM guests)", guestCount)
 	case GuestHandlingUser:
 		t.Logger.Infof("Detected %d guest users; mode=user (migrating as regular users)", guestCount)
 	case GuestHandlingSkip:
-		t.Logger.Infof("Detected %d guest users; mode=skip (skipping %d guest users)", guestCount, guestsSkipped)
+		t.Logger.Infof("Detected %d guest users; mode=skip", guestCount)
 	}
 
-	t.Logger.Infof("Transformed %d users", len(result))
 	return nil
 }
 
+// countAndDropSkippedMembers is dropSkippedMembers for the first pass over a
+// room, where its members are also counted as the source memberships they are.
+func (t *Transformer) countAndDropSkippedMembers(roomID string, uids, usernames []string) (outUIDs, outUsernames []string) {
+	t.Report.ChannelMemberships().Seen(max(len(uids), len(usernames)))
+	return t.dropSkippedMembers(roomID, uids, usernames)
+}
+
 // dropSkippedMembers returns the given parallel uid/username slices with any
-// skipped users removed, counting each removal as a dropped membership. The two
-// slices are only filtered together when they are the same length (RC stores
-// them as parallel arrays); otherwise they are filtered independently by ID and
-// username respectively.
-func (t *Transformer) dropSkippedMembers(uids, usernames []string) (outUIDs, outUsernames []string) {
+// skipped users removed, recording each removal against roomID in the report.
+// The two slices are only filtered together when they are the same length (RC
+// stores them as parallel arrays); otherwise they are filtered independently by
+// ID and username respectively. It does not count the members it keeps — use
+// countAndDropSkippedMembers on the pass that first reads a room's member list.
+func (t *Transformer) dropSkippedMembers(roomID string, uids, usernames []string) (outUIDs, outUsernames []string) {
+	memberships := t.Report.ChannelMemberships()
+	drop := func(uid, username string) {
+		if username == "" {
+			username = t.skippedUsernameByID[uid]
+		}
+		memberships.Skip(intermediate.MembershipID(roomID, uid), intermediate.MembershipID(roomID, username), intermediate.ReasonMembershipSkippedUser)
+	}
+
 	if len(uids) == len(usernames) {
 		outUIDs = make([]string, 0, len(uids))
 		outUsernames = make([]string, 0, len(usernames))
 		for i, uid := range uids {
 			if t.skippedUserIDs[uid] || t.skippedUsernames[usernames[i]] {
-				t.droppedMembershipRefs++
+				drop(uid, usernames[i])
 				continue
 			}
 			outUIDs = append(outUIDs, uid)
@@ -262,19 +271,42 @@ func (t *Transformer) dropSkippedMembers(uids, usernames []string) (outUIDs, out
 
 	for _, uid := range uids {
 		if t.skippedUserIDs[uid] {
-			t.droppedMembershipRefs++
+			drop(uid, "")
 			continue
 		}
 		outUIDs = append(outUIDs, uid)
 	}
 	for _, username := range usernames {
 		if t.skippedUsernames[username] {
-			t.droppedMembershipRefs++
+			drop("", username)
 			continue
 		}
 		outUsernames = append(outUsernames, username)
 	}
 	return outUIDs, outUsernames
+}
+
+// skipRemainingMembers records every member still on a room that is about to be
+// dropped. Their memberships were counted when the room's member list was first
+// read, and Transformed is derived as seen-minus-skipped, so without this a
+// dropped room's members would be reported as having reached the import file.
+// It walks whichever of the two parallel arrays is longer, because a malformed
+// room can leave them out of step — and Seen counted the longer of the two.
+func (t *Transformer) skipRemainingMembers(roomID string, uids, usernames []string) {
+	memberships := t.Report.ChannelMemberships()
+	at := func(values []string, i int) string {
+		if i < len(values) {
+			return values[i]
+		}
+		return ""
+	}
+	for i := range max(len(uids), len(usernames)) {
+		memberships.Skip(
+			intermediate.MembershipID(roomID, at(uids, i)),
+			intermediate.MembershipID(roomID, at(usernames, i)),
+			intermediate.ReasonMembershipChannelSkipped,
+		)
+	}
 }
 
 // markUserSkipped records a user (by ID and username) as skipped so downstream
@@ -285,6 +317,12 @@ func (t *Transformer) markUserSkipped(id, username string) {
 	}
 	if username != "" {
 		t.skippedUsernames[strings.ToLower(username)] = true
+	}
+	if id != "" && username != "" {
+		if t.skippedUsernameByID == nil {
+			t.skippedUsernameByID = map[string]string{}
+		}
+		t.skippedUsernameByID[id] = strings.ToLower(username)
 	}
 }
 
@@ -305,22 +343,20 @@ func (t *Transformer) skipChannellessGuests() {
 		return
 	}
 
-	skipped := 0
+	dropped := false
 	for id, user := range t.Intermediate.UsersById {
 		if !user.IsGuest || user.IsBot || len(user.Memberships) > 0 {
 			continue
 		}
-		t.Logger.Warnf("Dropping guest user %s: no channel memberships, so they can't be imported as a guest (use --guest-handling=user to keep channel-less guests as regular members)", user.Username)
+		t.Report.Users().Skip(id, user.Username, intermediate.ReasonGuestNoChannel)
 		t.markUserSkipped(id, user.Username)
 		delete(t.Intermediate.UsersById, id)
-		skipped++
+		dropped = true
 	}
 
-	if skipped == 0 {
+	if !dropped {
 		return
 	}
-	t.Logger.Infof("Skipped %d channel-less guest user(s)", skipped)
-
 	t.rebuildDMsWithoutSkippedMembers()
 }
 
@@ -337,10 +373,17 @@ func (t *Transformer) rebuildDMsWithoutSkippedMembers() {
 
 	refilter := func(channels []*intermediate.IntermediateChannel) {
 		for _, ch := range channels {
-			uids, usernames := t.dropSkippedMembers(ch.Members, ch.MembersUsernames)
+			// Not counted again: these members were already counted when the
+			// room's member list was first read in transformChannels.
+			uids, usernames := t.dropSkippedMembers(ch.Id, ch.Members, ch.MembersUsernames)
+			// The channel's kind in the dump: this pass can reclassify a group
+			// room as a direct one, but the report still counts it as what the
+			// dump held.
+			entity := ch.ReportEntity(t.Report)
 
 			if len(uids) == 0 {
-				t.Logger.Warnf("Dropping direct/group channel %s: all members were skipped", ch.Id)
+				entity.Skip(ch.ReportID(), ch.ReportName(), ReasonDMAllMembersSkipped)
+				t.skipRemainingMembers(ch.Id, uids, usernames)
 				t.skippedRoomIDs[ch.Id] = true
 				delete(t.directRoomIDToChannel, ch.Id)
 				continue
@@ -351,7 +394,9 @@ func (t *Transformer) rebuildDMsWithoutSkippedMembers() {
 			// unequal counts here. We can't reliably pair members in that case
 			// (and duplicating a self-DM below would panic), so drop the room.
 			if len(uids) != len(usernames) {
-				t.Logger.Warnf("Dropping direct/group channel %s: mismatched member counts after filtering (%d uids, %d usernames)", ch.Id, len(uids), len(usernames))
+				entity.Skip(ch.ReportID(), ch.ReportName(), ReasonDMMemberCountMismatch,
+					strconv.Itoa(len(uids)), strconv.Itoa(len(usernames)))
+				t.skipRemainingMembers(ch.Id, uids, usernames)
 				t.skippedRoomIDs[ch.Id] = true
 				delete(t.directRoomIDToChannel, ch.Id)
 				continue
@@ -406,7 +451,10 @@ func (t *Transformer) createPlaceholderUser(rcUserID string) *intermediate.Inter
 		DeleteAt:  model.GetMillis(),
 	}
 	t.Intermediate.UsersById[rcUserID] = u
-	t.Logger.Warnf("Created placeholder user for missing RC user ID: %s", rcUserID)
+	// The placeholder is not a source entity, but it does reach the import
+	// file, so it is counted as one to keep Transformed consistent.
+	t.Report.Users().Seen(1)
+	t.Report.Users().Note(rcUserID, username, intermediate.ReasonUserPlaceholderCreated)
 	return u
 }
 
@@ -414,11 +462,18 @@ func (t *Transformer) createPlaceholderUser(rcUserID string) *intermediate.Inter
 func (t *Transformer) transformChannels(rooms []RocketChatRoom) {
 	t.Logger.Info("Transforming channels")
 
+	// Count each source room under the kind it would import as, before anything
+	// is dropped, so Transformed can be derived from what the dump held.
+	for i := range rooms {
+		t.Report.For(roomEntityKind(&rooms[i])).Seen(1)
+	}
+
 	for i := range rooms {
 		room := &rooms[i]
+		entity := t.Report.For(roomEntityKind(room))
 
 		if room.Encrypted {
-			t.Logger.Warnf("Skipping encrypted room: %s", room.Name)
+			entity.Skip(room.ID, roomOriginalName(room), ReasonRoomEncrypted)
 			t.skippedRoomIDs[room.ID] = true
 			continue
 		}
@@ -446,11 +501,12 @@ func (t *Transformer) transformChannels(rooms []RocketChatRoom) {
 			// Drop skipped users (unsupported types / skipped guests) from the
 			// DM member list so we never export a direct/group channel that
 			// references a user with no corresponding user line.
-			uids, usernames = t.dropSkippedMembers(uids, usernames)
+			uids, usernames = t.countAndDropSkippedMembers(room.ID, uids, usernames)
 
 			// If every member was skipped, there is nothing to migrate.
 			if len(uids) == 0 {
-				t.Logger.Warnf("Skipping direct room %s: all members were skipped users", room.ID)
+				entity.Skip(room.ID, roomOriginalName(room), ReasonDMAllMembersSkipped)
+				t.skipRemainingMembers(room.ID, uids, usernames)
 				t.skippedRoomIDs[room.ID] = true
 				continue
 			}
@@ -461,7 +517,9 @@ func (t *Transformer) transformChannels(rooms []RocketChatRoom) {
 			// so drop the room rather than risk dangling references or an
 			// out-of-range panic in the self-DM duplication below.
 			if len(uids) != len(usernames) {
-				t.Logger.Warnf("Skipping direct room %s: mismatched member counts after filtering (%d uids, %d usernames)", room.ID, len(uids), len(usernames))
+				entity.Skip(room.ID, roomOriginalName(room), ReasonDMMemberCountMismatch,
+					strconv.Itoa(len(uids)), strconv.Itoa(len(usernames)))
+				t.skipRemainingMembers(room.ID, uids, usernames)
 				t.skippedRoomIDs[room.ID] = true
 				continue
 			}
@@ -482,8 +540,7 @@ func (t *Transformer) transformChannels(rooms []RocketChatRoom) {
 			} else if len(uids) > model.ChannelGroupMaxUsers {
 				// Mattermost group messages support at most model.ChannelGroupMaxUsers
 				// members; convert oversized group DMs to private channels.
-				t.Logger.Warnf("Room %s has %d members (>%d), converting group DM to private channel",
-					room.ID, len(uids), model.ChannelGroupMaxUsers)
+				entity.Note(room.ID, roomOriginalName(room), intermediate.ReasonMPIMConvertedToPrivate, strconv.Itoa(len(uids)))
 				ch := t.roomToIntermediateChannel(room, model.ChannelTypePrivate)
 				t.Intermediate.PrivateChannels = append(t.Intermediate.PrivateChannels, ch)
 				t.roomIDToChannelName[room.ID] = ch.Name
@@ -497,7 +554,11 @@ func (t *Transformer) transformChannels(rooms []RocketChatRoom) {
 			}
 
 		default:
-			t.Logger.Warnf("Skipping room with unknown type %q: %s", room.Type, room.Name)
+			roomType := room.Type
+			if roomType == "" {
+				roomType = "empty"
+			}
+			entity.Skip(room.ID, roomOriginalName(room), ReasonRoomUnknownType, roomType)
 			t.skippedRoomIDs[room.ID] = true
 		}
 	}
@@ -526,7 +587,7 @@ func (t *Transformer) roomToIntermediateChannel(room *RocketChatRoom, chType mod
 
 	// Handle case of group rooms which are converted to private channels due to exceeding the group DM member limit.
 	if room.Name == "" {
-		t.Logger.Warnf("Room %s has empty name, using ID as fallback", room.ID)
+		t.Report.For(roomEntityKind(room)).Note(room.ID, originalName, ReasonRoomNoName)
 		room.Name = "channel-" + room.ID
 	}
 
@@ -548,8 +609,12 @@ func (t *Transformer) roomToIntermediateChannel(room *RocketChatRoom, chType mod
 		Purpose:      description,
 		Header:       room.Topic,
 		Type:         chType,
+		// The room's kind in the dump, not the type it is being imported as: an
+		// oversized group DM arrives here as a private channel but is still
+		// reported as the group channel it was.
+		ReportKind: roomEntityKind(room),
 	}
-	ch.SanitiseWithPrefix(t.Logger, "rocketchat-channel-")
+	ch.SanitiseWithPrefix(ch.ReportEntity(t.Report), "rocketchat-channel-")
 	return ch
 }
 
@@ -560,8 +625,28 @@ func (t *Transformer) roomToDirectChannel(room *RocketChatRoom, chType model.Cha
 		Members:          uids,
 		MembersUsernames: usernames,
 		Type:             chType,
+		ReportKind:       roomEntityKind(room),
 	}
 	return ch
+}
+
+// roomEntityKind maps a RocketChat room to the report entity kind it is counted
+// under. A direct room becomes a group channel once it has more than two
+// members, which is the same split transformChannels makes. Rooms of an unknown
+// type have no Mattermost counterpart at all; they are counted as public
+// channels so their skip is still visible somewhere in the report.
+func roomEntityKind(room *RocketChatRoom) intermediate.EntityKind {
+	switch room.Type {
+	case "p":
+		return intermediate.EntityPrivateChannel
+	case "d":
+		if len(room.UIDs) > 2 {
+			return intermediate.EntityGroupChannel
+		}
+		return intermediate.EntityDirectChannel
+	default:
+		return intermediate.EntityPublicChannel
+	}
 }
 
 // roomOriginalName returns the room's Name if non-empty, falling back to its
@@ -614,25 +699,38 @@ func (t *Transformer) transformSubscriptions(subscriptions []RocketChatSubscript
 	channelMemberSets := make(map[string]map[string]struct{}, len(channelByRoomID))
 	userMembershipSets := make(map[string]map[string]struct{}, len(t.Intermediate.UsersById))
 
+	entity := t.Report.Subscriptions()
+
 	for i := range subscriptions {
 		sub := &subscriptions[i]
 
 		ch, ok := channelByRoomID[sub.RoomID]
 		if !ok {
-			// Subscription to a DM/group/skipped room — not relevant here.
+			// Subscription to a DM/group/skipped room — not relevant here, and
+			// not counted, because this pass is only responsible for the
+			// subscriptions that become public/private channel memberships.
 			continue
 		}
+		entity.Seen(1)
 
-		// Drop memberships of users we deliberately skipped, quietly (they are
-		// expected to be absent), counting them for the summary log.
+		// Drop memberships of users we deliberately skipped (they are expected
+		// to be absent).
 		if t.isSkippedUser(sub.User.ID) {
-			t.droppedMembershipRefs++
+			entity.Skip(
+				intermediate.MembershipID(sub.RoomID, sub.User.ID),
+				intermediate.MembershipID(ch.Name, t.skippedUsernameByID[sub.User.ID]),
+				intermediate.ReasonMembershipSkippedUser,
+			)
 			continue
 		}
 
 		user, ok := t.Intermediate.UsersById[sub.User.ID]
 		if !ok {
-			t.Logger.Warnf("Subscription references unknown user %s (room %s), skipping", sub.User.ID, sub.RoomID)
+			entity.Skip(
+				intermediate.MembershipID(sub.RoomID, sub.User.ID),
+				intermediate.MembershipID(ch.Name, sub.User.Username),
+				ReasonSubscriptionUnknownUser,
+			)
 			continue
 		}
 
@@ -720,7 +818,28 @@ func (t *Transformer) transformMessages(messages []RocketChatMessage, uploadsByI
 	// This is more conservative than per-channel (Mattermost only requires
 	// unique timestamps within a channel), but keeps the logic simple.
 	timestamps := make(map[int64]bool)
+	reportPosts := t.Report.Posts()
+	reportThreads := t.Report.Threads()
+	reportPosts.Seen(len(messages))
+	reportThreads.Seen(len(threadReplies))
+
 	var posts []*intermediate.IntermediatePost
+	handledThreads := map[string]bool{}
+
+	// skipThreadRootMissing names a thread and its replies when the root did
+	// not reach the import file. Replies carry a ThreadID, so the root loop
+	// never sees them; without this they would go missing from both the import
+	// file and the report.
+	skipThreadRootMissing := func(threadID, roomID, username string, replies []*RocketChatMessage) {
+		if len(replies) == 0 {
+			return
+		}
+		reportThreads.Skip(intermediate.PostID(roomID, threadID), username, intermediate.ReasonThreadRootMissing)
+		for _, reply := range replies {
+			reportPosts.Skip(intermediate.PostID(reply.RoomID, reply.ID), reply.User.Username, intermediate.ReasonThreadRootMissing)
+		}
+	}
+
 	for i := range messages {
 		m := &messages[i]
 
@@ -728,23 +847,19 @@ func (t *Transformer) transformMessages(messages []RocketChatMessage, uploadsByI
 		if m.ThreadID != "" {
 			continue
 		}
+		handledThreads[m.ID] = true
 
 		// Skip messages in skipped rooms.
 		if t.skippedRoomIDs[m.RoomID] {
+			reportPosts.Skip(intermediate.PostID(m.RoomID, m.ID), m.User.Username, ReasonMessageUnknownRoom, m.RoomID)
+			skipThreadRootMissing(m.ID, m.RoomID, m.User.Username, threadReplies[m.ID])
 			continue
 		}
 
 		post := t.convertMessage(m, uploadsById)
 		if post == nil {
-			// The root was dropped (e.g. authored by a skipped user). Its
-			// thread replies are skipped in the main loop (they carry a
-			// ThreadID) and never reach convertMessage, so account for them
-			// here — otherwise this content is lost silently and undercounted
-			// in the end-of-transform summary.
-			if replies := threadReplies[m.ID]; len(replies) > 0 {
-				t.droppedPostRefs += len(replies)
-				t.Logger.Warnf("Dropping %d thread reply(ies) because their root post %s was skipped", len(replies), m.ID)
-			}
+			// The root was dropped (e.g. authored by a skipped user).
+			skipThreadRootMissing(m.ID, m.RoomID, m.User.Username, threadReplies[m.ID])
 			continue
 		}
 
@@ -767,12 +882,25 @@ func (t *Transformer) transformMessages(messages []RocketChatMessage, uploadsByI
 		}
 
 		// Split oversized root messages into continuation thread replies.
-		intermediate.SplitPostIntoThread(post)
+		if chunks := intermediate.SplitPostIntoThread(post); chunks > 1 {
+			reportPosts.Note(intermediate.PostID(m.RoomID, m.ID), post.User, intermediate.ReasonPostSplit, strconv.Itoa(chunks))
+		}
 
 		// Split any oversized replies, deduplicate timestamps, and sort replies.
-		intermediate.SplitOversizedReplies(post)
+		if split := intermediate.SplitOversizedReplies(post); split > 0 {
+			reportPosts.Note(intermediate.PostID(m.RoomID, m.ID), post.User, intermediate.ReasonPostRepliesSplit, strconv.Itoa(split))
+		}
 
 		posts = append(posts, post)
+	}
+
+	// Replies whose root never appeared in the dump are still counted in Seen,
+	// so name them rather than reporting them as imported.
+	for threadID, replies := range threadReplies {
+		if handledThreads[threadID] || len(replies) == 0 {
+			continue
+		}
+		skipThreadRootMissing(threadID, replies[0].RoomID, replies[0].User.Username, replies)
 	}
 
 	t.Intermediate.Posts = posts
@@ -786,18 +914,19 @@ func (t *Transformer) convertMessage(m *RocketChatMessage, uploadsById map[strin
 	// before any placeholder user is created for them, so the export never
 	// references a user with no user line.
 	if t.isSkippedUser(m.User.ID) || t.skippedUsernames[strings.ToLower(m.User.Username)] {
-		t.droppedPostRefs++
+		t.Report.Posts().Skip(intermediate.PostID(m.RoomID, m.ID), strings.ToLower(m.User.Username), intermediate.ReasonPostSkippedAuthor)
 		return nil
 	}
 
 	// Handle system messages.
 	if m.Type != "" {
 		if skippedSystemMessageTypes[m.Type] {
+			t.Report.Posts().Skip(intermediate.PostID(m.RoomID, m.ID), strings.ToLower(m.User.Username), ReasonMessageUnsupportedType, m.Type)
 			return nil
 		}
 		mmType, ok := systemMessageTypeMap[m.Type]
 		if !ok {
-			t.Logger.Debugf("Skipping unsupported system message type %q in room %s", m.Type, m.RoomID)
+			t.Report.Posts().Skip(intermediate.PostID(m.RoomID, m.ID), strings.ToLower(m.User.Username), ReasonMessageUnsupportedType, m.Type)
 			return nil
 		}
 
@@ -922,7 +1051,7 @@ func (t *Transformer) buildBasePost(m *RocketChatMessage) *intermediate.Intermed
 	} else {
 		name, ok := t.roomIDToChannelName[m.RoomID]
 		if !ok {
-			t.Logger.Debugf("Message %s references unknown room %s, skipping", m.ID, m.RoomID)
+			t.Report.Posts().Skip(intermediate.PostID(m.RoomID, m.ID), strings.ToLower(m.User.Username), ReasonMessageUnknownRoom, m.RoomID)
 			return nil
 		}
 		channelName = name
@@ -949,6 +1078,8 @@ func (t *Transformer) convertReactions(m *RocketChatMessage) []*intermediate.Int
 		return nil
 	}
 
+	entity := t.Report.Reactions()
+
 	var reactions []*intermediate.IntermediateReaction
 	baseTs := m.Timestamp.UnixMilli()
 	counter := int64(0)
@@ -973,11 +1104,13 @@ func (t *Transformer) convertReactions(m *RocketChatMessage) []*intermediate.Int
 
 		emojiName = t.SanitizeEmojiName(emojiName)
 
+		entity.Seen(len(info.Usernames))
 		for _, username := range info.Usernames {
 			lower := strings.ToLower(username)
 			// Skip reactions by skipped users so they don't reference a
 			// non-existent user line.
 			if t.skippedUsernames[lower] {
+				entity.Skip(intermediate.ReactionID(m.RoomID, m.ID, lower, emojiName), lower, intermediate.ReasonReactionSkippedUser)
 				continue
 			}
 			counter++
