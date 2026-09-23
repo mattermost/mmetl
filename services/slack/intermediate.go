@@ -680,6 +680,26 @@ func getNormalisedFilePath(file *SlackFile, attachmentsDir string) string {
 	return norm.NFC.String(p)
 }
 
+func collectPostFiles(post *SlackPost) []*SlackFile {
+	seen := make(map[string]struct{})
+	var files []*SlackFile
+	add := func(f *SlackFile) {
+		if f == nil {
+			return
+		}
+		if _, ok := seen[f.Id]; ok {
+			return
+		}
+		seen[f.Id] = struct{}{}
+		files = append(files, f)
+	}
+	add(post.File)
+	for _, f := range post.Files {
+		add(f)
+	}
+	return files
+}
+
 func addFileToPost(file *SlackFile, uploads map[string]*zip.File, post *IntermediatePost, attachmentsDir string, allowDownload bool) error {
 	if _, ok := uploads[file.Id]; ok || !allowDownload {
 		return addZipFileToPost(file, uploads, post, attachmentsDir)
@@ -810,10 +830,7 @@ func (t *Transformer) AddFilesToPost(post *SlackPost, skipAttachments bool, slac
 		return
 	}
 
-	files := post.Files
-	if post.File != nil {
-		files = []*SlackFile{post.File}
-	}
+	files := collectPostFiles(post)
 	for _, file := range files {
 		if file.Name == "" {
 			t.Logger.Warnf("Not able to access the file %s as file access is denied so skipping", file.Id)
