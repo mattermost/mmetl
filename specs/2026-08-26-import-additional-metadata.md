@@ -68,8 +68,10 @@ against mattermost-server, and none of them should be worked around:
 **mmetl does not carry its own copy of the import structs.** It imports the
 server package directly:
 
-    services/intermediate/export.go:11
-    "github.com/mattermost/mattermost/server/v8/channels/app/imports"
+```go
+// services/intermediate/export.go
+"github.com/mattermost/mattermost/server/v8/channels/app/imports"
+```
 
 and the pinned version already exposes both `LineImportData.Info
 *VersionInfoImportData` and `VersionInfoImportData{Generator, Version, Created,
@@ -138,8 +140,8 @@ Three properties of the existing code the implementation has to respect:
 marker anywhere mmetl parses (`services/slack/parse.go`), and the four
 RocketChat collections mmetl reads (`users`, `rocketchat_room`,
 `rocketchat_message`, `rocketchat_subscription`) carry no server version
-either. The export *shape* is knowable and is recorded (`slack-export-zip`,
-`rocketchat-mongodump`); a version field is omitted rather than invented.
+either. The platform is recorded on `SourceInfo.Platform`; there is deliberately
+no export-format field, and a version field is omitted rather than invented.
 
 ## The model
 
@@ -185,8 +187,7 @@ type Additional struct {
 // SourceInfo describes the export being converted. File is a base name, never
 // a path.
 type SourceInfo struct {
-	Platform  string `json:"platform"`         // "slack", "rocketchat"
-	Format    string `json:"format,omitempty"` // "slack-export-zip", ...
+	Platform  string `json:"platform"` // "slack", "rocketchat"
 	File      string `json:"file,omitempty"`
 	SizeBytes int64  `json:"size_bytes,omitempty"`
 }
@@ -205,7 +206,7 @@ type RunInfo struct {
 	Command   string    `json:"command,omitempty"` // "mmetl transform slack"
 	Flags     string    `json:"flags,omitempty"`   // only the flags actually set
 	Started   time.Time `json:"started"`
-	Finished  time.Time `json:"finished,omitempty"`
+	Finished  time.Time `json:"finished"`
 }
 
 // Counts is how many lines of each kind the import file ended up with. It is
@@ -229,10 +230,6 @@ Supporting members, all on these types so there is nowhere else to look:
   as its own field.
 - `func (r RunInfo) Duration() time.Duration` — moved verbatim from
   `RunMetadata.Duration`, same magnitude-aware rounding.
-- `sourceFormats = map[string]string{"slack": "slack-export-zip",
-  "rocketchat": "rocketchat-mongodump"}` — same pattern as the existing
-  `providerTitles` in `report_markdown.go`. A provider that forgets an entry
-  gets an omitted field rather than a wrong one.
 
 ## What each consumer renders
 
@@ -245,9 +242,9 @@ with `Additional` marshalled into the `json.RawMessage`:
   "version":"v1.2.3 (9f2c1ab)",
   "created":"2026-08-26T10:11:12.123456789Z",
   "additional":{
-    "source":{"platform":"slack","format":"slack-export-zip","file":"my_export.zip","size_bytes":12345678},
+    "source":{"platform":"slack","file":"my_export.zip","size_bytes":12345678},
     "target":{"team":"myteam","output":"bulk-export.jsonl"},
-    "run":{"mmetl_version":"v1.2.3","mmetl_build_hash":"9f2c1ab","command":"mmetl transform slack","flags":"--guest-handling=skip --skip-attachments=true","started":"2026-08-26T10:11:10Z"},
+    "run":{"mmetl_version":"v1.2.3","mmetl_build_hash":"9f2c1ab","command":"mmetl transform slack","flags":"--guest-handling=skip --skip-attachments=true","started":"2026-08-26T10:11:10Z","finished":"2026-08-26T10:11:12Z"},
     "counts":{"users":42,"bots":2,"public_channels":10,"private_channels":3,"group_channels":1,"direct_channels":20,"posts":1234,"replies":567,"reactions":89,"attachments":12}
   }}}
 ```
@@ -255,9 +252,10 @@ with `Additional` marshalled into the `json.RawMessage`:
 `type` stays `"version"` and `version` stays `1`. Fixed cardinality, ~650 bytes
 — the 16 MB line budget is a non-issue.
 
-`run.finished` is absent here and only ever present in the report: the version
-line is written before the run ends. That is the one field the two renderings
-differ on, and it differs by time, not by model.
+Line 1 is first written without a finish time (or with a zero `finished`), then
+`RewriteVersion` rewrites it in place once the rest of the file is on disk so
+`run.finished` and `counts` match the report. Both consumers read the same
+`Info` model; they only differ by when that rewrite has happened.
 
 **`transform-report.json`** — `metadata` becomes the same `Info`, marshalled
 directly (typed, not raw):
@@ -276,15 +274,12 @@ Finished, Duration, Flags) sourced from the new field paths. A second small
 
 ### New: `services/intermediate/metadata.go`
 
-The structs above, plus the one place that fills them:
+The structs above, plus the helpers that fill them:
 
-- `func (e *Exporter) Info() Info` — nil-safe. With a `Report`, it takes
-  `e.Report.Metadata`, stamps `Created` from `NowFunc().UTC()`, fills
-  `Additional.Counts` from `e.Intermediate`, writes the result **back** to
-  `e.Report.Metadata`, and returns it. That write-back is what gets the counts
-  and the creation time into the report as well. With a nil `Report` it returns
-  a minimal `Info` (generator, created, counts) so a struct-literal `Exporter`
-  still emits a valid line.
+- `func (e *Exporter) stampExportInfo()` — stamps `Generator`, `Created`, and
+  `Version` onto `e.Report.Metadata` when a report is present. Counts wait for
+  `RewriteVersion`. A nil `Report` is a no-op; `versionLine` then emits the bare
+  version line the format requires.
 - `func (i *Intermediate) Counts() Counts` — one pass over the four channel
   slices, `UsersById` (splitting `IsBot`), and `Posts`, summing `len(Replies)`,
   `len(Reactions)` and `len(Attachments)` on each post and each reply. A second
@@ -292,31 +287,15 @@ The structs above, plus the one place that fills them:
   with no allocation — noise next to the per-post JSON marshalling the export
   already does.
 
-### `services/intermediate/export.go` — `ExportVersion`
+### `services/intermediate/export.go` — `ExportVersion` / `RewriteVersion`
 
-```go
-func (e *Exporter) ExportVersion(writer io.Writer) error {
-	version := 1
-	line := &imports.LineImportData{Type: "version", Version: &version}
-
-	info := e.Info()
-	// The server ignores `info`, so failing a whole migration because the
-	// metadata would not marshal would be trading the work for a comment.
-	// Log it and emit the plain version line instead.
-	if additional, err := json.Marshal(info.Additional); err != nil {
-		e.Logger.WithError(err).Warn("could not encode import metadata; ...")
-	} else {
-		line.Info = &imports.VersionInfoImportData{
-			Generator:  info.Generator,
-			Version:    info.VersionString(),
-			Created:    info.Created,
-			Additional: additional,
-		}
-	}
-
-	return ExportWriteLine(writer, line)
-}
-```
+`ExportVersion` calls `stampExportInfo()`, then writes a fixed-width
+`versionLine()` (JSON padded with spaces to `VersionLineSize` = 4 KB including
+the trailing newline). `RewriteVersion` stamps `Finished` and `Counts` onto the
+report, re-renders the line, and `WriteAt`s it at offset 0. Those fields are
+committed to the report only after `WriteAt` succeeds; on failure the previous
+values are restored so the report cannot claim a finish the import file never
+recorded. A nil `Report` still emits a bare version line.
 
 ### `services/intermediate/report.go`
 
@@ -341,7 +320,7 @@ func (e *Exporter) ExportVersion(writer io.Writer) error {
 ### `commands/transform.go`
 
 - `startTransformReport` builds the `Info` instead of a `RunMetadata`:
-  `Source{Platform: provider, Format: <from map>, File: filepath.Base(input),
+  `Source{Platform: provider, File: filepath.Base(input),
   SizeBytes: inputSizeBytes(input)}`, `Target{Team: team, Output:
   filepath.Base(output)}`, `Run{Version: getVersion(), BuildHash:
   getBuildHash(), Command: cmd.CommandPath(), Flags: formatChangedFlags(cmd),
@@ -436,8 +415,10 @@ line 1 is valid JSON in the shape above, and `jq .metadata
 to zip the produced `bulk-export.jsonl` (plus `data/` when attachments are on)
 and run
 
-    mmctl import validate /tmp/mm/import.zip --team myteam \
-      --check-server-duplicates=false --ignore-attachments
+```sh
+mmctl import validate /tmp/mm/import.zip --team myteam \
+  --check-server-duplicates=false --ignore-attachments
+```
 
 confirming it reports no errors. If it turns out to need a server connection
 despite the flags, that is to be stated explicitly rather than quietly dropped.

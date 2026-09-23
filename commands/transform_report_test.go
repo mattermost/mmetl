@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/mattermost/mattermost/server/v8/channels/app/imports"
 	"github.com/mattermost/mmetl/commands"
 	"github.com/mattermost/mmetl/services/intermediate"
 	"github.com/mattermost/mmetl/services/slack"
@@ -106,35 +107,32 @@ func TestTransformReportContents(t *testing.T) {
 	})
 
 	t.Run("line 1 of the import file carries the same metadata", func(t *testing.T) {
+		report := readTransformReport(t, outputPath, "# Slack Transform Report")
+
 		raw, err := os.ReadFile(outputPath)
 		require.NoError(t, err)
 
 		firstLine, _, found := strings.Cut(string(raw), "\n")
 		require.True(t, found, "the bulk import file must have more than the version line")
 
-		var line struct {
-			Type    string `json:"type"`
-			Version *int   `json:"version"`
-			Info    *struct {
-				Generator  string                  `json:"generator"`
-				Version    string                  `json:"version"`
-				Created    string                  `json:"created"`
-				Additional intermediate.Additional `json:"additional"`
-			} `json:"info"`
-		}
-		require.NoError(t, json.Unmarshal([]byte(firstLine), &line))
+		var line imports.LineImportData
+		require.NoError(t, json.Unmarshal([]byte(strings.TrimRight(firstLine, " ")), &line))
 
 		assert.Equal(t, "version", line.Type)
 		require.NotNil(t, line.Version)
 		assert.Equal(t, 1, *line.Version)
 		require.NotNil(t, line.Info)
-		assert.Equal(t, "mmetl", line.Info.Generator)
+		assert.Equal(t, report.Metadata.Generator, line.Info.Generator)
+		assert.Equal(t, report.Metadata.Version, line.Info.Version)
 
-		additional := line.Info.Additional
-		assert.Equal(t, "slack", additional.Source.Platform)
+		var additional intermediate.Additional
+		require.NoError(t, json.Unmarshal(line.Info.Additional, &additional))
+		require.NotNil(t, report.Metadata.Additional)
+		assert.Equal(t, report.Metadata.Additional.Source, additional.Source)
+		assert.Equal(t, report.Metadata.Additional.Target, additional.Target)
+		assert.Equal(t, report.Metadata.Additional.Run.Command, additional.Run.Command)
+		assert.Equal(t, report.Metadata.Additional.Counts, additional.Counts)
 		assert.Positive(t, additional.Source.SizeBytes, "the export's size is recorded")
-		assert.Equal(t, "myteam", additional.Target.Team)
-		assert.Equal(t, "mmetl transform slack", additional.Run.Command)
 		assert.Positive(t, additional.Counts.Users, "a run that produced users must say so")
 		assert.Positive(t, additional.Counts.PublicChannels)
 

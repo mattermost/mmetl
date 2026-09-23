@@ -3,6 +3,7 @@ package intermediate
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -367,6 +368,32 @@ func TestExportDoesNotStampCountsOnPartialFailure(t *testing.T) {
 
 	exporter.Report.Finish(err)
 	assert.NotContains(t, exporter.Report.Markdown(), "## Produced")
+}
+
+// failingWriterAt rejects WriteAt so RewriteVersion can be asserted without a
+// real filesystem failure.
+type failingWriterAt struct{}
+
+func (failingWriterAt) WriteAt([]byte, int64) (int, error) {
+	return 0, errors.New("disk full")
+}
+
+// TestRewriteVersionDoesNotCommitOnWriteAtFailure covers why Finished and
+// Counts land on the report only after WriteAt succeeds: a rewrite that fails
+// must not leave the report claiming a finish the import file never recorded.
+func TestRewriteVersionDoesNotCommitOnWriteAtFailure(t *testing.T) {
+	exporter := metadataFixture(t)
+	exporter.Report.Metadata.Generator = generatorName
+	exporter.Report.Metadata.Created = NowFunc().UTC().Format(time.RFC3339Nano)
+	exporter.Report.Metadata.Version = exporter.Report.Metadata.VersionString()
+
+	err := exporter.RewriteVersion(failingWriterAt{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "rewriting the version line")
+
+	details := exporter.Report.Metadata.details()
+	assert.True(t, details.Run.Finished.IsZero(), "Finished must stay zero when WriteAt fails")
+	assert.Equal(t, Counts{}, details.Counts, "Counts must stay empty when WriteAt fails")
 }
 
 func TestInfoVersionString(t *testing.T) {

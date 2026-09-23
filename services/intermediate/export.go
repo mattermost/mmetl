@@ -422,6 +422,10 @@ func (e *Exporter) ExportVersion(writer io.Writer) error {
 // moved and nothing after line 1 is touched. A line that somehow no longer fits
 // the reservation is left alone — the already-written line is valid, and a
 // finish time is not worth risking the file over.
+//
+// Finished and Counts are committed to the report only after WriteAt succeeds,
+// so a rewrite failure cannot leave the report claiming a finish the import
+// file never recorded.
 func (e *Exporter) RewriteVersion(file io.WriterAt) error {
 	if e.Report == nil {
 		return nil
@@ -429,16 +433,28 @@ func (e *Exporter) RewriteVersion(file io.WriterAt) error {
 	if e.Report.Metadata.Additional == nil {
 		e.Report.Metadata.Additional = &Additional{}
 	}
-	e.Report.Metadata.Additional.Run.Finished = NowFunc().UTC()
-	e.Report.Metadata.Additional.Counts = e.Intermediate.Counts()
+
+	finished := NowFunc().UTC()
+	counts := e.Intermediate.Counts()
+
+	prevFinished := e.Report.Metadata.Additional.Run.Finished
+	prevCounts := e.Report.Metadata.Additional.Counts
+	e.Report.Metadata.Additional.Run.Finished = finished
+	e.Report.Metadata.Additional.Counts = counts
 
 	line, err := e.versionLine()
 	if err != nil {
-		e.Logger.WithError(err).Warn("Could not re-render the version line; leaving line 1 without a finish time. The import file is unaffected.")
+		e.Report.Metadata.Additional.Run.Finished = prevFinished
+		e.Report.Metadata.Additional.Counts = prevCounts
+		if e.Logger != nil {
+			e.Logger.WithError(err).Warn("Could not re-render the version line; leaving line 1 without a finish time. The import file is unaffected.")
+		}
 		return nil
 	}
 
 	if _, err := file.WriteAt(line, 0); err != nil {
+		e.Report.Metadata.Additional.Run.Finished = prevFinished
+		e.Report.Metadata.Additional.Counts = prevCounts
 		return errors.Wrap(err, "An error occurred rewriting the version line.")
 	}
 	return nil

@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -8,6 +9,8 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/mattermost/mmetl/services/intermediate"
 )
 
 // TestFormatChangedFlagsRedactsPaths covers the reason pathFlags exists: the
@@ -18,6 +21,9 @@ func TestFormatChangedFlagsRedactsPaths(t *testing.T) {
 	cmd.Flags().String("file", "", "")
 	cmd.Flags().String("output", "", "")
 	cmd.Flags().String("dump-dir", "", "")
+	cmd.Flags().String("attachments-dir", "", "")
+	cmd.Flags().String("uploads-dir", "", "")
+	cmd.Flags().String("team-map-path", "", "")
 	cmd.Flags().String("team", "", "")
 	cmd.Flags().String("bot-owner", "", "")
 	cmd.Flags().String("default-email-domain", "", "")
@@ -25,14 +31,19 @@ func TestFormatChangedFlagsRedactsPaths(t *testing.T) {
 	require.NoError(t, cmd.Flags().Set("file", "/Users/someone/exports/my_export.zip"))
 	require.NoError(t, cmd.Flags().Set("output", "/tmp/mm/bulk-export.jsonl"))
 	require.NoError(t, cmd.Flags().Set("dump-dir", "/Users/someone/dump/rocketchat"))
+	require.NoError(t, cmd.Flags().Set("attachments-dir", "/Users/someone/data"))
+	require.NoError(t, cmd.Flags().Set("uploads-dir", "/var/rc/uploads"))
+	require.NoError(t, cmd.Flags().Set("team-map-path", "/etc/mmetl/teams.json"))
 	require.NoError(t, cmd.Flags().Set("team", "myteam"))
 
 	flags := formatChangedFlags(cmd)
 
 	assert.Equal(t,
-		"--dump-dir=rocketchat --file=my_export.zip --output=bulk-export.jsonl --team=myteam",
+		"--attachments-dir=data --dump-dir=rocketchat --file=my_export.zip --output=bulk-export.jsonl --team-map-path=teams.json --team=myteam --uploads-dir=uploads",
 		flags)
 	assert.NotContains(t, flags, "/Users/")
+	assert.NotContains(t, flags, "/var/")
+	assert.NotContains(t, flags, "/etc/")
 
 	t.Run("values that change the output and are not paths are kept whole", func(t *testing.T) {
 		require.NoError(t, cmd.Flags().Set("bot-owner", "admin"))
@@ -67,4 +78,25 @@ func TestInputSizeBytes(t *testing.T) {
 	t.Run("an unreadable input is a zero, not a failed transform", func(t *testing.T) {
 		assert.Zero(t, inputSizeBytes(filepath.Join(dir, "does-not-exist.zip")))
 	})
+}
+
+func TestWriteTransformReportDoesNotMaskTransformError(t *testing.T) {
+	report := intermediate.NewReport(nil)
+	notADir := filepath.Join(t.TempDir(), "not-a-dir")
+	require.NoError(t, os.WriteFile(notADir, []byte("x"), 0644))
+
+	transformErr := errors.New("transform failed")
+	runErr := transformErr
+	writeTransformReport(report, notADir, &runErr)
+	assert.Equal(t, transformErr, runErr)
+}
+
+func TestWriteTransformReportFailsCommandWhenWriteFails(t *testing.T) {
+	report := intermediate.NewReport(nil)
+	notADir := filepath.Join(t.TempDir(), "not-a-dir")
+	require.NoError(t, os.WriteFile(notADir, []byte("x"), 0644))
+
+	var runErr error
+	writeTransformReport(report, notADir, &runErr)
+	require.Error(t, runErr)
 }
