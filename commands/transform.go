@@ -161,6 +161,7 @@ func transformSlackCmdF(cmd *cobra.Command, args []string) error {
 	err = slackTransformer.Transform(slackExport, attachmentsDir, skipAttachments, discardInvalidProps, allowDownload, skipEmptyEmails, defaultEmailDomain, guestHandling)
 	if err != nil {
 		if dryRun {
+			slackTransformer.Logger.Error(err)
 			return errors.New(dryRunFailedMsg)
 		}
 		return err
