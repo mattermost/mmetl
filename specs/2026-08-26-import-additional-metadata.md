@@ -214,11 +214,19 @@ type RunInfo struct {
 // (how many entities the export contained, and how many were dropped). They
 // should agree, and a mismatch is worth investigating.
 type Counts struct {
-	Users, Bots                     int
-	PublicChannels, PrivateChannels int
-	GroupChannels, DirectChannels   int
-	Posts, Replies                  int
-	Reactions, Attachments          int
+	Users int `json:"users"`
+	Bots  int `json:"bots"`
+
+	PublicChannels  int `json:"public_channels"`
+	PrivateChannels int `json:"private_channels"`
+	GroupChannels   int `json:"group_channels"`
+	DirectChannels  int `json:"direct_channels"`
+
+	Posts   int `json:"posts"`
+	Replies int `json:"replies"`
+
+	Reactions   int `json:"reactions"`
+	Attachments int `json:"attachments"`
 }
 ```
 
@@ -390,13 +398,14 @@ which does emit the metadata.
   - `report.Markdown()`'s `## Run` table shows the same team, input and flags.
 - *Counts.* An `Intermediate` with known contents produces the expected
   `Counts`, including replies, reactions and attachments nested under replies.
-- *Nil `Report`.* A struct-literal `Exporter` still emits a valid version line
-  with counts and no panic.
+- *Nil `Report`.* A struct-literal `Exporter` still emits a valid bare version
+  line with no `info` and no panic.
 - *Redaction.* Flags containing `--file=/Users/someone/export.zip` render as
   `--file=export.zip`; the marshalled line contains no `/Users/` and no path
   separator in `source.file` or `target.output`.
-- *Size bound.* The marshalled version line is asserted under 8 KB, so a future
-  field that adds an unbounded list trips a test rather than a 16 MB scanner.
+- *Size bound.* Line 1 is reserved at `VersionLineSize` (4 KB including the
+  trailing newline); the JSON payload is asserted under 2 KB so a future field
+  that adds an unbounded list trips a test rather than a 16 MB scanner.
 
 **Command level — `commands/transform_report_test.go`:** extend the existing
 `transform slack` run to read line 1 of the produced JSONL and assert it parses
