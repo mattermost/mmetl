@@ -1,8 +1,11 @@
 package slack
 
 import (
+	"archive/zip"
 	"bytes"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -419,6 +422,77 @@ func TestTransformBigGroupChannels(t *testing.T) {
 		assert.Equal(t, fmt.Sprintf("topic%d", i+1), result[i].Header)
 		assert.Equal(t, model.ChannelTypePrivate, result[i].Type)
 	}
+}
+
+func TestAddFilesToPostSkipsNamelessLegacyFile(t *testing.T) {
+	tr := NewTransformer("test", log.New())
+
+	zipPath := filepath.Join(t.TempDir(), "export.zip")
+	zf, err := os.Create(zipPath)
+	require.NoError(t, err)
+	zw := zip.NewWriter(zf)
+	fw, err := zw.Create("files/F2/kept.png")
+	require.NoError(t, err)
+	_, err = fw.Write([]byte("png-bytes"))
+	require.NoError(t, err)
+	require.NoError(t, zw.Close())
+	require.NoError(t, zf.Close())
+
+	zr, err := zip.OpenReader(zipPath)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = zr.Close() })
+	require.Len(t, zr.File, 1)
+
+	attachmentsDir := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(attachmentsDir, attachmentsInternal), 0o755))
+
+	post := &SlackPost{
+		File:  &SlackFile{Id: "F1", Name: ""},
+		Files: []*SlackFile{{Id: "F2", Name: "kept.png"}},
+	}
+	out := &IntermediatePost{}
+
+	tr.AddFilesToPost(post, false, &SlackExport{Uploads: map[string]*zip.File{"F2": zr.File[0]}}, attachmentsDir, out, false)
+
+	require.Len(t, out.Attachments, 1, "named Files entry must still attach when legacy File is nameless")
+	assert.Contains(t, out.Attachments[0], "F2_kept.png")
+	tr.Report.Finish(nil)
+	assert.Equal(t, 1, tr.Report.Files().Skipped)
+	assert.Equal(t, "file_access_denied", tr.Report.Files().Notes[0].ReasonCode)
+	assert.Equal(t, "F1", tr.Report.Files().Notes[0].EntityID)
+}
+
+func TestAddFilesToPostDedupesMatchingFileIDs(t *testing.T) {
+	tr := NewTransformer("test", log.New())
+
+	zipPath := filepath.Join(t.TempDir(), "export.zip")
+	zf, err := os.Create(zipPath)
+	require.NoError(t, err)
+	zw := zip.NewWriter(zf)
+	fw, err := zw.Create("files/F1/same.png")
+	require.NoError(t, err)
+	_, err = fw.Write([]byte("png-bytes"))
+	require.NoError(t, err)
+	require.NoError(t, zw.Close())
+	require.NoError(t, zf.Close())
+
+	zr, err := zip.OpenReader(zipPath)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = zr.Close() })
+
+	attachmentsDir := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(attachmentsDir, attachmentsInternal), 0o755))
+
+	same := &SlackFile{Id: "F1", Name: "same.png"}
+	post := &SlackPost{File: same, Files: []*SlackFile{same}}
+	out := &IntermediatePost{}
+
+	tr.AddFilesToPost(post, false, &SlackExport{Uploads: map[string]*zip.File{"F1": zr.File[0]}}, attachmentsDir, out, false)
+
+	require.Len(t, out.Attachments, 1)
+	tr.Report.Finish(nil)
+	assert.Equal(t, 1, tr.Report.Files().Transformed)
+	assert.Equal(t, 0, tr.Report.Files().Skipped)
 }
 
 func TestTransformRegularGroupChannels(t *testing.T) {

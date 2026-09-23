@@ -941,10 +941,7 @@ func (t *Transformer) AddFilesToPost(post *SlackPost, skipAttachments bool, slac
 		return
 	}
 
-	files := post.Files
-	if post.File != nil {
-		files = []*SlackFile{post.File}
-	}
+	files := collectPostFiles(post)
 
 	entity := t.Report.Files()
 	entity.Seen(len(files))
@@ -961,6 +958,28 @@ func (t *Transformer) AddFilesToPost(post *SlackPost, skipAttachments bool, slac
 			entity.Skip(file.Id, file.Name, ReasonFileAddFailed, fileAddFailureReason(err))
 		}
 	}
+}
+
+// collectPostFiles returns distinct files from the legacy File field and the
+// Files slice, deduplicated by Slack file ID. File is listed first when set.
+func collectPostFiles(post *SlackPost) []*SlackFile {
+	seen := make(map[string]struct{})
+	var files []*SlackFile
+	add := func(f *SlackFile) {
+		if f == nil {
+			return
+		}
+		if _, ok := seen[f.Id]; ok {
+			return
+		}
+		seen[f.Id] = struct{}{}
+		files = append(files, f)
+	}
+	add(post.File)
+	for _, f := range post.Files {
+		add(f)
+	}
+	return files
 }
 
 func fileAddFailureReason(err error) string {
