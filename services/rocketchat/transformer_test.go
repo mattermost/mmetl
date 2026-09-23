@@ -42,7 +42,7 @@ func TestTransformUsers(t *testing.T) {
 			},
 		}
 
-		tr.transformUsers(users, false, "", GuestHandlingUser)
+		require.NoError(t, tr.transformUsers(users, false, "", GuestHandlingUser))
 
 		require.Len(t, tr.Intermediate.UsersById, 1)
 		u := tr.Intermediate.UsersById["u1"]
@@ -60,7 +60,7 @@ func TestTransformUsers(t *testing.T) {
 		users := []RocketChatUser{
 			{ID: "u1", Username: "bob", Name: "Bob James Smith", Emails: []RCEmail{{Address: "b@b.com"}}, Active: true, Type: "user"},
 		}
-		tr.transformUsers(users, false, "", GuestHandlingUser)
+		require.NoError(t, tr.transformUsers(users, false, "", GuestHandlingUser))
 		u := tr.Intermediate.UsersById["u1"]
 		require.NotNil(t, u)
 		assert.Equal(t, "Bob", u.FirstName)
@@ -72,7 +72,7 @@ func TestTransformUsers(t *testing.T) {
 		users := []RocketChatUser{
 			{ID: "u1", Username: "admin", Name: "Admin User", Emails: []RCEmail{{Address: "admin@example.com"}}, Active: true, Roles: []string{"admin"}, Type: "user"},
 		}
-		tr.transformUsers(users, false, "", GuestHandlingUser)
+		require.NoError(t, tr.transformUsers(users, false, "", GuestHandlingUser))
 		// User should be transformed (role mapping is informational — not stored in IntermediateUser itself)
 		require.NotNil(t, tr.Intermediate.UsersById["u1"])
 	})
@@ -82,7 +82,7 @@ func TestTransformUsers(t *testing.T) {
 		users := []RocketChatUser{
 			{ID: "u1", Username: "inactive", Name: "Inactive User", Emails: []RCEmail{{Address: "i@i.com"}}, Active: false, Type: "user"},
 		}
-		tr.transformUsers(users, false, "", GuestHandlingUser)
+		require.NoError(t, tr.transformUsers(users, false, "", GuestHandlingUser))
 		u := tr.Intermediate.UsersById["u1"]
 		require.NotNil(t, u)
 		assert.NotZero(t, u.DeleteAt)
@@ -93,7 +93,7 @@ func TestTransformUsers(t *testing.T) {
 		users := []RocketChatUser{
 			{ID: "u1", Username: "noemail", Name: "No Email", Emails: nil, Active: true, Type: "user"},
 		}
-		tr.transformUsers(users, false, "example.org", GuestHandlingUser)
+		require.NoError(t, tr.transformUsers(users, false, "example.org", GuestHandlingUser))
 		u := tr.Intermediate.UsersById["u1"]
 		require.NotNil(t, u)
 		assert.Equal(t, "noemail@example.org", u.Email)
@@ -104,10 +104,21 @@ func TestTransformUsers(t *testing.T) {
 		users := []RocketChatUser{
 			{ID: "u1", Username: "noemail", Name: "No Email", Emails: nil, Active: true, Type: "user"},
 		}
-		tr.transformUsers(users, true, "", GuestHandlingUser)
+		require.NoError(t, tr.transformUsers(users, true, "", GuestHandlingUser))
 		u := tr.Intermediate.UsersById["u1"]
 		require.NotNil(t, u)
 		assert.Equal(t, "", u.Email)
+	})
+
+	t.Run("missing email without flags returns error", func(t *testing.T) {
+		tr := NewTransformer("test", newLogger())
+		users := []RocketChatUser{
+			{ID: "u1", Username: "noemail", Name: "No Email", Emails: nil, Active: true, Type: "user"},
+		}
+		err := tr.transformUsers(users, false, "", GuestHandlingUser)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "--default-email-domain")
+		assert.Empty(t, tr.Intermediate.UsersById)
 	})
 
 	t.Run("bot user is imported as bot", func(t *testing.T) {
@@ -116,7 +127,7 @@ func TestTransformUsers(t *testing.T) {
 			{ID: "b1", Username: "bot", Name: "My Bot", Type: "bot", Active: true},
 			{ID: "u1", Username: "human", Name: "Human User", Emails: []RCEmail{{Address: "h@h.com"}}, Active: true, Type: "user"},
 		}
-		tr.transformUsers(users, false, "", GuestHandlingUser)
+		require.NoError(t, tr.transformUsers(users, false, "", GuestHandlingUser))
 		assert.Len(t, tr.Intermediate.UsersById, 2)
 
 		bot := tr.Intermediate.UsersById["b1"]
@@ -138,7 +149,7 @@ func TestTransformUsers(t *testing.T) {
 		users := []RocketChatUser{
 			{ID: "b1", Username: "bot", Name: "My Bot", Type: "bot", Active: false},
 		}
-		tr.transformUsers(users, false, "", GuestHandlingUser)
+		require.NoError(t, tr.transformUsers(users, false, "", GuestHandlingUser))
 		bot := tr.Intermediate.UsersById["b1"]
 		require.NotNil(t, bot)
 		assert.True(t, bot.IsBot)
@@ -151,7 +162,7 @@ func TestTransformUsers(t *testing.T) {
 			{ID: "app1", Username: "rocket.cat", Name: "Rocket Cat", Type: "app", Active: true},
 			{ID: "u1", Username: "alice", Name: "Alice", Emails: []RCEmail{{Address: "a@a.com"}}, Active: true, Type: "user"},
 		}
-		tr.transformUsers(users, false, "", GuestHandlingUser)
+		require.NoError(t, tr.transformUsers(users, false, "", GuestHandlingUser))
 		require.Len(t, tr.Intermediate.UsersById, 1)
 		assert.Nil(t, tr.Intermediate.UsersById["app1"])
 		assert.NotNil(t, tr.Intermediate.UsersById["u1"])
@@ -166,7 +177,7 @@ func TestTransformUsers(t *testing.T) {
 			{ID: "x2", Username: "blank", Name: "Blank", Type: "", Active: true},
 			{ID: "u1", Username: "alice", Name: "Alice", Emails: []RCEmail{{Address: "a@a.com"}}, Active: true, Type: "user"},
 		}
-		tr.transformUsers(users, false, "", GuestHandlingUser)
+		require.NoError(t, tr.transformUsers(users, false, "", GuestHandlingUser))
 		require.Len(t, tr.Intermediate.UsersById, 1)
 		assert.NotNil(t, tr.Intermediate.UsersById["u1"])
 		assert.True(t, tr.skippedUserIDs["x1"])
@@ -178,7 +189,7 @@ func TestTransformUsers(t *testing.T) {
 		users := []RocketChatUser{
 			{ID: "g1", Username: "guesty", Name: "Guest User", Emails: []RCEmail{{Address: "g@g.com"}}, Active: true, Roles: []string{"user", "guest"}, Type: "user"},
 		}
-		tr.transformUsers(users, false, "", GuestHandlingGuest)
+		require.NoError(t, tr.transformUsers(users, false, "", GuestHandlingGuest))
 		u := tr.Intermediate.UsersById["g1"]
 		require.NotNil(t, u)
 		assert.True(t, u.IsGuest)
@@ -190,7 +201,7 @@ func TestTransformUsers(t *testing.T) {
 		users := []RocketChatUser{
 			{ID: "g1", Username: "guesty", Name: "Guest User", Emails: []RCEmail{{Address: "g@g.com"}}, Active: true, Roles: []string{"Guest"}, Type: "user"},
 		}
-		tr.transformUsers(users, false, "", GuestHandlingGuest)
+		require.NoError(t, tr.transformUsers(users, false, "", GuestHandlingGuest))
 		u := tr.Intermediate.UsersById["g1"]
 		require.NotNil(t, u)
 		assert.True(t, u.IsGuest)
@@ -201,7 +212,7 @@ func TestTransformUsers(t *testing.T) {
 		users := []RocketChatUser{
 			{ID: "u1", Username: "alice", Name: "Alice", Emails: []RCEmail{{Address: "a@a.com"}}, Active: true, Roles: []string{"user", "admin"}, Type: "user"},
 		}
-		tr.transformUsers(users, false, "", GuestHandlingGuest)
+		require.NoError(t, tr.transformUsers(users, false, "", GuestHandlingGuest))
 		u := tr.Intermediate.UsersById["u1"]
 		require.NotNil(t, u)
 		assert.False(t, u.IsGuest)
@@ -212,7 +223,7 @@ func TestTransformUsers(t *testing.T) {
 		users := []RocketChatUser{
 			{ID: "b1", Username: "bot", Name: "My Bot", Type: "bot", Active: true, Roles: []string{"guest"}},
 		}
-		tr.transformUsers(users, false, "", GuestHandlingGuest)
+		require.NoError(t, tr.transformUsers(users, false, "", GuestHandlingGuest))
 		bot := tr.Intermediate.UsersById["b1"]
 		require.NotNil(t, bot)
 		assert.True(t, bot.IsBot)
@@ -225,7 +236,7 @@ func TestTransformUsers(t *testing.T) {
 			{ID: "g1", Username: "guesty", Name: "Guest User", Emails: []RCEmail{{Address: "g@g.com"}}, Active: true, Roles: []string{"guest"}, Type: "user"},
 			{ID: "u1", Username: "alice", Name: "Alice", Emails: []RCEmail{{Address: "a@a.com"}}, Active: true, Type: "user"},
 		}
-		tr.transformUsers(users, false, "", GuestHandlingSkip)
+		require.NoError(t, tr.transformUsers(users, false, "", GuestHandlingSkip))
 		require.Len(t, tr.Intermediate.UsersById, 1)
 		assert.Nil(t, tr.Intermediate.UsersById["g1"])
 		assert.NotNil(t, tr.Intermediate.UsersById["u1"])
@@ -238,7 +249,7 @@ func TestTransformUsers(t *testing.T) {
 		users := []RocketChatUser{
 			{ID: "g1", Username: "guesty", Name: "Guest User", Emails: []RCEmail{{Address: "g@g.com"}}, Active: true, Roles: []string{"guest"}, Type: "user"},
 		}
-		tr.transformUsers(users, false, "", GuestHandlingUser)
+		require.NoError(t, tr.transformUsers(users, false, "", GuestHandlingUser))
 		u := tr.Intermediate.UsersById["g1"]
 		require.NotNil(t, u)
 		// IsGuest reflects detection regardless of mode; the export mode decides
