@@ -1,8 +1,11 @@
 package slack
 
 import (
+	"archive/zip"
 	"bytes"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -470,9 +473,35 @@ func TestAddFilesToPostSkipsNamelessLegacyFile(t *testing.T) {
 	}
 	out := &IntermediatePost{}
 
-	tr.AddFilesToPost(post, false, &SlackExport{}, t.TempDir(), out, false)
+	zipPath := filepath.Join(t.TempDir(), "export.zip")
+	zf, err := os.Create(zipPath)
+	require.NoError(t, err)
+	zw := zip.NewWriter(zf)
+	w, err := zw.Create("__uploads/F2/kept.png")
+	require.NoError(t, err)
+	_, err = w.Write([]byte("png-bytes"))
+	require.NoError(t, err)
+	require.NoError(t, zw.Close())
+	require.NoError(t, zf.Close())
 
-	assert.Empty(t, out.Attachments, "legacy file wins and has no name: nothing to attach")
+	zr, err := zip.OpenReader(zipPath)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = zr.Close() })
+	uploads := map[string]*zip.File{}
+	for _, f := range zr.File {
+		parts := strings.Split(f.Name, "/")
+		if len(parts) == 3 && parts[0] == "__uploads" {
+			uploads[parts[1]] = f
+		}
+	}
+
+	attachmentsDir := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(attachmentsDir, attachmentsInternal), 0o755))
+
+	tr.AddFilesToPost(post, false, &SlackExport{Uploads: uploads}, attachmentsDir, out, false)
+
+	require.Len(t, out.Attachments, 1, "named F2 in Files must still attach when legacy File is nameless")
+	assert.Equal(t, "bulk-export-attachments/F2_kept.png", out.Attachments[0])
 }
 
 func TestTransformRegularGroupChannels(t *testing.T) {
