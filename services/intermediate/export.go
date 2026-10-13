@@ -474,7 +474,9 @@ func (e *Exporter) versionLine() ([]byte, error) {
 	if e.Report != nil {
 		info := e.Report.Metadata
 		if additional, err := json.Marshal(info.Additional); err != nil {
-			e.Logger.WithError(err).Warn("Could not encode the import metadata; writing the version line without it. The transform is unaffected.")
+			if e.Logger != nil {
+				e.Logger.WithError(err).Warn("Could not encode the import metadata; writing the version line without it. The transform is unaffected.")
+			}
 		} else {
 			versionLine.Info = &imports.VersionInfoImportData{
 				Generator:  info.Generator,
