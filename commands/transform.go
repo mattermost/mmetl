@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
@@ -154,7 +155,8 @@ func transformSlackCmdF(cmd *cobra.Command, args []string) (runErr error) {
 	}
 	// An archive that opens but holds nothing is not something to transform.
 	// This used to return a nil error, exiting 0 with no import file and no
-	// explanation.
+	// explanation. len, not a nil check: archive/zip returns a non-nil empty
+	// File slice for a valid empty archive.
 	if len(zipReader.File) == 0 {
 		return fmt.Errorf("the Slack export %q contains no files", inputFilePath)
 	}
@@ -267,17 +269,63 @@ func newTransformLogger(dir, provider string, debug, dryRun bool) (*log.Logger, 
 }
 
 // startTransformReport stamps the run's metadata onto its report: what produced
-// it, and when the clock started.
+// it, and when the clock started. The same Info also goes onto the version line
+// of the bulk import file, so only ship-safe values go in here.
 func startTransformReport(cmd *cobra.Command, report *intermediate.Report, provider, input, team, output string) {
-	report.Metadata = intermediate.RunMetadata{
-		Provider: provider,
-		Version:  getVersion() + " (" + getBuildHash() + ")",
-		Input:    input,
-		Team:     team,
-		Output:   output,
-		Flags:    formatChangedFlags(cmd),
-		Started:  intermediate.NowFunc().UTC(),
+	report.Metadata.Additional = &intermediate.Additional{
+		Source: intermediate.SourceInfo{
+			Platform:  provider,
+			File:      filepath.Base(input),
+			SizeBytes: inputSizeBytes(input),
+		},
+		Target: intermediate.TargetInfo{
+			Team:   team,
+			Output: filepath.Base(output),
+		},
+		Run: intermediate.RunInfo{
+			Version:   getVersion(),
+			BuildHash: getBuildHash(),
+			Command:   cmd.CommandPath(),
+			Flags:     formatChangedFlags(cmd),
+			Started:   intermediate.NowFunc().UTC(),
+		},
 	}
+
+	// The report and the import file carry base names only, so this is the one
+	// place the operator's actual paths are recorded. The log sits in the same
+	// directory and is unambiguously local.
+	if logger := report.Logger(); logger != nil {
+		logger.WithFields(log.Fields{
+			"input":  input,
+			"output": output,
+		}).Info("Starting transform")
+	}
+}
+
+// inputSizeBytes is the size of the export being transformed: the file size for
+// a Slack zip, or the total of the regular files under RocketChat's dump
+// directory. Returns 0 on any error — a transform must never fail because a
+// size could not be read.
+func inputSizeBytes(path string) int64 {
+	info, err := os.Stat(path)
+	if err != nil {
+		return 0
+	}
+	if !info.IsDir() {
+		return info.Size()
+	}
+
+	var total int64
+	_ = filepath.WalkDir(path, func(_ string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil || entry.IsDir() {
+			return nil //nolint:nilerr // an unreadable subtree is a 0, not a failed transform
+		}
+		if entryInfo, statErr := entry.Info(); statErr == nil {
+			total += entryInfo.Size()
+		}
+		return nil
+	})
+	return total
 }
 
 // writeTransformReport closes the report and writes it next to the bulk import
@@ -303,12 +351,27 @@ func writeTransformReport(report *intermediate.Report, dir string, runErr *error
 	fmt.Print(report.SummaryText(markdownPath, jsonPath))
 }
 
+// pathFlags are filesystem-path flags. Values are reduced to a base name
+// because the flag string is written into the import file.
+var pathFlags = map[string]bool{
+	"file":            true,
+	"output":          true,
+	"dump-dir":        true,
+	"attachments-dir": true,
+	"uploads-dir":     true,
+	"team-map-path":   true,
+}
+
 // formatChangedFlags renders the flags the operator actually set, so the report
 // records what produced it without listing every default.
 func formatChangedFlags(cmd *cobra.Command) string {
 	changed := []string{}
 	cmd.Flags().Visit(func(flag *pflag.Flag) {
-		changed = append(changed, "--"+flag.Name+"="+flag.Value.String())
+		value := flag.Value.String()
+		if pathFlags[flag.Name] && value != "" {
+			value = filepath.Base(value)
+		}
+		changed = append(changed, "--"+flag.Name+"="+value)
 	})
 	sort.Strings(changed)
 	return strings.Join(changed, " ")

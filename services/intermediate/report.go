@@ -8,7 +8,6 @@ import (
 	"regexp"
 	"sort"
 	"strings"
-	"time"
 
 	log "github.com/sirupsen/logrus"
 )
@@ -86,40 +85,6 @@ func EntityTitle(kind EntityKind) string {
 	return string(kind)
 }
 
-// RunMetadata describes the transform run a report covers. Every field is
-// filled by the command layer before the transform starts, except Finished,
-// which Finish sets.
-type RunMetadata struct {
-	Provider string    `json:"provider"`
-	Version  string    `json:"version"`
-	Input    string    `json:"input"`
-	Team     string    `json:"team"`
-	Output   string    `json:"output"`
-	Flags    string    `json:"flags"`
-	Started  time.Time `json:"started"`
-	Finished time.Time `json:"finished"`
-}
-
-// Duration is how long the run took, or 0 when it has not finished yet. It is
-// rounded to a precision that suits its own magnitude, so a long migration
-// reads as "2m38s" while a run over a small export still reports a real number
-// rather than "0s".
-func (m RunMetadata) Duration() time.Duration {
-	if m.Started.IsZero() || m.Finished.IsZero() || m.Finished.Before(m.Started) {
-		return 0
-	}
-
-	elapsed := m.Finished.Sub(m.Started)
-	switch {
-	case elapsed >= time.Minute:
-		return elapsed.Round(time.Second)
-	case elapsed >= time.Second:
-		return elapsed.Round(10 * time.Millisecond)
-	default:
-		return elapsed.Round(time.Millisecond)
-	}
-}
-
 // Report accumulates, for one transform run, which source entities reached the
 // Mattermost import file and why the rest did not.
 //
@@ -129,7 +94,10 @@ func (m RunMetadata) Duration() time.Duration {
 // A Report is NOT safe for concurrent use. The transform pipeline is
 // single-goroutine by design and paying for a mutex here would be waste.
 type Report struct {
-	Metadata RunMetadata                  `json:"metadata"`
+	// Metadata is the same Info that goes onto the version line of the bulk
+	// import file, so the file and the report next to it cannot disagree about
+	// what produced them. See metadata.go.
+	Metadata Info                         `json:"metadata"`
 	Error    string                       `json:"error,omitempty"`
 	Entities map[EntityKind]*EntityReport `json:"entities"`
 	// Reasons is the dictionary of every reason referenced by a note in this
@@ -151,6 +119,7 @@ type Report struct {
 // in which case recording a note produces no log output.
 func NewReport(logger log.FieldLogger) *Report {
 	return &Report{
+		Metadata:    Info{Generator: generatorName, Additional: &Additional{}},
 		Entities:    map[EntityKind]*EntityReport{},
 		Reasons:     map[string]*Reason{},
 		logger:      logger,
@@ -391,8 +360,14 @@ func (r *Report) Finish(runErr error) {
 	}
 	r.finished = true
 
-	if r.Metadata.Finished.IsZero() {
-		r.Metadata.Finished = NowFunc().UTC()
+	if r.Metadata.Additional == nil {
+		r.Metadata.Additional = &Additional{}
+	}
+	if r.Metadata.Additional.Run.Finished.IsZero() {
+		r.Metadata.Additional.Run.Finished = NowFunc().UTC()
+	}
+	if r.Metadata.Version == "" {
+		r.Metadata.Version = r.Metadata.VersionString()
 	}
 	if runErr != nil && r.Error == "" {
 		r.Error = redactErrorPaths(runErr.Error())
