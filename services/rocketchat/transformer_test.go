@@ -598,11 +598,12 @@ func TestTransformMessages(t *testing.T) {
 		}
 		tr.transformMessages([]RocketChatMessage{root, reply1, reply2}, nil)
 
-		// The whole thread is dropped, but the lost replies must be counted so
-		// the loss is visible in the end-of-transform summary: 1 root (skipped
-		// user) + 2 orphaned replies.
+		// The whole thread is dropped, but every lost reply must be named in the
+		// report so the loss is visible: 1 root (skipped user) + 2 orphaned
+		// replies, plus the thread itself.
 		assert.Empty(t, tr.Intermediate.Posts)
-		assert.Equal(t, 3, tr.droppedPostRefs)
+		assert.Equal(t, 3, tr.Report.Posts().Skipped)
+		assert.Equal(t, 1, tr.Report.Threads().Skipped)
 	})
 
 	t.Run("reaction conversion - colon stripping", func(t *testing.T) {
@@ -1307,7 +1308,7 @@ func TestSkippedUsersReferentialIntegrity(t *testing.T) {
 	for _, r := range tr.Intermediate.Posts[0].Reactions {
 		assert.NotEqual(t, "rocket.cat", r.User)
 	}
-	assert.Positive(t, tr.droppedPostRefs)
+	assert.Positive(t, tr.Report.Posts().Skipped)
 }
 
 func TestGuestSkipReferentialIntegrity(t *testing.T) {
@@ -1339,6 +1340,58 @@ func TestGuestSkipReferentialIntegrity(t *testing.T) {
 	assert.NotContains(t, tr.Intermediate.PublicChannels[0].Members, "g1")
 	require.Len(t, tr.Intermediate.Posts, 1)
 	assert.Equal(t, "alice", tr.Intermediate.Posts[0].User)
-	assert.Positive(t, tr.droppedPostRefs)
-	assert.Positive(t, tr.droppedMembershipRefs)
+	assert.Positive(t, tr.Report.Posts().Skipped)
+	assert.Positive(t, tr.Report.Subscriptions().Skipped)
+}
+
+// TestOversizedDirectRoomReportedUnderOneKind pins the rule that a room is
+// reported as what it was in the dump. An oversized group DM is imported as a
+// private channel, and its notes used to split across two sections — with the
+// private-channel section receiving notes it had no Seen count for.
+func TestOversizedDirectRoomReportedUnderOneKind(t *testing.T) {
+	uids := make([]string, 0, model.ChannelGroupMaxUsers+2)
+	usernames := make([]string, 0, model.ChannelGroupMaxUsers+2)
+	users := make([]RocketChatUser, 0, model.ChannelGroupMaxUsers+2)
+	for i := range model.ChannelGroupMaxUsers + 2 {
+		id := fmt.Sprintf("u%02d", i)
+		uids = append(uids, id)
+		usernames = append(usernames, id)
+		users = append(users, RocketChatUser{
+			ID: id, Username: id, Name: "User " + id, Active: true, Type: "user",
+			Emails: []RCEmail{{Address: id + "@example.com"}},
+		})
+	}
+
+	tr := NewTransformer("test", newLogger())
+	require.NoError(t, tr.Transform(&ParsedData{
+		Users: users,
+		// An over-long display name so SanitiseWithPrefix records a truncation
+		// too: that is the note that used to be filed under private_channel
+		// while the conversion note went to group_channel.
+		Rooms: []RocketChatRoom{{
+			ID: "big-dm", Type: "d", UIDs: uids, Usernames: usernames,
+			Name:  "big-group-dm",
+			FName: strings.Repeat("n", model.ChannelDisplayNameMaxRunes+10),
+		}},
+	}, true, false, "", GuestHandlingUser))
+	tr.Report.Finish(nil)
+
+	// It is imported as a private channel...
+	require.Len(t, tr.Intermediate.PrivateChannels, 1)
+
+	// ...but reported as the group channel it was in the dump.
+	groups := tr.Report.GroupChannels()
+	assert.Equal(t, 1, groups.Transformed, "the room is counted once, as a group channel")
+	codes := []string{}
+	for _, note := range groups.Notes {
+		codes = append(codes, note.ReasonCode)
+	}
+	assert.Contains(t, codes, "mpim_converted_to_private")
+	assert.Contains(t, codes, "channel_display_truncated")
+
+	// Nothing leaks into the private-channel section, which has no Seen count
+	// for this room and would report a negative-turned-zero Transformed.
+	privates := tr.Report.PrivateChannels()
+	assert.Empty(t, privates.Notes, "notes about one room must not split across sections")
+	assert.Zero(t, privates.Transformed)
 }
