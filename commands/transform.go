@@ -109,6 +109,9 @@ func transformSlackCmdF(cmd *cobra.Command, args []string) (runErr error) {
 	// up before the remaining validation, so anything that fails from here on is
 	// explained by a report rather than only by the message cobra prints.
 	artifactsDir := filepath.Dir(outputFilePath)
+	if err := checkArtifactCollisions(artifactsDir, "slack", inputFilePath, outputFilePath); err != nil {
+		return err
+	}
 	logger, logFile, err := newTransformLogger(artifactsDir, "slack", debug, dryRun)
 	if err != nil {
 		return err
@@ -153,15 +156,13 @@ func transformSlackCmdF(cmd *cobra.Command, args []string) (runErr error) {
 		return err
 	}
 	// An archive that opens but holds nothing is not something to transform.
-	// This used to return a nil error, exiting 0 with no import file and no
-	// explanation.
 	if len(zipReader.File) == 0 {
 		return fmt.Errorf("the Slack export %q contains no files", inputFilePath)
 	}
 
 	if err = slackTransformer.Precheck(zipReader); err != nil {
 		if dryRun {
-			return errors.New(dryRunFailedMsg)
+			return failDryRun(report, err)
 		}
 		return err
 	}
@@ -174,11 +175,11 @@ func transformSlackCmdF(cmd *cobra.Command, args []string) (runErr error) {
 	err = slackTransformer.Transform(slackExport, attachmentsDir, skipAttachments, discardInvalidProps, allowDownload, skipEmptyEmails, defaultEmailDomain, guestHandling)
 	if err != nil {
 		if dryRun {
-			slackTransformer.Logger.Error(err)
-			return errors.New(dryRunFailedMsg)
+			return failDryRun(report, err)
 		}
 		return err
 	}
+	report.MarkPassComplete()
 
 	botOwner = strings.TrimSpace(botOwner)
 	if hasBotUsers(slackTransformer.Intermediate.UsersById) && botOwner == "" {
@@ -193,7 +194,7 @@ func transformSlackCmdF(cmd *cobra.Command, args []string) (runErr error) {
 	if dryRun {
 		slackTransformer.CheckIntermediate()
 		if err = slackTransformer.Err(); err != nil {
-			return errors.New(dryRunFailedMsg)
+			return failDryRun(report, err)
 		}
 		slackTransformer.Logger.Info("Dry-run succeeded")
 		return nil
@@ -210,6 +211,13 @@ func transformSlackCmdF(cmd *cobra.Command, args []string) (runErr error) {
 
 const dryRunFailedMsg = "dry-run failed; review the errors above"
 
+// failDryRun closes the report with the real cause, so the report names what
+// failed, and returns the generic message cobra prints under the logged errors.
+func failDryRun(report *intermediate.Report, cause error) error {
+	report.Finish(cause)
+	return errors.New(dryRunFailedMsg)
+}
+
 func hasBotUsers(users map[string]*intermediate.IntermediateUser) bool {
 	for _, user := range users {
 		if user != nil && user.IsBot {
@@ -223,6 +231,42 @@ func errMissingBotOwner(source string) error {
 	return fmt.Errorf("the %s export contains bot users but --bot-owner was not specified. Please provide the username of a Mattermost user who will own the imported bots", source)
 }
 
+// checkArtifactCollisions rejects a run whose log or report would land on one of
+// the operator's own paths: the log is truncated on open, so a collision with
+// the input destroys the export, and the report written at exit would replace
+// a finished bulk import file.
+func checkArtifactCollisions(dir, provider string, userPaths ...string) error {
+	artifacts := []string{
+		filepath.Join(dir, "transform-"+provider+".log"),
+		filepath.Join(dir, intermediate.ReportMarkdownFilename),
+		filepath.Join(dir, intermediate.ReportJSONFilename),
+	}
+	for _, userPath := range userPaths {
+		if userPath == "" {
+			continue
+		}
+		for _, artifact := range artifacts {
+			if samePath(userPath, artifact) {
+				return fmt.Errorf("%q is where this run writes its %s; choose another path", userPath, filepath.Base(artifact))
+			}
+		}
+	}
+	return nil
+}
+
+// samePath also compares file identity, so a symlink or a different spelling on
+// a case-insensitive filesystem still counts as the same file.
+func samePath(a, b string) bool {
+	absA, errA := filepath.Abs(a)
+	absB, errB := filepath.Abs(b)
+	if errA == nil && errB == nil && absA == absB {
+		return true
+	}
+	infoA, errA := os.Stat(a)
+	infoB, errB := os.Stat(b)
+	return errA == nil && errB == nil && os.SameFile(infoA, infoB)
+}
+
 var customLogFormatter = &log.JSONFormatter{
 	CallerPrettyfier: func(frame *runtime.Frame) (function string, file string) {
 		fileName := path.Base(frame.File) + ":" + strconv.Itoa(frame.Line)
@@ -233,8 +277,8 @@ var customLogFormatter = &log.JSONFormatter{
 // newTransformLogger opens transform-<provider>.log inside dir, which is the
 // directory the bulk import file and the report are written to, so a run leaves
 // every artifact in one place. The caller owns closing the returned file.
-// A dry-run logs to stdout instead, so its warnings and errors land in the
-// terminal rather than in a file the operator has to go looking for.
+// A dry-run also logs to stdout, in color, so its warnings and errors land in
+// the terminal; the file copy stays plain text.
 func newTransformLogger(dir, provider string, debug, dryRun bool) (*log.Logger, *os.File, error) {
 	if dir == "" {
 		dir = "."
@@ -244,15 +288,18 @@ func newTransformLogger(dir, provider string, debug, dryRun bool) (*log.Logger, 
 	}
 
 	logPath := filepath.Join(dir, "transform-"+provider+".log")
-	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0666)
+	// The log can hold user details (debug mode dumps whole source users), so
+	// it is readable by the operator only.
+	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
 	if err != nil {
 		return nil, nil, err
 	}
 
 	logger := log.New()
 	if dryRun {
-		logger.SetOutput(io.MultiWriter(os.Stdout, logFile))
+		logger.SetOutput(os.Stdout)
 		logger.SetFormatter(&log.TextFormatter{ForceColors: true})
+		logger.AddHook(&plainFileHook{writer: logFile, formatter: &log.TextFormatter{DisableColors: true, FullTimestamp: true}})
 	} else {
 		logger.SetOutput(logFile)
 		logger.SetFormatter(customLogFormatter)
@@ -264,6 +311,24 @@ func newTransformLogger(dir, provider string, debug, dryRun bool) (*log.Logger, 
 	}
 
 	return logger, logFile, nil
+}
+
+// plainFileHook mirrors every entry into a file with its own formatter, so the
+// colored terminal output does not leave ANSI escapes in the log file.
+type plainFileHook struct {
+	writer    io.Writer
+	formatter log.Formatter
+}
+
+func (h *plainFileHook) Levels() []log.Level { return log.AllLevels }
+
+func (h *plainFileHook) Fire(entry *log.Entry) error {
+	line, err := h.formatter.Format(entry)
+	if err != nil {
+		return err
+	}
+	_, err = h.writer.Write(line)
+	return err
 }
 
 // startTransformReport stamps the run's metadata onto its report: what produced

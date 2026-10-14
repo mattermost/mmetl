@@ -46,7 +46,11 @@ func (r *Report) Markdown() string {
 
 	if r.Error != "" {
 		b.WriteString("\n## Stopped because of an error\n\n")
-		b.WriteString("The transform did not finish. The report below covers everything processed up to the\npoint of failure.\n\n")
+		if r.Partial {
+			b.WriteString("The transform did not finish. The report below covers everything processed up to the\npoint of failure; Transformed counts are not shown, since the run stopped before it\ncould tell which entities would reach the import file.\n\n")
+		} else {
+			b.WriteString("The transform processed the whole export, but the run failed afterwards. The counts\nbelow are complete.\n\n")
+		}
 		for _, line := range strings.Split(strings.TrimRight(r.Error, "\n"), "\n") {
 			fmt.Fprintf(&b, "    %s\n", line)
 		}
@@ -82,7 +86,7 @@ func (r *Report) Markdown() string {
 		}
 		summaryRows = append(summaryRows, []string{
 			label,
-			fmt.Sprintf("%d", entity.Transformed),
+			r.transformedCell(entity),
 			fmt.Sprintf("%d", entity.Skipped),
 		})
 
@@ -254,7 +258,7 @@ func (r *Report) SummaryText(markdownPath, jsonPath string) string {
 		}
 		rows = append(rows, []string{
 			EntityTitle(kind),
-			fmt.Sprintf("%d", entity.Transformed),
+			r.transformedCell(entity),
 			fmt.Sprintf("%d", entity.Skipped),
 		})
 	}
@@ -409,4 +413,13 @@ func padLeft(s string, width int) string {
 		return strings.Repeat(" ", pad) + s
 	}
 	return s
+}
+
+// transformedCell renders an entity's Transformed count, or a dash on a partial
+// run, where that count is unknown rather than zero.
+func (r *Report) transformedCell(entity *EntityReport) string {
+	if r.Partial {
+		return "—"
+	}
+	return fmt.Sprintf("%d", entity.Transformed)
 }

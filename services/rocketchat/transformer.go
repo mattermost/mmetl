@@ -711,6 +711,11 @@ func (t *Transformer) transformSubscriptions(subscriptions []RocketChatSubscript
 			// subscriptions that become public/private channel memberships.
 			continue
 		}
+		// Bots never get channel or team memberships, so their subscriptions
+		// are outside this count too.
+		if subUser := t.Intermediate.UsersById[sub.User.ID]; subUser != nil && subUser.IsBot {
+			continue
+		}
 		entity.Seen(1)
 
 		// Drop memberships of users we deliberately skipped (they are expected
@@ -731,11 +736,6 @@ func (t *Transformer) transformSubscriptions(subscriptions []RocketChatSubscript
 				intermediate.MembershipID(ch.Name, sub.User.Username),
 				ReasonSubscriptionUnknownUser,
 			)
-			continue
-		}
-
-		// Bots don't need channel or team memberships.
-		if user.IsBot {
 			continue
 		}
 
@@ -851,7 +851,7 @@ func (t *Transformer) transformMessages(messages []RocketChatMessage, uploadsByI
 
 		// Skip messages in skipped rooms.
 		if t.skippedRoomIDs[m.RoomID] {
-			reportPosts.Skip(intermediate.PostID(m.RoomID, m.ID), m.User.Username, ReasonMessageUnknownRoom, m.RoomID)
+			reportPosts.Skip(intermediate.PostID(m.RoomID, m.ID), m.User.Username, intermediate.ReasonPostChannelSkipped)
 			skipThreadRootMissing(m.ID, m.RoomID, m.User.Username, threadReplies[m.ID])
 			continue
 		}

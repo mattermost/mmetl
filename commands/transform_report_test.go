@@ -173,6 +173,41 @@ func TestTransformReportWrittenWhenInputUnreadable(t *testing.T) {
 	assert.Contains(t, string(raw), "does-not-exist.zip")
 }
 
+// TestTransformRejectsArtifactCollisions covers operator paths that a run's own
+// artifacts would overwrite: the export must survive, and the import file must
+// not be replaced by the report.
+func TestTransformRejectsArtifactCollisions(t *testing.T) {
+	t.Run("input named like the log", func(t *testing.T) {
+		dir := t.TempDir()
+		inputPath := filepath.Join(dir, "transform-slack.log")
+		require.NoError(t, fixtures.ExportWithGuestPosts().Build(inputPath))
+		before, err := os.ReadFile(inputPath)
+		require.NoError(t, err)
+
+		c := commands.RootCmd
+		resetCobraFlags(c)
+		c.SetArgs([]string{
+			"transform", "slack",
+			"--team", "myteam",
+			"--file", inputPath,
+			"--output", filepath.Join(dir, "mm_export.jsonl"),
+			"--skip-attachments",
+		})
+		require.ErrorContains(t, c.Execute(), "transform-slack.log")
+
+		after, err := os.ReadFile(inputPath)
+		require.NoError(t, err)
+		assert.Equal(t, before, after, "the export must not be truncated")
+	})
+
+	t.Run("output named like the report", func(t *testing.T) {
+		outputPath := filepath.Join(t.TempDir(), intermediate.ReportJSONFilename)
+		err := runTransformSlackExport(t, fixtures.ExportWithGuestPosts(), outputPath, "--guest-handling", "skip")
+		require.ErrorContains(t, err, intermediate.ReportJSONFilename)
+		assert.NoFileExists(t, outputPath)
+	})
+}
+
 // readReportSection returns the report with the `## Run` block removed, since
 // that block records timings and paths that legitimately differ between runs.
 func readReportSection(t *testing.T, path string) string {

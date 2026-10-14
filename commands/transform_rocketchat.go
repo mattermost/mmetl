@@ -1,7 +1,6 @@
 package commands
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path"
@@ -88,6 +87,9 @@ func transformRocketChatCmdF(cmd *cobra.Command, args []string) (runErr error) {
 	// Every artifact of a run lands next to the bulk import file, so one
 	// migration leaves one self-contained directory.
 	artifactsDir := filepath.Dir(outputFilePath)
+	if err := checkArtifactCollisions(artifactsDir, "rocketchat", dumpDir, uploadsDir, outputFilePath); err != nil {
+		return err
+	}
 	logger, logFile, err := newTransformLogger(artifactsDir, "rocketchat", debug, dryRun)
 	if err != nil {
 		return err
@@ -106,11 +108,11 @@ func transformRocketChatCmdF(cmd *cobra.Command, args []string) (runErr error) {
 
 	if err = transformer.Transform(parsed, skipAttachments, skipEmptyEmails, defaultEmailDomain, guestHandling); err != nil {
 		if dryRun {
-			transformer.Logger.Error(err)
-			return errors.New(dryRunFailedMsg)
+			return failDryRun(report, err)
 		}
 		return err
 	}
+	report.MarkPassComplete()
 
 	botOwner = strings.TrimSpace(botOwner)
 	if hasBotUsers(transformer.Intermediate.UsersById) && botOwner == "" {
@@ -137,7 +139,7 @@ func transformRocketChatCmdF(cmd *cobra.Command, args []string) (runErr error) {
 		}
 
 		if dryRun {
-			if err = rocketchat.VerifyAttachments(parsed.UploadsByID, gridfsIndex, uploadsDir, logger); err != nil {
+			if err = rocketchat.VerifyAttachments(parsed.UploadsByID, gridfsIndex, uploadsDir, report); err != nil {
 				transformer.RecordError(err)
 			}
 		} else {
@@ -151,7 +153,7 @@ func transformRocketChatCmdF(cmd *cobra.Command, args []string) (runErr error) {
 	if dryRun {
 		transformer.CheckIntermediate()
 		if err = transformer.Err(); err != nil {
-			return errors.New(dryRunFailedMsg)
+			return failDryRun(report, err)
 		}
 		logger.Info("Dry-run succeeded")
 		return nil

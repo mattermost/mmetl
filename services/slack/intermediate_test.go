@@ -2864,7 +2864,7 @@ func TestTransformArchivedChannels(t *testing.T) {
 			},
 		}
 
-		result := slackTransformer.TransformChannels(channels, intermediate.EntityPublicChannel)
+		result := slackTransformer.TransformChannels(channels, intermediate.EntityPrivateChannel)
 		require.Len(t, result, 1)
 		assert.Equal(t, int64(1630000000000), result[0].DeleteAt)
 		assert.Equal(t, model.ChannelTypePrivate, result[0].Type)
@@ -2895,7 +2895,7 @@ func TestTransformArchivedChannels(t *testing.T) {
 			},
 		}
 
-		result := bigTransformer.TransformChannels(channels, intermediate.EntityPublicChannel)
+		result := bigTransformer.TransformChannels(channels, intermediate.EntityGroupChannel)
 		require.Len(t, result, 1)
 		assert.Equal(t, model.ChannelTypePrivate, result[0].Type, "oversized MPIM should be rewritten to private")
 		assert.Equal(t, int64(1620000000000), result[0].DeleteAt, "rewritten MPIM should retain DeleteAt")

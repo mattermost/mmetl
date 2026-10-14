@@ -119,6 +119,31 @@ func TestReportFinishRecordsError(t *testing.T) {
 	assert.Contains(t, report.Markdown(), "    "+assert.AnError.Error())
 }
 
+// TestReportPartialRun covers an error before the transform pass finished:
+// counts taken up front must not be reported as transformed.
+func TestReportPartialRun(t *testing.T) {
+	t.Run("aborted pass leaves Transformed unknown", func(t *testing.T) {
+		report := NewReport(nil)
+		report.Users().Seen(3)
+		report.Finish(assert.AnError)
+
+		assert.True(t, report.Partial)
+		assert.Zero(t, report.Users().Transformed)
+		assert.Regexp(t, `\| Users +\| — +\| 0 +\|`, report.Markdown())
+		assert.Contains(t, report.SummaryText("", ""), "—")
+	})
+
+	t.Run("failure after a complete pass keeps counts", func(t *testing.T) {
+		report := NewReport(nil)
+		report.Users().Seen(3)
+		report.MarkPassComplete()
+		report.Finish(assert.AnError)
+
+		assert.False(t, report.Partial)
+		assert.Equal(t, 3, report.Users().Transformed)
+	})
+}
+
 func TestReportLogging(t *testing.T) {
 	newLogger := func() (*log.Logger, *strings.Builder) {
 		buffer := &strings.Builder{}
@@ -445,4 +470,18 @@ func TestSplitReportsChunkCounts(t *testing.T) {
 		assert.Equal(t, 2, SplitOversizedReplies(post))
 		assert.Greater(t, len(post.Replies), 3, "each split reply gains siblings")
 	})
+}
+
+func TestRedactErrorPaths(t *testing.T) {
+	for input, want := range map[string]string{
+		"open /Users/me/export.zip: no such file":    "open export.zip: no such file",
+		`stat "/home/me/out": denied`:                `stat "out": denied`,
+		"/tmp/x/y.jsonl failed":                      "y.jsonl failed",
+		"open data/foo.txt: no such file":            "open data/foo.txt: no such file",
+		"GET https://files.slack.com/a/b: 404":       "GET https://files.slack.com/a/b: 404",
+		"processed 1/2 channels":                     "processed 1/2 channels",
+		"open C:/Users/me/export.zip: access denied": "open export.zip: access denied",
+	} {
+		assert.Equal(t, want, redactErrorPaths(input), input)
+	}
 }
