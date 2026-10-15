@@ -68,6 +68,7 @@ func init() {
 }
 
 func transformSlackCmdF(cmd *cobra.Command, args []string) error {
+	cmd.SilenceUsage = true
 	team, _ := cmd.Flags().GetString("team")
 	inputFilePath, _ := cmd.Flags().GetString("file")
 	outputFilePath, _ := cmd.Flags().GetString("output")

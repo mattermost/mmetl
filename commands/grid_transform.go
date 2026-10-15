@@ -47,6 +47,7 @@ func init() {
 }
 
 func gridTransformCmdF(cmd *cobra.Command, args []string) error {
+	cmd.SilenceUsage = true
 	inputFilePath, _ := cmd.Flags().GetString("file")
 	teamMapPath, _ := cmd.Flags().GetString("team-map-path")
 

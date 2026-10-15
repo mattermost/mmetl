@@ -55,6 +55,7 @@ func init() {
 }
 
 func transformRocketChatCmdF(cmd *cobra.Command, args []string) error {
+	cmd.SilenceUsage = true
 	team, _ := cmd.Flags().GetString("team")
 	dumpDir, _ := cmd.Flags().GetString("dump-dir")
 	outputFilePath, _ := cmd.Flags().GetString("output")

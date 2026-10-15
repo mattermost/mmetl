@@ -7,9 +7,8 @@ import (
 )
 
 var RootCmd = &cobra.Command{
-	Use:          "mmetl",
-	Short:        "ETL tool to transform the export files from different providers to be compatible with Mattermost.",
-	SilenceUsage: true,
+	Use:   "mmetl",
+	Short: "ETL tool to transform the export files from different providers to be compatible with Mattermost.",
 }
 
 func Execute() {
