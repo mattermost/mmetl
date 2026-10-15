@@ -33,9 +33,10 @@ func expectedSanitizedEmojiName(original string) string {
 }
 
 // resetCobraFlags recursively resets all flags in a command tree to their
-// default values. This prevents flag state from leaking between subtests
-// when reusing a global cobra.Command.
+// default values and re-enables usage output. This prevents flag and usage
+// state from leaking between subtests when reusing a global cobra.Command.
 func resetCobraFlags(cmd *cobra.Command) {
+	cmd.SilenceUsage = false
 	cmd.Flags().VisitAll(func(f *pflag.Flag) {
 		_ = f.Value.Set(f.DefValue)
 		f.Changed = false
