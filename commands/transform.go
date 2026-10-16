@@ -127,8 +127,14 @@ func transformSlackCmdF(cmd *cobra.Command, args []string) error {
 	}
 
 	zipReader, err := zip.NewReader(fileReader, zipFileInfo.Size())
-	if err != nil || zipReader.File == nil {
+	if err != nil {
 		return err
+	}
+	// An archive that opens but holds nothing is not something to transform.
+	// This used to return a nil error, exiting 0 with no import file and no
+	// explanation.
+	if len(zipReader.File) == 0 {
+		return fmt.Errorf("the Slack export %q contains no files", inputFilePath)
 	}
 
 	logger, closeLogger, err := configureTransformLogger(dryRun, debug, "transform-slack.log")
@@ -153,7 +159,11 @@ func transformSlackCmdF(cmd *cobra.Command, args []string) error {
 	}
 
 	err = slackTransformer.Transform(slackExport, attachmentsDir, skipAttachments, discardInvalidProps, allowDownload, skipEmptyEmails, defaultEmailDomain, guestHandling)
-	if err != nil && !dryRun {
+	if err != nil {
+		if dryRun {
+			slackTransformer.Logger.Error(err)
+			return errors.New(dryRunFailedMsg)
+		}
 		return err
 	}
 

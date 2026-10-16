@@ -117,7 +117,7 @@ func (t *Transformer) ComputeChannelPostStats() {
 // guest is dropped entirely here ("skip") or kept for later export ("guest"/
 // "user" — the actual role emitted for a kept guest is decided by
 // Exporter.EmitGuestRoles, set from guestHandling by the caller).
-func (t *Transformer) TransformUsers(users []SlackUser, skipEmptyEmails bool, defaultEmailDomain string, guestHandling string) {
+func (t *Transformer) TransformUsers(users []SlackUser, skipEmptyEmails bool, defaultEmailDomain string, guestHandling string) error {
 	t.Logger.Info("Transforming users")
 
 	t.Logger.Debugf("TransformUsers: Input SlackUser structs: %+v", users)
@@ -178,7 +178,7 @@ func (t *Transformer) TransformUsers(users []SlackUser, skipEmptyEmails bool, de
 
 		if !newUser.IsBot {
 			if err := newUser.Sanitise(t.Logger, defaultEmailDomain, skipEmptyEmails); err != nil {
-				t.RecordError(err)
+				return err
 			}
 		}
 		resultUsers[newUser.Id] = newUser
@@ -195,6 +195,8 @@ func (t *Transformer) TransformUsers(users []SlackUser, skipEmptyEmails bool, de
 	case GuestHandlingSkip:
 		t.Logger.Infof("Detected %d guest users; mode=skip (skipping %d guest users)", guestCount, guestsSkipped)
 	}
+
+	return nil
 }
 
 func (t *Transformer) filterValidMembers(members []string, users map[string]*IntermediateUser) []string {
@@ -226,6 +228,13 @@ func getOriginalName(channel SlackChannel) string {
 func (t *Transformer) TransformChannels(channels []SlackChannel) []*IntermediateChannel {
 	resultChannels := []*IntermediateChannel{}
 	for _, channel := range channels {
+		// Capture the source name before the oversized-MPIM branch below
+		// overwrites channel.Name with the channel purpose. OriginalName is what
+		// routes this channel's posts to it (see buildChannelsByOriginalNameMap),
+		// so it has to stay the name the export used, or every post in an
+		// oversized MPIM is dropped as channel_not_found.
+		originalName := getOriginalName(channel)
+
 		validMembers := t.filterValidMembers(channel.Members, t.Intermediate.UsersById)
 		if (channel.Type == model.ChannelTypeDirect || channel.Type == model.ChannelTypeGroup) && len(validMembers) <= 1 {
 			t.Logger.Warnf("Bulk export for direct channels containing a single member is not supported. Not importing channel %s", channel.Name)
@@ -239,7 +248,7 @@ func (t *Transformer) TransformChannels(channels []SlackChannel) []*Intermediate
 
 		name := SlackConvertChannelName(channel.Name, channel.Id)
 		newChannel := &IntermediateChannel{
-			OriginalName: getOriginalName(channel),
+			OriginalName: originalName,
 			Name:         name,
 			DisplayName:  channel.Name,
 			Members:      validMembers,
@@ -671,6 +680,26 @@ func getNormalisedFilePath(file *SlackFile, attachmentsDir string) string {
 	return norm.NFC.String(p)
 }
 
+func collectPostFiles(post *SlackPost) []*SlackFile {
+	seen := make(map[string]struct{})
+	var files []*SlackFile
+	add := func(f *SlackFile) {
+		if f == nil {
+			return
+		}
+		if _, ok := seen[f.Id]; ok {
+			return
+		}
+		seen[f.Id] = struct{}{}
+		files = append(files, f)
+	}
+	add(post.File)
+	for _, f := range post.Files {
+		add(f)
+	}
+	return files
+}
+
 func addFileToPost(file *SlackFile, uploads map[string]*zip.File, post *IntermediatePost, attachmentsDir string, allowDownload bool) error {
 	if _, ok := uploads[file.Id]; ok || !allowDownload {
 		return addZipFileToPost(file, uploads, post, attachmentsDir)
@@ -800,27 +829,19 @@ func (t *Transformer) AddFilesToPost(post *SlackPost, skipAttachments bool, slac
 	if skipAttachments || (post.File == nil && post.Files == nil) {
 		return
 	}
-	if post.File != nil {
+
+	files := collectPostFiles(post)
+	for _, file := range files {
+		if file.Name == "" {
+			t.Logger.Warnf("Not able to access the file %s as file access is denied so skipping", file.Id)
+			continue
+		}
 		if t.DryRun {
-			t.verifySlackAttachment(post.File, slackExport.Uploads, allowDownload)
-			return
+			t.verifySlackAttachment(file, slackExport.Uploads, allowDownload)
+			continue
 		}
-		if err := addFileToPost(post.File, slackExport.Uploads, newPost, attachmentsDir, allowDownload); err != nil {
+		if err := addFileToPost(file, slackExport.Uploads, newPost, attachmentsDir, allowDownload); err != nil {
 			t.Logger.WithError(err).Error("Failed to add file to post")
-		}
-	} else if post.Files != nil {
-		for _, file := range post.Files {
-			if file.Name == "" {
-				t.Logger.Warnf("Not able to access the file %s as file access is denied so skipping", file.Id)
-				continue
-			}
-			if t.DryRun {
-				t.verifySlackAttachment(file, slackExport.Uploads, allowDownload)
-				continue
-			}
-			if err := addFileToPost(file, slackExport.Uploads, newPost, attachmentsDir, allowDownload); err != nil {
-				t.Logger.WithError(err).Error("Failed to add file to post")
-			}
 		}
 	}
 }
@@ -1219,7 +1240,9 @@ func (t *Transformer) Transform(slackExport *SlackExport, attachmentsDir string,
 	// Guests are exported with Mattermost guest roles only in "guest" mode.
 	t.EmitGuestRoles = guestHandling == GuestHandlingGuest
 
-	t.TransformUsers(slackExport.Users, skipEmptyEmails, defaultEmailDomain, guestHandling)
+	if err := t.TransformUsers(slackExport.Users, skipEmptyEmails, defaultEmailDomain, guestHandling); err != nil {
+		return err
+	}
 
 	if err := t.TransformAllChannels(slackExport); err != nil {
 		return err
