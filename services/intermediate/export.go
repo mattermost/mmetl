@@ -492,7 +492,19 @@ func (e *Exporter) versionLine() ([]byte, error) {
 		return nil, errors.Wrap(err, "An error occurred marshalling the JSON data for export.")
 	}
 	if len(encoded)+1 > VersionLineSize {
-		return nil, errors.Errorf("the version line needs %d bytes but only %d are reserved", len(encoded)+1, VersionLineSize)
+		if e.Logger != nil {
+			e.Logger.Warnf("The version line needs %d bytes but only %d are reserved; writing the default version line without metadata. The transform is unaffected.", len(encoded)+1, VersionLineSize)
+		}
+		// Fall back to the minimal default version line
+		version := 1
+		defaultVersionLine := &imports.LineImportData{
+			Type:    "version",
+			Version: &version,
+		}
+		encoded, err = json.Marshal(defaultVersionLine)
+		if err != nil {
+			return nil, errors.Wrap(err, "An error occurred marshalling the default version line.")
+		}
 	}
 
 	line := bytes.Repeat([]byte{' '}, VersionLineSize)
