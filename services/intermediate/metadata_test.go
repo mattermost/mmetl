@@ -207,6 +207,58 @@ func TestIntermediateCounts(t *testing.T) {
 	})
 }
 
+func TestOverflowReplies(t *testing.T) {
+	for name, testCase := range map[string]struct {
+		attachments int
+		expected    int
+	}{
+		"0 attachments":  {attachments: 0, expected: 0},
+		"1 attachment":   {attachments: 1, expected: 0},
+		"5 attachments":  {attachments: 5, expected: 0},
+		"6 attachments":  {attachments: 6, expected: 1},
+		"10 attachments": {attachments: 10, expected: 1},
+		"11 attachments": {attachments: 11, expected: 2},
+		"15 attachments": {attachments: 15, expected: 2},
+		"16 attachments": {attachments: 16, expected: 3},
+	} {
+		t.Run(name, func(t *testing.T) {
+			assert.Equal(t, testCase.expected, overflowReplies(testCase.attachments))
+		})
+	}
+}
+
+func TestIntermediateCountsIncludesAttachmentOverflow(t *testing.T) {
+	i := &Intermediate{
+		Posts: []*IntermediatePost{
+			{
+				Message:     "post with 11 attachments",
+				Attachments: make([]string, 11),
+				Replies: []*IntermediatePost{
+					{
+						Message:     "reply with 7 attachments",
+						Attachments: make([]string, 7),
+					},
+					{
+						Message:     "reply with 3 attachments",
+						Attachments: make([]string, 3),
+					},
+				},
+			},
+			{
+				Message:     "post with 6 attachments",
+				Attachments: make([]string, 6),
+			},
+		},
+	}
+
+	counts := i.Counts()
+
+	assert.Equal(t, 2, counts.Posts, "two source posts")
+	assert.Equal(t, 27, counts.Attachments, "11+7+3+6 attachments from source")
+
+	assert.Equal(t, 6, counts.Replies, "2 source replies + 2 overflow from 11-attachment post + 1 overflow from 7-attachment reply + 1 overflow from 6-attachment post")
+}
+
 // TestExportVersionWithoutReport pins Exporter.Report's documented contract: a
 // nil report is valid and inert. The metadata is the report's, so without one
 // line 1 is the bare version line the format requires — not a panic, and not a

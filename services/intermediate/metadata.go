@@ -138,6 +138,16 @@ func (e *Exporter) stampExportInfo() {
 	metadata.Version = metadata.VersionString()
 }
 
+// overflowReplies returns the number of overflow replies that GetImportLineFromPost
+// generates when a post or reply has n attachments. The export phase splits attachments
+// beyond POST_MAX_ATTACHMENTS into additional replies to stay under the per-post limit.
+func overflowReplies(n int) int {
+	if n <= POST_MAX_ATTACHMENTS {
+		return 0
+	}
+	return (n - 1) / POST_MAX_ATTACHMENTS
+}
+
 // Counts totals the lines the Intermediate would produce. A nil Intermediate
 // counts as empty, matching the rest of the report's tolerance for a half-built
 // Exporter.
@@ -164,11 +174,13 @@ func (i *Intermediate) Counts() Counts {
 		counts.Posts++
 		counts.Reactions += len(post.Reactions)
 		counts.Attachments += len(post.Attachments)
+		counts.Replies += overflowReplies(len(post.Attachments))
 
 		for _, reply := range post.Replies {
 			counts.Replies++
 			counts.Reactions += len(reply.Reactions)
 			counts.Attachments += len(reply.Attachments)
+			counts.Replies += overflowReplies(len(reply.Attachments))
 		}
 	}
 
