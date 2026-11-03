@@ -421,7 +421,48 @@ func TestTransformBigGroupChannels(t *testing.T) {
 		assert.Equal(t, fmt.Sprintf("purpose%d", i+1), result[i].Purpose)
 		assert.Equal(t, fmt.Sprintf("topic%d", i+1), result[i].Header)
 		assert.Equal(t, model.ChannelTypePrivate, result[i].Type)
+		if bigGroupChannels[i].Name != "" {
+			assert.Equal(t, bigGroupChannels[i].Name, result[i].OriginalName,
+				"posts are keyed by the Slack folder name, not the purpose overwrite")
+		} else {
+			assert.Equal(t, bigGroupChannels[i].Id, result[i].OriginalName)
+		}
 	}
+}
+
+func TestOversizedMPIMKeepsOriginalNameAndReceivesPosts(t *testing.T) {
+	tr := NewTransformer("test", log.New())
+	members := make([]string, model.ChannelGroupMaxUsers+1)
+	users := map[string]*IntermediateUser{}
+	for i := range members {
+		id := fmt.Sprintf("u%d", i)
+		members[i] = id
+		users[id] = &IntermediateUser{Id: id, Username: id, Email: id + "@ex.com"}
+	}
+	tr.Intermediate.UsersById = users
+
+	const slackName = "mpdm-alice--bob--charlie-1"
+	channels := tr.TransformChannels([]SlackChannel{{
+		Id:      "G999",
+		Name:    slackName,
+		Members: members,
+		Purpose: SlackChannelSub{Value: "oversized-mpim-purpose"},
+		Type:    model.ChannelTypeGroup,
+	}}, intermediate.EntityGroupChannel)
+
+	require.Len(t, channels, 1)
+	assert.Equal(t, slackName, channels[0].OriginalName)
+	assert.Equal(t, model.ChannelTypePrivate, channels[0].Type)
+
+	tr.Intermediate.PrivateChannels = channels
+	require.NoError(t, tr.TransformPosts(&SlackExport{
+		Posts: map[string][]SlackPost{
+			slackName: {{User: members[0], Text: "hello from oversized mpim", TimeStamp: "1704067200.000100", Type: "message"}},
+		},
+	}, "", true, false, false))
+
+	require.Len(t, tr.Intermediate.Posts, 1, "a regression here drops every post as channel_not_found")
+	assert.Equal(t, "hello from oversized mpim", tr.Intermediate.Posts[0].Message)
 }
 
 func TestAddFilesToPostSkipsNamelessLegacyFile(t *testing.T) {
