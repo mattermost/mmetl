@@ -448,6 +448,57 @@ func TestRewriteVersionDoesNotCommitOnWriteAtFailure(t *testing.T) {
 	assert.Equal(t, Counts{}, details.Counts, "Counts must stay empty when WriteAt fails")
 }
 
+// TestRewriteVersionDoesNotOverwriteOnOverflow covers why RewriteVersion must
+// not fall back to a bare version line: the export-time line already has
+// metadata, and an overflow during rewrite must preserve it rather than
+// replacing it with a bare line.
+func TestRewriteVersionDoesNotOverwriteOnOverflow(t *testing.T) {
+	exporter := metadataFixture(t)
+	exporter.Report.Metadata.Generator = generatorName
+	exporter.Report.Metadata.Created = NowFunc().UTC().Format(time.RFC3339Nano)
+	exporter.Report.Metadata.Version = exporter.Report.Metadata.VersionString()
+
+	// Export with reasonable flags - the line will have metadata and fit.
+	var exportBuf bytes.Buffer
+	require.NoError(t, exporter.ExportVersion(&exportBuf))
+
+	var exportLine imports.LineImportData
+	require.NoError(t, json.Unmarshal(exportBuf.Bytes(), &exportLine))
+	require.NotNil(t, exportLine.Info, "export-time line has metadata")
+	assert.Equal(t, "mmetl", exportLine.Info.Generator)
+
+	// Now set extremely long flags that will cause overflow when combined with
+	// Finished and Counts during rewrite. This simulates a scenario where the
+	// metadata grows between export and rewrite.
+	exporter.Report.Metadata.Additional.Run.Flags = "--flag=" + strings.Repeat("x", 3800)
+
+	// RewriteVersion should detect the overflow and preserve the export-time line.
+	// It must not overwrite line 1, and must not commit Finished or Counts to the report.
+	path := filepath.Join(t.TempDir(), "test.jsonl")
+	require.NoError(t, os.WriteFile(path, exportBuf.Bytes(), 0644))
+
+	file, err := os.OpenFile(path, os.O_RDWR, 0644)
+	require.NoError(t, err)
+	defer file.Close()
+
+	err = exporter.RewriteVersion(file)
+	assert.NoError(t, err, "RewriteVersion returns nil when overflow is caught")
+
+	details := exporter.Report.Metadata.details()
+	assert.True(t, details.Run.Finished.IsZero(), "Finished must stay zero when rewrite overflows")
+	assert.Equal(t, Counts{}, details.Counts, "Counts must stay empty when rewrite overflows")
+
+	// Line 1 must still have the export-time metadata, not a bare version line.
+	raw, err := os.ReadFile(path)
+	require.NoError(t, err)
+	firstLine, _, _ := bytes.Cut(raw, []byte{'\n'})
+
+	var finalLine imports.LineImportData
+	require.NoError(t, json.Unmarshal(firstLine, &finalLine))
+	require.NotNil(t, finalLine.Info, "line 1 must keep the export-time metadata")
+	assert.Equal(t, "mmetl", finalLine.Info.Generator, "line 1 must not be replaced with a bare version line")
+}
+
 func TestInfoVersionString(t *testing.T) {
 	for name, testCase := range map[string]struct {
 		info     Info
