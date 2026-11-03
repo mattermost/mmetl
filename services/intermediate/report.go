@@ -97,8 +97,12 @@ type Report struct {
 	// Metadata is the same Info that goes onto the version line of the bulk
 	// import file, so the file and the report next to it cannot disagree about
 	// what produced them. See metadata.go.
-	Metadata Info                         `json:"metadata"`
-	Error    string                       `json:"error,omitempty"`
+	Metadata Info   `json:"metadata"`
+	Error    string `json:"error,omitempty"`
+	// Partial marks a run that stopped before the transform pass finished.
+	// Source counts are taken up front, so a partial run cannot tell which
+	// entities would have reached the import file and Transformed stays 0.
+	Partial  bool                         `json:"partial,omitempty"`
 	Entities map[EntityKind]*EntityReport `json:"entities"`
 	// Reasons is the dictionary of every reason referenced by a note in this
 	// run, emitted once so notes can refer to it by code.
@@ -109,6 +113,10 @@ type Report struct {
 	// quietCounts totals the notes recorded for reasons marked Quiet, so the
 	// run can log one aggregate line per reason instead of one line per entity.
 	quietCounts map[string]int
+
+	// passComplete is set once the transform pass has walked the whole export,
+	// so a failure after it (such as dry-run validation) keeps its counts.
+	passComplete bool
 
 	// finished guards Finish so a deferred write and an explicit call cannot
 	// derive the counters twice.
@@ -351,6 +359,14 @@ func (n ReportEntityNote) Reason() *Reason {
 	return LookupReason(n.ReasonCode)
 }
 
+// MarkPassComplete records that the transform pass walked the whole export, so
+// an error that ends the run afterwards still leaves complete counts.
+func (r *Report) MarkPassComplete() {
+	if r != nil {
+		r.passComplete = true
+	}
+}
+
 // Finish closes the report: it stamps the finish time, records the error that
 // aborted the run (if any), derives the Transformed counters, and logs the
 // aggregate line for each quiet reason. It is safe to call more than once.
@@ -376,8 +392,11 @@ func (r *Report) Finish(runErr error) {
 		}
 	}
 
-	for _, entity := range r.Entities {
-		entity.Transformed = max(entity.sourceTotal-entity.Skipped, 0)
+	r.Partial = runErr != nil && !r.passComplete
+	if !r.Partial {
+		for _, entity := range r.Entities {
+			entity.Transformed = max(entity.sourceTotal-entity.Skipped, 0)
+		}
 	}
 
 	r.logQuietSummary()
@@ -426,7 +445,7 @@ func (r *Report) orderedKinds() []EntityKind {
 
 // hasContent reports whether a kind is worth rendering at all.
 func (e *EntityReport) hasContent() bool {
-	return e != nil && (e.Transformed > 0 || e.Skipped > 0 || len(e.Notes) > 0)
+	return e != nil && (e.sourceTotal > 0 || e.Transformed > 0 || e.Skipped > 0 || len(e.Notes) > 0)
 }
 
 // sortedNotes returns the entity's notes ordered by (ReasonCode, EntityID), the
@@ -493,13 +512,16 @@ func (r *Report) Write(dir string) (string, string, error) {
 	return markdownPath, jsonPath, nil
 }
 
-// absolutePath matches a POSIX or Windows absolute path occupying one token, so
-// a report attached to a support ticket does not carry the operator's home
-// directory. The full error stays in the transform log.
-var absolutePath = regexp.MustCompile(`(?:[A-Za-z]:)?(?:/[^ \t:"']+)+`)
+// absolutePath matches an absolute path (POSIX, or Windows with forward
+// slashes) that starts a token, so a report attached to a support ticket does
+// not carry the operator's home directory. Group 1 is the delimiter before the
+// path, which is kept; requiring it leaves relative paths, URLs and ratios such
+// as "1/2" intact. The full error stays in the transform log.
+var absolutePath = regexp.MustCompile(`(^|[\s"'(=])((?:[A-Za-z]:)?(?:/[^\s:"']+)+)`)
 
 func redactErrorPaths(s string) string {
-	return absolutePath.ReplaceAllStringFunc(s, func(p string) string {
-		return filepath.Base(strings.Trim(p, `"'`))
+	return absolutePath.ReplaceAllStringFunc(s, func(match string) string {
+		parts := absolutePath.FindStringSubmatch(match)
+		return parts[1] + filepath.Base(parts[2])
 	})
 }

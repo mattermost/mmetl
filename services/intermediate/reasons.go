@@ -318,15 +318,15 @@ var (
 			"are otherwise unaffected.",
 	})
 
-	// ReasonEmojiRenamed is recorded when an emoji or reaction name had to be
-	// rewritten to a Mattermost-valid name.
-	ReasonEmojiRenamed = RegisterReason(&Reason{
-		Code:      "emoji_renamed",
-		Short:     "is not a valid Mattermost emoji name and was renamed",
-		Specifics: "renamed to %s",
-		Detail: "Mattermost emoji names are limited to letters, digits, hyphens, underscores and " +
-			"plus signs. The same source name always maps to the same new name within a run, so " +
-			"reactions stay grouped.",
+	// ReasonPostChannelSkipped is recorded for a post dropped because the
+	// channel it was in was skipped.
+	ReasonPostChannelSkipped = RegisterReason(&Reason{
+		Code:  "post_channel_skipped",
+		Short: "the channel the post belonged to was skipped",
+		Detail: "The channel did not reach the import file, so its posts are dropped with it. The " +
+			"reason the channel was skipped is listed in that channel's own section of this report.",
+		Skip:  true,
+		Quiet: true,
 	})
 
 	// ReasonGuestDemotedToUser is recorded when a guest could not be exported

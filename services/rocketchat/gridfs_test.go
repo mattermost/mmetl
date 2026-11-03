@@ -370,6 +370,7 @@ func TestExtractAttachments(t *testing.T) {
 func TestVerifyAttachments(t *testing.T) {
 	logger := log.New()
 	logger.SetOutput(os.Stderr)
+	newReport := func() *intermediate.Report { return intermediate.NewReport(logger) }
 
 	t.Run("GridFS present is ok", func(t *testing.T) {
 		dir := testhelper.WorkDir(t)
@@ -382,23 +383,25 @@ func TestVerifyAttachments(t *testing.T) {
 		})
 		idx, err := BuildGridFSIndex(chunksPath)
 		require.NoError(t, err)
-		require.NoError(t, VerifyAttachments(uploads, idx, "", logger))
+		require.NoError(t, VerifyAttachments(uploads, idx, "", newReport()))
 	})
 
 	t.Run("missing GridFS chunks is an error", func(t *testing.T) {
 		uploads := map[string]*RocketChatUpload{
 			"up1": {ID: "up1", Name: "missing.jpg", Size: 1, Store: "GridFS:Uploads", Complete: true},
 		}
-		err := VerifyAttachments(uploads, nil, "", logger)
+		report := newReport()
+		err := VerifyAttachments(uploads, nil, "", report)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "GridFS chunks not found")
+		assert.Equal(t, 1, report.Uploads().Skipped, "dry-run must name the missing upload in the report")
 	})
 
 	t.Run("missing FileSystem file is an error", func(t *testing.T) {
 		uploads := map[string]*RocketChatUpload{
 			"up1": {ID: "up1", Name: "photo.png", Store: "FileSystem", Path: "/file-upload/up1/photo.png", Complete: true},
 		}
-		err := VerifyAttachments(uploads, nil, testhelper.WorkDir(t), logger)
+		err := VerifyAttachments(uploads, nil, testhelper.WorkDir(t), newReport())
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "not found")
 	})

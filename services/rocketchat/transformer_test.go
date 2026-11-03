@@ -514,6 +514,25 @@ func TestTransformSubscriptions(t *testing.T) {
 		assert.Len(t, tr.Intermediate.PublicChannels[0].Members, 1)
 		assert.Len(t, tr.Intermediate.UsersById["u1"].Memberships, 1)
 	})
+
+	t.Run("bot subscriptions are not counted", func(t *testing.T) {
+		tr := NewTransformer("test", newLogger())
+		tr.Intermediate.UsersById = map[string]*intermediate.IntermediateUser{
+			"u1":   {Id: "u1", Username: "alice"},
+			"bot1": {Id: "bot1", Username: "helper", IsBot: true},
+		}
+		tr.Intermediate.PublicChannels = []*intermediate.IntermediateChannel{
+			{Id: "r1", Name: "general"},
+		}
+		subs := []RocketChatSubscription{
+			{RoomID: "r1", User: RCMessageUser{ID: "u1", Username: "alice"}},
+			{RoomID: "r1", User: RCMessageUser{ID: "bot1", Username: "helper"}},
+		}
+		tr.transformSubscriptions(subs)
+		tr.Report.Finish(nil)
+		assert.Equal(t, []string{"u1"}, tr.Intermediate.PublicChannels[0].Members)
+		assert.Equal(t, 1, tr.Report.Subscriptions().Transformed)
+	})
 }
 
 // ---------------------------------------------------------------------------

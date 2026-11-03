@@ -1006,6 +1006,7 @@ func (t *Transformer) verifySlackAttachment(file *SlackFile, uploads map[string]
 		t.Logger.Warnf("Attachment %s is not in the zip; --allow-download would fetch it at transform time", file.Id)
 		return
 	}
+	t.Report.Files().Skip(file.Id, file.Name, ReasonFileAddFailed, "not present in the export zip")
 	t.RecordError(fmt.Errorf("failed to retrieve file with id %s", file.Id))
 }
 
@@ -1013,6 +1014,27 @@ func (t *Transformer) AddAttachmentsToPost(post *SlackPost, newPost *Intermediat
 	props := model.StringInterface{"attachments": post.Attachments}
 	propsByteArray, _ := json.Marshal(props)
 	return props, propsByteArray
+}
+
+// postAttachmentProps returns the props for a post's Slack attachments, nil when
+// it has none or they are too large to keep. keep is false when the post itself
+// is skipped under --discard-invalid-props; it runs before the post's reactions
+// and files are counted, so a skipped post leaves none of them reported as
+// transformed.
+func (t *Transformer) postAttachmentProps(post SlackPost, channel *IntermediateChannel, author string, discardInvalidProps bool) (props model.StringInterface, keep bool) {
+	if len(post.Attachments) == 0 {
+		return nil, true
+	}
+	props, propsB := t.AddAttachmentsToPost(&post, nil)
+	if utf8.RuneCount(propsB) <= model.PostPropsMaxRunes {
+		return props, true
+	}
+	if discardInvalidProps {
+		t.skipPost(channel, post, author, ReasonPostPropsTooLarge)
+		return nil, false
+	}
+	t.Report.Posts().Note(intermediate.PostID(channel.OriginalName, post.TimeStamp), author, ReasonPostPropsDropped)
+	return nil, true
 }
 
 func buildMessagePropsFromHuddle(post *SlackPost) model.StringInterface {
@@ -1107,12 +1129,26 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 		posts.Seen(len(channelPosts))
 	}
 
+	// A posts directory with no transformed channel is either for a channel the
+	// export describes but the transform skipped, or for one it never described.
+	sourceChannels := map[string]bool{}
+	for _, list := range [][]SlackChannel{slackExport.PublicChannels, slackExport.PrivateChannels, slackExport.GroupChannels, slackExport.DirectChannels} {
+		for _, ch := range list {
+			sourceChannels[getOriginalName(ch)] = true
+		}
+	}
+
 	resultPosts := []*IntermediatePost{}
 	for originalChannelName, channelPosts := range slackExport.Posts {
 		channel, ok := channelsByOriginalName[originalChannelName]
 		if !ok {
 			for _, post := range channelPosts {
-				posts.Skip(intermediate.PostID(originalChannelName, post.TimeStamp), t.usernameFor(post.User), ReasonChannelNotFound, originalChannelName)
+				id := intermediate.PostID(originalChannelName, post.TimeStamp)
+				if sourceChannels[originalChannelName] {
+					posts.Skip(id, t.usernameFor(post.User), intermediate.ReasonPostChannelSkipped)
+				} else {
+					posts.Skip(id, t.usernameFor(post.User), ReasonChannelNotFound, originalChannelName)
+				}
 			}
 			delete(slackExport.Posts, originalChannelName)
 			continue
@@ -1148,28 +1184,20 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 					author = t.Intermediate.UsersById[botId]
 				}
 
+				props, keep := t.postAttachmentProps(post, channel, author.Username, discardInvalidProps)
+				if !keep {
+					continue
+				}
 				newPost := &IntermediatePost{
 					User:      author.Username,
 					Channel:   channel.Name,
 					Message:   post.Text,
 					Reactions: t.getReactionsFromPost(post, channel),
 					CreateAt:  SlackConvertTimeStamp(post.TimeStamp),
+					Props:     props,
 				}
 
 				t.AddFilesToPost(&post, skipAttachments, slackExport, attachmentsDir, newPost, allowDownload)
-
-				if len(post.Attachments) > 0 {
-					props, propsB := t.AddAttachmentsToPost(&post, newPost)
-					if utf8.RuneCount(propsB) <= model.PostPropsMaxRunes {
-						newPost.Props = props
-					} else {
-						if discardInvalidProps {
-							t.skipPost(channel, post, author.Username, ReasonPostPropsTooLarge)
-							continue
-						}
-						posts.Note(intermediate.PostID(channel.OriginalName, post.TimeStamp), author.Username, ReasonPostPropsDropped)
-					}
-				}
 
 				t.addPostToThreads(post, newPost, threads, channel, timestamps)
 
@@ -1188,27 +1216,19 @@ func (t *Transformer) TransformPosts(slackExport *SlackExport, attachmentsDir st
 					t.CreateIntermediateUser(post.User)
 					author = t.Intermediate.UsersById[post.User]
 				}
+				props, keep := t.postAttachmentProps(post, channel, author.Username, discardInvalidProps)
+				if !keep {
+					continue
+				}
 				newPost := &IntermediatePost{
 					User:      author.Username,
 					Channel:   channel.Name,
 					Message:   post.Text,
 					Reactions: t.getReactionsFromPost(post, channel),
 					CreateAt:  SlackConvertTimeStamp(post.TimeStamp),
+					Props:     props,
 				}
 				t.AddFilesToPost(&post, skipAttachments, slackExport, attachmentsDir, newPost, allowDownload)
-
-				if len(post.Attachments) > 0 {
-					props, propsB := t.AddAttachmentsToPost(&post, newPost)
-					if utf8.RuneCount(propsB) <= model.PostPropsMaxRunes {
-						newPost.Props = props
-					} else {
-						if discardInvalidProps {
-							t.skipPost(channel, post, author.Username, ReasonPostPropsTooLarge)
-							continue
-						}
-						posts.Note(intermediate.PostID(channel.OriginalName, post.TimeStamp), author.Username, ReasonPostPropsDropped)
-					}
-				}
 
 				t.addPostToThreads(post, newPost, threads, channel, timestamps)
 

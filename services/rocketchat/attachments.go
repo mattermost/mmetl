@@ -8,8 +8,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	log "github.com/sirupsen/logrus"
-
 	"golang.org/x/text/unicode/norm"
 
 	"github.com/mattermost/mmetl/services/intermediate"
@@ -137,62 +135,60 @@ func ExtractAttachments(
 	return nil
 }
 
-func skipUpload(upload *RocketChatUpload) bool {
-	return !upload.Complete || upload.TypeGroup == "thumb"
-}
-
-func fileSystemSourcePath(upload *RocketChatUpload, uploadsDir string) (string, error) {
-	if uploadsDir == "" {
-		return "", fmt.Errorf("FileSystem upload %s (%s): --uploads-dir not provided", upload.ID, upload.Name)
-	}
-	srcFilename := sanitizeFilename(filepath.Base(upload.Path))
-	if srcFilename == "" || srcFilename == "." || srcFilename == ".." {
-		return "", fmt.Errorf("FileSystem upload %s (%s): unsafe source path %q", upload.ID, upload.Name, upload.Path)
-	}
-	return filepath.Join(uploadsDir, srcFilename), nil
-}
-
 // VerifyAttachments checks that each complete upload's source exists without
-// writing any files. Missing sources are returned as a joined error.
-
+// writing any files, and records every upload in report the way
+// ExtractAttachments would. Missing sources are returned as a joined error.
 func VerifyAttachments(
 	uploads map[string]*RocketChatUpload,
 	gridfsIndex *GridFSIndex,
 	uploadsDir string,
-	logger log.FieldLogger,
+	report *intermediate.Report,
 ) error {
+	entity := report.Uploads()
+	entity.Seen(len(uploads))
+	logger := report.Logger()
+
 	var errs []error
+	fail := func(upload *RocketChatUpload, reason *intermediate.Reason, err error, args ...string) {
+		entity.Skip(upload.ID, upload.Name, reason, args...)
+		if logger != nil {
+			logger.Error(err)
+		}
+		errs = append(errs, err)
+	}
+
 	for _, upload := range uploads {
-		if skipUpload(upload) {
+		switch {
+		case !upload.Complete:
+			entity.Skip(upload.ID, upload.Name, ReasonUploadIncomplete)
+			continue
+		case upload.TypeGroup == "thumb":
+			entity.Skip(upload.ID, upload.Name, ReasonUploadThumbnail)
 			continue
 		}
+
 		switch {
 		case strings.HasPrefix(upload.Store, "GridFS:"):
-			if gridfsIndex != nil && gridfsIndex.Has(upload.ID) {
+			if (gridfsIndex != nil && gridfsIndex.Has(upload.ID)) || upload.Size == 0 {
 				continue
 			}
-			if upload.Size == 0 {
-				continue
-			}
-			err := fmt.Errorf("GridFS chunks not found for upload %s (%s)", upload.ID, upload.Name)
-			logger.Error(err)
-			errs = append(errs, err)
+			fail(upload, ReasonUploadGridFSMissing, fmt.Errorf("GridFS chunks not found for upload %s (%s)", upload.ID, upload.Name))
 		case upload.Store == "FileSystem":
-			srcPath, err := fileSystemSourcePath(upload, uploadsDir)
-			if err != nil {
-				logger.Error(err)
-				errs = append(errs, err)
+			if uploadsDir == "" {
+				fail(upload, ReasonUploadNoUploadsDir, fmt.Errorf("FileSystem upload %s (%s): --uploads-dir not provided", upload.ID, upload.Name))
 				continue
 			}
+			srcFilename := sanitizeFilename(filepath.Base(upload.Path))
+			if srcFilename == "" || srcFilename == "." || srcFilename == ".." {
+				fail(upload, ReasonUploadUnsafePath, fmt.Errorf("FileSystem upload %s (%s): unsafe source path %q", upload.ID, upload.Name, upload.Path), upload.Path)
+				continue
+			}
+			srcPath := filepath.Join(uploadsDir, srcFilename)
 			if _, statErr := os.Stat(srcPath); statErr != nil {
-				err := fmt.Errorf("FileSystem upload %s (%s) not found at %s", upload.ID, upload.Name, srcPath)
-				logger.Error(err)
-				errs = append(errs, err)
+				fail(upload, ReasonUploadExtractFailed, fmt.Errorf("FileSystem upload %s (%s) not found at %s", upload.ID, upload.Name, srcPath))
 			}
 		default:
-			err := fmt.Errorf("unknown upload store %q for %s (%s)", upload.Store, upload.ID, upload.Name)
-			logger.Error(err)
-			errs = append(errs, err)
+			fail(upload, ReasonUploadUnknownStore, fmt.Errorf("unknown upload store %q for %s (%s)", upload.Store, upload.ID, upload.Name), upload.Store)
 		}
 	}
 	return errors.Join(errs...)
