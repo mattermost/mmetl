@@ -37,6 +37,13 @@ mmetl transform rocketchat --team myteam --dump-dir /tmp/rc-dump/meteor --dry-ru
 mmetl transform slack --team myteam --file export.zip --output mm_export.jsonl
 ```
 
+Every transform writes a **transform report** next to the import file, in both
+Markdown and JSON, naming every entity that was skipped and why, along with
+anything that had to be changed on the way in. It is always produced, on success
+and on failure. See
+[docs/examples/transform-report.md](docs/examples/transform-report.md) for a real
+one.
+
 Slack **Enterprise Grid** exports must be split first. `mmetl grid-transform` infers each workspace ID from the `teams/<name>/` folders already in the archive and writes one zip per workspace:
 
 ```sh

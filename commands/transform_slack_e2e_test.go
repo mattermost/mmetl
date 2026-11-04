@@ -1600,6 +1600,35 @@ func TestTransformSlackE2EGuestSkip(t *testing.T) {
 		"guest-authored thread root should be dropped in skip mode")
 	assert.False(t, anyPostContains(posts, "Regular user reply in guest thread"),
 		"non-guest reply to a skipped guest's thread root should be dropped with the whole thread")
+
+	// The report names every dropped entity, which is a stronger assertion than
+	// the absence checks above: it says why each one went missing.
+	report := readTransformReport(t, mmExportPath, "# Slack Transform Report")
+	assert.Equal(t, teamName, report.Metadata.Team)
+	assert.Empty(t, report.Error, "a successful run must not record an error")
+
+	assert.ElementsMatch(t, []string{"multi.guest", "single.guest"},
+		report.skippedNames("user", "guest_skip_mode"))
+	assert.Equal(t, 2, report.Entities["user"].Skipped)
+	assert.Equal(t, 1, report.Entities["user"].Transformed, "only regular.user reaches the import file")
+
+	assert.NotEmpty(t, report.skippedNames("post", "post_skipped_author"),
+		"the guests' own posts must be named as skipped")
+	assert.NotEmpty(t, report.skippedNames("post", "thread_root_missing"),
+		"the non-guest reply must be named as dropped with the whole thread")
+	assert.Equal(t, 1, report.Entities["thread"].Skipped,
+		"the guest-rooted thread is named once, not once per reply")
+
+	// Every reason a note points at is in the dictionary, with the prose the
+	// Markdown footnotes are built from.
+	for kind := range report.Entities {
+		for _, note := range report.Entities[kind].Notes {
+			reason, ok := report.Reasons[note.ReasonCode]
+			require.True(t, ok, "reason %q is missing from the report dictionary", note.ReasonCode)
+			assert.NotEmpty(t, reason.Detail)
+			assert.NotEmpty(t, note.EntityID, "every note must name its entity")
+		}
+	}
 }
 
 // TestTransformSlackE2EGuestUserMode verifies that --guest-handling=user
@@ -1766,6 +1795,22 @@ func TestTransformSlackE2EChannellessGuestMpimThread(t *testing.T) {
 		"the channel-less guest's thread root should be dropped")
 	assert.False(t, anyPostContains(posts, "Regular reply in guest mpim thread"),
 		"the non-guest reply should be dropped along with the skipped guest's thread")
+
+	// The report says which guest was dropped and why, and names the content
+	// that went with them — the whole point of producing it.
+	report := readTransformReport(t, mmExportPath, "# Slack Transform Report")
+	assert.Equal(t, []string{"channelless.guest"}, report.skippedNames("user", "guest_no_channel"))
+	assert.NotEmpty(t, report.skippedNames("post", "post_skipped_author"),
+		"the guest's thread root must be named as skipped")
+	assert.NotEmpty(t, report.skippedNames("post", "thread_root_missing"),
+		"the non-guest reply must be named as dropped with its thread")
+	assert.Equal(t, 1, report.Entities["thread"].Skipped)
+	assert.NotEmpty(t, report.skippedNames("channel_membership", "membership_skipped_user"),
+		"the guest's MPIM membership must be named as dropped")
+
+	// The guest_no_channel reason carries the remediation hint an operator
+	// reading the report needs.
+	assert.Contains(t, report.Reasons["guest_no_channel"].Detail, "--guest-handling=user")
 }
 
 // joinSorted returns a deterministic comma-joined key from the given strings.

@@ -19,3 +19,6 @@ tools/
 
 # OS files
 .DS_Store
+
+# Test data
+testdata/

@@ -12,6 +12,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	log "github.com/sirupsen/logrus"
+
+	"github.com/mattermost/mmetl/services/intermediate"
 )
 
 // fakeWriteCloser lets a test deterministically trigger write and/or close
@@ -210,6 +212,7 @@ func TestGridFSIndexWriteFile(t *testing.T) {
 func TestExtractAttachments(t *testing.T) {
 	logger := log.New()
 	logger.SetOutput(os.Stderr)
+	report := intermediate.NewReport(logger)
 
 	t.Run("GridFS extraction end-to-end", func(t *testing.T) {
 		dir := testhelper.WorkDir(t)
@@ -225,7 +228,7 @@ func TestExtractAttachments(t *testing.T) {
 		idx, err := BuildGridFSIndex(chunksPath)
 		require.NoError(t, err)
 
-		err = ExtractAttachments(uploads, idx, outDir, "", logger)
+		err = ExtractAttachments(uploads, idx, outDir, "", report)
 		require.NoError(t, err)
 
 		expectedPath := filepath.Join(outDir, "up1_photo.jpg")
@@ -248,7 +251,7 @@ func TestExtractAttachments(t *testing.T) {
 			"up1": {ID: "up1", Name: "photo.png", Store: "FileSystem", Path: "/file-upload/up1/photo.png", Complete: true},
 		}
 
-		err := ExtractAttachments(uploads, nil, outDir, uploadsDir, logger)
+		err := ExtractAttachments(uploads, nil, outDir, uploadsDir, report)
 		require.NoError(t, err)
 
 		expectedPath := filepath.Join(outDir, "up1_photo.png")
@@ -265,7 +268,7 @@ func TestExtractAttachments(t *testing.T) {
 			"up1": {ID: "up1", Name: "incomplete.jpg", Store: "GridFS:Uploads", Complete: false},
 		}
 
-		err := ExtractAttachments(uploads, nil, outDir, "", logger)
+		err := ExtractAttachments(uploads, nil, outDir, "", report)
 		require.NoError(t, err)
 		// output dir might not exist since nothing was written
 		_, statErr := os.Stat(filepath.Join(outDir, "up1_incomplete.jpg"))
@@ -286,7 +289,7 @@ func TestExtractAttachments(t *testing.T) {
 		idx, err := BuildGridFSIndex(emptyChunks)
 		require.NoError(t, err)
 
-		err = ExtractAttachments(uploads, idx, outDir, "", logger)
+		err = ExtractAttachments(uploads, idx, outDir, "", report)
 		require.NoError(t, err) // should not error, just warn
 	})
 
@@ -298,7 +301,7 @@ func TestExtractAttachments(t *testing.T) {
 			"up1": {ID: "up1", Name: "empty.txt", Size: 0, Store: "GridFS:Uploads", Complete: true},
 		}
 
-		err := ExtractAttachments(uploads, nil, outDir, "", logger)
+		err := ExtractAttachments(uploads, nil, outDir, "", report)
 		require.NoError(t, err)
 
 		extractedPath := filepath.Join(outDir, "up1_empty.txt")
@@ -321,7 +324,7 @@ func TestExtractAttachments(t *testing.T) {
 		idx, err := BuildGridFSIndex(chunksPath)
 		require.NoError(t, err)
 
-		err = ExtractAttachments(uploads, idx, outDir, "", logger)
+		err = ExtractAttachments(uploads, idx, outDir, "", report)
 		require.NoError(t, err)
 
 		extracted, err := os.ReadFile(filepath.Join(outDir, "up1_preserved.txt"))
@@ -350,7 +353,7 @@ func TestExtractAttachments(t *testing.T) {
 		idx, err := BuildGridFSIndex(chunksPath)
 		require.NoError(t, err)
 
-		err = ExtractAttachments(uploads, idx, outDir, "", logger)
+		err = ExtractAttachments(uploads, idx, outDir, "", report)
 		require.NoError(t, err)
 
 		// NFC normalization composes "e" + combining accent → "é", then
@@ -367,6 +370,7 @@ func TestExtractAttachments(t *testing.T) {
 func TestVerifyAttachments(t *testing.T) {
 	logger := log.New()
 	logger.SetOutput(os.Stderr)
+	newReport := func() *intermediate.Report { return intermediate.NewReport(logger) }
 
 	t.Run("GridFS present is ok", func(t *testing.T) {
 		dir := testhelper.WorkDir(t)
@@ -379,23 +383,25 @@ func TestVerifyAttachments(t *testing.T) {
 		})
 		idx, err := BuildGridFSIndex(chunksPath)
 		require.NoError(t, err)
-		require.NoError(t, VerifyAttachments(uploads, idx, "", logger))
+		require.NoError(t, VerifyAttachments(uploads, idx, "", newReport()))
 	})
 
 	t.Run("missing GridFS chunks is an error", func(t *testing.T) {
 		uploads := map[string]*RocketChatUpload{
 			"up1": {ID: "up1", Name: "missing.jpg", Size: 1, Store: "GridFS:Uploads", Complete: true},
 		}
-		err := VerifyAttachments(uploads, nil, "", logger)
+		report := newReport()
+		err := VerifyAttachments(uploads, nil, "", report)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "GridFS chunks not found")
+		assert.Equal(t, 1, report.Uploads().Skipped, "dry-run must name the missing upload in the report")
 	})
 
 	t.Run("missing FileSystem file is an error", func(t *testing.T) {
 		uploads := map[string]*RocketChatUpload{
 			"up1": {ID: "up1", Name: "photo.png", Store: "FileSystem", Path: "/file-upload/up1/photo.png", Complete: true},
 		}
-		err := VerifyAttachments(uploads, nil, testhelper.WorkDir(t), logger)
+		err := VerifyAttachments(uploads, nil, testhelper.WorkDir(t), newReport())
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "not found")
 	})

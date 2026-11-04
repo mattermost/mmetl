@@ -1,10 +1,10 @@
 package commands
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -37,7 +37,7 @@ func init() {
 	if err := TransformRocketChatCmd.MarkFlagRequired("dump-dir"); err != nil {
 		panic(err)
 	}
-	TransformRocketChatCmd.Flags().StringP("output", "o", "bulk-export.jsonl", "the output path")
+	TransformRocketChatCmd.Flags().StringP("output", "o", "bulk-export.jsonl", "the output path for the bulk import file. The transform report and log are written to the same directory.")
 	TransformRocketChatCmd.Flags().String("attachments-dir", "data", "the path for the attachments directory")
 	TransformRocketChatCmd.Flags().String("uploads-dir", "", "path to RocketChat FileSystem uploads directory (if not using GridFS)")
 	TransformRocketChatCmd.Flags().BoolP("skip-attachments", "a", false, "Skips extracting file attachments")
@@ -54,7 +54,9 @@ func init() {
 	TransformCmd.AddCommand(TransformRocketChatCmd)
 }
 
-func transformRocketChatCmdF(cmd *cobra.Command, args []string) error {
+// The named return is what the deferred report write reads, so a run that
+// aborts still leaves a report explaining how far it got.
+func transformRocketChatCmdF(cmd *cobra.Command, args []string) (runErr error) {
 	team, _ := cmd.Flags().GetString("team")
 	dumpDir, _ := cmd.Flags().GetString("dump-dir")
 	outputFilePath, _ := cmd.Flags().GetString("output")
@@ -82,25 +84,35 @@ func transformRocketChatCmdF(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	logger, closeLogger, err := configureTransformLogger(dryRun, debug, "transform-rocketchat.log")
+	// Every artifact of a run lands next to the bulk import file, so one
+	// migration leaves one self-contained directory.
+	artifactsDir := filepath.Dir(outputFilePath)
+	if err := checkArtifactCollisions(artifactsDir, "rocketchat", dumpDir, uploadsDir, outputFilePath); err != nil {
+		return err
+	}
+	logger, logFile, err := newTransformLogger(artifactsDir, "rocketchat", debug, dryRun)
 	if err != nil {
 		return err
 	}
-	defer closeLogger()
+	defer logFile.Close()
+
+	transformer := rocketchat.NewTransformer(team, logger)
+	report := transformer.Report
+	startTransformReport(cmd, report, "rocketchat", dumpDir, team, outputFilePath)
+	defer writeTransformReport(report, artifactsDir, &runErr)
 
 	parsed, err := rocketchat.ParseDump(dumpDir, logger)
 	if err != nil {
 		return err
 	}
 
-	transformer := rocketchat.NewTransformer(team, logger)
 	if err = transformer.Transform(parsed, skipAttachments, skipEmptyEmails, defaultEmailDomain, guestHandling); err != nil {
 		if dryRun {
-			transformer.Logger.Error(err)
-			return errors.New(dryRunFailedMsg)
+			return failDryRun(report, err)
 		}
 		return err
 	}
+	report.MarkPassComplete()
 
 	botOwner = strings.TrimSpace(botOwner)
 	if hasBotUsers(transformer.Intermediate.UsersById) && botOwner == "" {
@@ -127,12 +139,12 @@ func transformRocketChatCmdF(cmd *cobra.Command, args []string) error {
 		}
 
 		if dryRun {
-			if err = rocketchat.VerifyAttachments(parsed.UploadsByID, gridfsIndex, uploadsDir, logger); err != nil {
+			if err = rocketchat.VerifyAttachments(parsed.UploadsByID, gridfsIndex, uploadsDir, report); err != nil {
 				transformer.RecordError(err)
 			}
 		} else {
 			attachmentsOutput := path.Join(attachmentsDir, "bulk-export-attachments")
-			if err = rocketchat.ExtractAttachments(parsed.UploadsByID, gridfsIndex, attachmentsOutput, uploadsDir, logger); err != nil {
+			if err = rocketchat.ExtractAttachments(parsed.UploadsByID, gridfsIndex, attachmentsOutput, uploadsDir, report); err != nil {
 				return err
 			}
 		}
@@ -141,7 +153,7 @@ func transformRocketChatCmdF(cmd *cobra.Command, args []string) error {
 	if dryRun {
 		transformer.CheckIntermediate()
 		if err = transformer.Err(); err != nil {
-			return errors.New(dryRunFailedMsg)
+			return failDryRun(report, err)
 		}
 		logger.Info("Dry-run succeeded")
 		return nil
@@ -151,12 +163,7 @@ func transformRocketChatCmdF(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	logger.Infof("Transformation succeeded! Users: %d, Public channels: %d, Private channels: %d, Posts: %d",
-		len(transformer.Intermediate.UsersById),
-		len(transformer.Intermediate.PublicChannels),
-		len(transformer.Intermediate.PrivateChannels),
-		len(transformer.Intermediate.Posts),
-	)
+	logger.Info("Transformation succeeded!")
 
 	return nil
 }
