@@ -442,7 +442,7 @@ func (e *Exporter) RewriteVersion(file io.WriterAt) error {
 	e.Report.Metadata.Additional.Run.Finished = finished
 	e.Report.Metadata.Additional.Counts = counts
 
-	line, err := e.versionLine()
+	line, err := e.renderVersionLine(false)
 	if err != nil {
 		e.Report.Metadata.Additional.Run.Finished = prevFinished
 		e.Report.Metadata.Additional.Counts = prevCounts
@@ -460,9 +460,18 @@ func (e *Exporter) RewriteVersion(file io.WriterAt) error {
 	return nil
 }
 
-// versionLine renders line 1: the version line JSON, padded with spaces to
-// exactly VersionLineSize bytes including its trailing newline.
+// versionLine renders line 1 and falls back to the bare version line when the
+// metadata does not fit the reservation.
 func (e *Exporter) versionLine() ([]byte, error) {
+	return e.renderVersionLine(true)
+}
+
+// renderVersionLine renders line 1: the version line JSON, padded with spaces to
+// exactly VersionLineSize bytes including its trailing newline.
+//
+// With allowFallback false, an overflow is an error instead. RewriteVersion uses
+// this so it never replaces an already-written line 1.
+func (e *Exporter) renderVersionLine(allowFallback bool) ([]byte, error) {
 	version := 1
 	versionLine := &imports.LineImportData{
 		Type:    "version",
@@ -492,6 +501,9 @@ func (e *Exporter) versionLine() ([]byte, error) {
 		return nil, errors.Wrap(err, "An error occurred marshalling the JSON data for export.")
 	}
 	if len(encoded)+1 > VersionLineSize {
+		if !allowFallback {
+			return nil, errors.Errorf("the version line needs %d bytes but only %d are reserved", len(encoded)+1, VersionLineSize)
+		}
 		if e.Logger != nil {
 			e.Logger.Warnf("The version line needs %d bytes but only %d are reserved; writing the default version line without metadata. The transform is unaffected.", len(encoded)+1, VersionLineSize)
 		}
