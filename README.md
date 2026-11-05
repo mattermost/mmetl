@@ -40,7 +40,10 @@ mmetl transform slack --team myteam --file export.zip --output mm_export.jsonl
 Every transform writes a **transform report** next to the import file, in both
 Markdown and JSON, naming every entity that was skipped and why, along with
 anything that had to be changed on the way in. It is always produced, on success
-and on failure. See
+and on failures that occur after output is available (flag validation still
+leaves no report). The import file's version line also records generator,
+source, flags, and produced counts in its `info` object; the Mattermost server
+ignores that field. See
 [docs/examples/transform-report.md](docs/examples/transform-report.md) for a real
 one.
 

@@ -7,12 +7,12 @@
 | Provider | slack                                                                                                       |
 | mmetl    | v0.5.1 (4fdbe5f)                                                                                            |
 | Input    | acme-inc.zip                                                                                                |
-| Team     | acme                                                                                                        |
-| Output   | out/mm_export.jsonl                                                                                         |
-| Started  | 2026-08-24T14:52:13Z                                                                                        |
-| Finished | 2026-08-24T14:52:13Z                                                                                        |
-| Duration | 135ms                                                                                                       |
-| Flags    | `--attachments-dir=out/data --bot-owner=admin --file=acme-inc.zip --output=out/mm_export.jsonl --team=acme` |
+| Team     | acme                                                                                                  |
+| Output   | mm_export.jsonl                                                                                       |
+| Started  | 2026-08-24T14:52:13Z                                                                                  |
+| Finished | 2026-08-24T14:52:13Z                                                                                  |
+| Duration | 135ms                                                                                                 |
+| Flags    | `--attachments-dir=data --bot-owner=admin --file=acme-inc.zip --output=mm_export.jsonl --team=acme` |
 
 ## Summary
 
@@ -30,6 +30,23 @@
 | Reactions                             | 14          | 0       |
 | Files                                 | 2           | 0       |
 | Emoji                                 | 7           | 0       |
+
+## Produced
+
+Lines written to the bulk import file.
+
+| Line             | Count |
+| ---------------- | ----- |
+| Users            | 18    |
+| Bots             | 25    |
+| Public channels  | 5     |
+| Private channels | 5     |
+| Group channels   | 3     |
+| Direct channels  | 30    |
+| Posts            | 603   |
+| Replies          | 24    |
+| Reactions        | 14    |
+| Attachments      | 2     |
 
 ## Details
 
